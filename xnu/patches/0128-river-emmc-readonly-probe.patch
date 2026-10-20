@@ -12,10 +12,10 @@ index 21cdb5c..c741ee0 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
 new file mode 100644
-index 0000000..c0fa618
+index 0000000..be60939
 --- /dev/null
 +++ b/bsd/dev/river_emmc.c
-@@ -0,0 +1,874 @@
+@@ -0,0 +1,879 @@
 +/*
 + * river (Moto G7, SDM632) eMMC: READ-ONLY polled driver for the SDHCI-MSM
 + * host sdhc_1. Boot-arg rivermmc=1 enables it; otherwise nothing is mapped.
@@ -741,6 +741,11 @@ index 0000000..c0fa618
 +	return river_emmc_ioctl(dev, cmd, data, flag, p, 1);
 +}
 +
++/*
++ * Despite the name, specfs's set_blocksize() takes d_psize as the vnode's
++ * block size (memdev.c returns its sector size too). Returning the
++ * partition length made /dev/emmc0s42 reads fail (IMG_0333).
++ */
 +static int
 +river_emmc_psize(dev_t dev)
 +{
@@ -748,7 +753,7 @@ index 0000000..c0fa618
 +	if (!ready || m < 0 || m >= MAX_PARTS || !parts[m].count) {
 +		return -1;
 +	}
-+	return (int)MIN(parts[m].count * BLOCK / parts[m].secsize, INT_MAX);
++	return (int)parts[m].secsize;
 +}
 +
 +static int
