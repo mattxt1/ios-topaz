@@ -16,7 +16,7 @@ topaz and river with `tools/river-cc.py`; **no CI build yet**. New
 splash confirmed, initrd found at 0x13600000, Gold handoff OK, auto-reset to
 Android. First `board=river` CI build succeeded (fork mattxt1/ios-topaz, run
 39368830465); `river-r1` RAM boot (IMG_0322): **XNU runs on Gold 0x100 to the root-device
-wait**, GICv2 SGI and vtimer working. md0 RAM root (IMG_0323): **PID 1 runs on river**. cpus=4 (IMG_0324): **4/4 Gold CPUs, SGIs verified**. HFS+ RAM root (IMG_0325): **`hfs: mounted SweetRoot`, PID 1 on 4 CPUs**. eMMC probe 0128 (IMG_0326): clocks on but MSM core not in SDHCI mode (HC_MODE 0), probe stopped safely; full host init + enumeration then fixed by restoring vendor_spec POR (ABL left HS400 MCLK select): **eMMC reads work** (IMG_0329: Micron S0J9N8, 59640 MiB, GPT 64 entries, boot_b ANDROID!). Next: faster clock, read-only bdev. Details and
+wait**, GICv2 SGI and vtimer working. md0 RAM root (IMG_0323): **PID 1 runs on river**. cpus=4 (IMG_0324): **4/4 Gold CPUs, SGIs verified**. HFS+ RAM root (IMG_0325): **`hfs: mounted SweetRoot`, PID 1 on 4 CPUs**. eMMC probe 0128 (IMG_0326): clocks on but MSM core not in SDHCI mode (HC_MODE 0), probe stopped safely; full host init + enumeration then fixed by restoring vendor_spec POR (ABL left HS400 MCLK select): **eMMC reads work** (IMG_0329: Micron S0J9N8, 59640 MiB, GPT 64 entries, boot_b ANDROID!). Then 25 MHz + read-only /dev/emmc0[sN] (r7, IMG_0335): raw and block reads of boot_b from PID 1 work, write opens refused, 1389 KiB/s. Details and
 commands in `RIVER.md`.
 
 ## Agent handoff / active work (2026-10-15, latest)

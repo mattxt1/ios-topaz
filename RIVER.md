@@ -268,12 +268,41 @@ CMD0/1/2/3/7/13/17 were issued; no data was written and nothing flashed.
 The card is left in 1-bit 400 kHz transfer state; Android re-initialises
 it on the next boot.
 
+### Read-only eMMC block device at 25 MHz (2026-10-20)
+
+0128 now raises sdcc1_apps to **25 MHz** (GPLL0_DIV2/16, RCG cfg 0x41f, still
+1-bit default speed, no CMD6) after enumeration, checks CMD13, and falls back
+to 400 kHz on failure. It registers a read-only bdevsw/cdevsw:
+`/dev/emmc0`/`/dev/remmc0` (whole user area) and `/dev/emmc0sN`/`/dev/remmc0sN`
+for each GPT entry (mode 0440; write opens and write I/O return EROFS).
+`tools/river-init.S` is a PID 1 test that reads boot_b through both nodes and
+tries a write open.
+
+- r5 (IMG_0330): kernel data abort in the raw read: physio() passes the
+  caller's user address. Fixed with `copyout()` (r6).
+- r6 (IMG_0331/0333): 25 MHz, `1 MiB in 738 ms (1386 KiB/s)`, nodes created,
+  `/dev/remmc0s42: first bytes ANDROID!`, write open refused, but
+  `/dev/emmc0s42: read failed`: specfs `set_blocksize()` uses `d_psize` as the
+  block size; we returned the partition length. Fixed (r7).
+- **r7** (CI run 39376791491, `d0f2375`, image `river-r7-emmc-boot.img`
+  SHA-256 `6aec1ef3…`, photos IMG_0334/IMG_0335):
+
+      RIVER eMMC: 25 MHz default speed, 1-bit
+      RIVER eMMC: 1 MiB in 737 ms (1389 KiB/s)
+      RIVER eMMC: read-only /dev/emmc0, /dev/remmc0 and 64 partitions
+      /dev/remmc0s42: first bytes ANDROID!
+      /dev/emmc0s42: first bytes ANDROID!
+      RIVER init: open for writing refused (read-only) OK
+      RIVER init: still alive
+
+  Raw and block reads from user space work, writes are refused, on 4 CPUs
+  with the HFS RAM root. Nothing was written to the eMMC; nothing flashed.
+
 ## Next work
 
-1. Faster reads: raise sdcc1_apps (e.g. 25 MHz from GPLL0/2 /16, still
-   default speed) and, if wanted, 4/8-bit bus, which needs CMD6 (a volatile
-   EXT_CSD write, so it needs the user's approval first).
-2. Expose the eMMC as a read-only BSD block device (like `sweet_ufs.c`'s
-   bdevsw, writes refused) so HFS/other filesystems can be mounted from it.
-3. Booting an iOS root later needs a writable partition; on sweet that
-   replaced Android's userdata. That is a separate decision for the user.
+1. Faster I/O if needed: multi-block CMD18 needs CMD12 STOP (also a
+   non-writing command), and 4/8-bit or HS modes need CMD6 (a volatile
+   EXT_CSD write, so the user's approval first).
+2. Mount a filesystem read-only from eMMC. No river partition holds HFS; an
+   iOS root would have to be written to a partition (on sweet: userdata).
+   That replaces Android data and is a separate decision for the user.
