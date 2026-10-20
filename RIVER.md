@@ -579,7 +579,8 @@ flush #224); no new root image was written.
 Patch 0132 enables software HID personalities and adds a separate river
 branch in the already-built sweet_keys.c, opt-in `riverinput=1`. It votes
 BLSP1 AHB, sets QUP3's clock to XO / 1, enables its branch, and selects
-I2C3 on GPIO10/11. A bounded polled QUPv2 FIFO transfer only addresses 0x62;
+I2C3 on GPIO10/11. A bounded polled QUPv2 FIFO transfer only addresses firmware endpoint
+0x01; 0x62 is the DT hardware-command address and is deliberately unused.
 volatile event-page selection and firmware info reads must validate the
 firmware complement and exact panel bounds before events are accepted.
 No touch firmware flashing, bootloader commands, GPIO reset or PMIC config
