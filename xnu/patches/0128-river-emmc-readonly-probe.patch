@@ -12,10 +12,10 @@ index 21cdb5c..c741ee0 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
 new file mode 100644
-index 0000000..b75df32
+index 0000000..06eaf7d
 --- /dev/null
 +++ b/bsd/dev/river_emmc.c
-@@ -0,0 +1,548 @@
+@@ -0,0 +1,860 @@
 +/*
 + * river (Moto G7, SDM632) eMMC: READ-ONLY polled driver for the SDHCI-MSM
 + * host sdhc_1. Boot-arg rivermmc=1 enables it; otherwise nothing is mapped.
@@ -40,6 +40,14 @@ index 0000000..b75df32
 +#include <sys/param.h>
 +#include <sys/systm.h>
 +#include <sys/errno.h>
++#include <sys/buf.h>
++#include <sys/conf.h>
++#include <sys/disk.h>
++#include <sys/fcntl.h>
++#include <sys/proc.h>
++#include <sys/uio.h>
++#include <miscfs/devfs/devfs.h>
++#include <kern/locks.h>
 +#include <kern/clock.h>
 +#include <pexpert/pexpert.h>
 +#include <pexpert/device_tree.h>
@@ -124,6 +132,8 @@ index 0000000..b75df32
 +#define RCG_UPDATE		(1U << 0)
 +/* 400 kHz = XO 19.2 MHz / 12 * 1/4: div field 2*12-1, src XO (0), dual edge */
 +#define RCG_CFG_400K		(23U | 0U << 8 | 2U << 12)
++/* 25 MHz = GPLL0_DIV2 400 MHz / 16, no M/N (bypass): default-speed eMMC */
++#define RCG_CFG_25M		(31U | 4U << 8)
 +
 +#define TIMEOUT_NS		(200ULL * NSEC_PER_MSEC)
 +#define BLOCK			512
@@ -132,6 +142,16 @@ index 0000000..b75df32
 +static vm_offset_t hc, core, gcc;
 +static bool ready;
 +static uint32_t block[BLOCK / 4];
++
++/* minor 0 = whole user area, minor N = GPT entry N (1-based); count 0 = none */
++#define MAX_PARTS		129
++static struct {
++	uint64_t first, count;
++	uint32_t secsize;
++} parts[MAX_PARTS];
++static int bmajor = -1, cmajor = -1;
++static LCK_GRP_DECLARE(river_emmc_grp, "river_emmc");
++static LCK_MTX_DECLARE(river_emmc_lock, &river_emmc_grp);
 +
 +static inline uint32_t
 +rd(vm_offset_t base, uint32_t off)
@@ -303,17 +323,16 @@ index 0000000..b75df32
 +	return river_emmc_cmd(17, (uint32_t)lba, RSP_R1, &resp, (uint32_t *)dst);
 +}
 +
-+/* GCC sdcc1_apps_clk_src to 400 kHz from XO; the branch stays enabled. */
++/* Reprogram GCC sdcc1_apps_clk_src; the branch stays enabled. */
 +static int
-+river_emmc_clock_400k(void)
++river_emmc_set_rcg(uint32_t cfg, bool mnd)
 +{
-+	printf("RIVER eMMC: sdcc1_apps RCG was cmd 0x%x cfg 0x%x m 0x%x n 0x%x d 0x%x\n",
-+	    rd(gcc, GCC_RCG_CMD), rd(gcc, GCC_RCG_CFG), rd(gcc, GCC_RCG_M),
-+	    rd(gcc, GCC_RCG_N), rd(gcc, GCC_RCG_D));
-+	wr(gcc, GCC_RCG_M, 1);
-+	wr(gcc, GCC_RCG_N, ~(4U - 1U) & 0xff);
-+	wr(gcc, GCC_RCG_D, ~4U & 0xff);
-+	wr(gcc, GCC_RCG_CFG, RCG_CFG_400K);
++	if (mnd) {	/* only the 400 kHz XO rate uses M/N: 1/4 */
++		wr(gcc, GCC_RCG_M, 1);
++		wr(gcc, GCC_RCG_N, ~(4U - 1U) & 0xff);
++		wr(gcc, GCC_RCG_D, ~4U & 0xff);
++	}
++	wr(gcc, GCC_RCG_CFG, cfg);
 +	wr(gcc, GCC_RCG_CMD, rd(gcc, GCC_RCG_CMD) | RCG_UPDATE);
 +	uint64_t end = deadline(TIMEOUT_NS);
 +	while (rd(gcc, GCC_RCG_CMD) & RCG_UPDATE) {
@@ -326,6 +345,50 @@ index 0000000..b75df32
 +	    rd(gcc, GCC_RCG_CMD), rd(gcc, GCC_RCG_CFG), rd(gcc, GCC_RCG_M),
 +	    rd(gcc, GCC_RCG_N), rd(gcc, GCC_RCG_D), rd(gcc, GCC_APPS_CBCR));
 +	return 0;
++}
++
++static int
++river_emmc_clock_400k(void)
++{
++	printf("RIVER eMMC: sdcc1_apps RCG was cmd 0x%x cfg 0x%x m 0x%x n 0x%x d 0x%x\n",
++	    rd(gcc, GCC_RCG_CMD), rd(gcc, GCC_RCG_CFG), rd(gcc, GCC_RCG_M),
++	    rd(gcc, GCC_RCG_N), rd(gcc, GCC_RCG_D));
++	return river_emmc_set_rcg(RCG_CFG_400K, true);
++}
++
++/*
++ * Change the card clock with the SD clock gated, as sdhci does. The MSM
++ * host has no SDHCI divider, so the GCC rate is the card clock.
++ */
++static int
++river_emmc_card_clock(uint32_t cfg, bool mnd)
++{
++	wr(hc, SDHCI_CLOCK, 0xe << 16 | CLOCK_INT_ENABLE);
++	int error = river_emmc_set_rcg(cfg, mnd);
++	uint64_t end = deadline(TIMEOUT_NS);
++	while (!(rd(hc, SDHCI_CLOCK) & CLOCK_INT_STABLE)) {
++		if (mach_absolute_time() > end) {
++			return ETIMEDOUT;
++		}
++	}
++	wr(hc, SDHCI_CLOCK, 0xe << 16 | CLOCK_INT_ENABLE | CLOCK_SD_ENABLE);
++	delay(100);
++	return error;
++}
++
++/* 25 MHz default speed (1-bit, no CMD6); back to 400 kHz if CMD13 fails. */
++static bool
++river_emmc_speed_up(void)
++{
++	uint32_t r;
++	if (!river_emmc_card_clock(RCG_CFG_25M, false) &&
++	    !river_emmc_cmd(13, RCA << 16, RSP_R1, &r, NULL) && ((r >> 9) & 0xf) == 4) {
++		printf("RIVER eMMC: 25 MHz default speed, 1-bit\n");
++		return true;
++	}
++	printf("RIVER eMMC: 25 MHz failed; back to 400 kHz\n");
++	(void)river_emmc_card_clock(RCG_CFG_400K, true);
++	return false;
 +}
 +
 +static int
@@ -483,9 +546,11 @@ index 0000000..b75df32
 +	uint32_t count = le32(b + 80), esize = le32(b + 84);
 +	printf("RIVER eMMC: GPT %u entries of %u bytes at LBA %llu; last LBA %llu (%llu MiB)\n",
 +	    count, esize, entries, backup, (backup + 1) >> 11);
-+	if (esize != 128 || count == 0 || count > 256) {
++	if (esize != 128 || count == 0 || count >= MAX_PARTS) {
 +		return EIO;
 +	}
++	parts[0].first = 0;
++	parts[0].count = backup + 1;
 +	if (river_emmc_read_block(backup, b) || memcmp(b, "EFI PART", 8)) {
 +		printf("RIVER eMMC: backup GPT header at LBA %llu missing\n", backup);
 +	} else {
@@ -504,6 +569,8 @@ index 0000000..b75df32
 +			continue;
 +		}
 +		used++;
++		parts[i + 1].first = first;
++		parts[i + 1].count = last - first + 1;
 +		gpt_name(e, name, sizeof(name));
 +		if (!strcmp(name, "boot_b")) {
 +			boot_b = first;
@@ -521,6 +588,247 @@ index 0000000..b75df32
 +		    memcmp(b, "ANDROID!", 8) ? "something else" : "ANDROID! (header v1 found)");
 +	}
 +	return 0;
++}
++
++/*
++ * Read-only BSD disk: /dev/emmc0 + /dev/remmc0 (whole user area) and
++ * /dev/emmc0sN + /dev/remmc0sN for GPT entry N. Opens for writing and every
++ * write request fail with EROFS; only river_emmc_read_block() touches the
++ * card, through river_emmc_cmd()'s read-only command list.
++ */
++static int
++river_emmc_open(dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
++{
++	int m = minor(dev);
++	if (!ready || m < 0 || m >= MAX_PARTS || !parts[m].count) {
++		return ENXIO;
++	}
++	return (flags & FWRITE) ? EROFS : 0;
++}
++
++static int
++river_emmc_close(__unused dev_t dev, __unused int flags, __unused int devtype, __unused struct proc *p)
++{
++	return 0;
++}
++
++static void
++river_emmc_strategy(buf_t bp)
++{
++	int error = 0;
++	caddr_t vaddr = NULL;
++	int m = minor(buf_device(bp));
++	uint32_t count = buf_count(bp);
++
++	buf_setresid(bp, count);
++	if (!(buf_flags(bp) & B_READ)) {
++		error = EROFS;
++		goto done;
++	}
++	if (!ready || m < 0 || m >= MAX_PARTS || !parts[m].count) {
++		error = ENXIO;
++		goto done;
++	}
++	uint64_t off = (uint64_t)buf_blkno(bp) * parts[m].secsize;
++	uint64_t bytes = parts[m].count * BLOCK;
++	if (off > bytes || count > bytes - off) {
++		error = EINVAL;
++		goto done;
++	}
++	if (count == 0) {
++		goto done;
++	}
++	if (buf_map(bp, &vaddr)) {
++		error = EIO;
++		goto done;
++	}
++	lck_mtx_lock(&river_emmc_lock);
++	for (uint32_t done = 0; done < count;) {
++		uint64_t pos = off + done;
++		uint32_t skip = (uint32_t)(pos % BLOCK);
++		uint32_t want = MIN(count - done, BLOCK - skip);
++		error = river_emmc_read_block(parts[m].first + pos / BLOCK, block);
++		if (error) {
++			break;
++		}
++		memcpy(vaddr + done, (const char *)block + skip, want);
++		done += want;
++		buf_setresid(bp, count - done);
++	}
++	lck_mtx_unlock(&river_emmc_lock);
++	buf_unmap(bp);
++done:
++	if (error) {
++		buf_seterror(bp, error);
++	}
++	buf_biodone(bp);
++}
++
++static int
++river_emmc_ioctl(dev_t dev, u_long cmd, caddr_t data, __unused int flag,
++    __unused struct proc *p, int is_char)
++{
++	int m = minor(dev);
++	uint32_t *f = (uint32_t *)data;
++	uint64_t *o = (uint64_t *)data;
++
++	if (m < 0 || m >= MAX_PARTS || !parts[m].count) {
++		return ENXIO;
++	}
++	switch (cmd) {
++	case DKIOCGETBLOCKSIZE:
++		*f = parts[m].secsize;
++		return 0;
++	case DKIOCSETBLOCKSIZE:
++		if (is_char) {
++			return ENODEV;
++		}
++		if (*f < DEV_BSIZE || *f > 4096 || (*f & (*f - 1))) {
++			return EINVAL;
++		}
++		parts[m].secsize = *f;
++		return 0;
++	case DKIOCGETPHYSICALBLOCKSIZE:
++		*f = BLOCK;
++		return 0;
++	case DKIOCGETBLOCKCOUNT:
++		*o = parts[m].count * BLOCK / parts[m].secsize;
++		return 0;
++	case DKIOCISWRITABLE:
++		*f = 0;
++		return 0;
++	case DKIOCSYNCHRONIZE:
++	case DKIOCSYNCHRONIZECACHE:
++		return 0;
++	case DKIOCGETMAXBLOCKCOUNTREAD:
++		*o = (128 * 1024) / parts[m].secsize;
++		return 0;
++	case DKIOCGETMAXBLOCKCOUNTWRITE:
++		*o = 0;
++		return 0;
++	case DKIOCGETMAXSEGMENTCOUNTREAD:
++	case DKIOCGETMAXSEGMENTCOUNTWRITE:
++		*o = 1;
++		return 0;
++	default:
++		return ENOTTY;
++	}
++}
++
++static int
++river_emmc_bioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
++{
++	return river_emmc_ioctl(dev, cmd, data, flag, p, 0);
++}
++
++static int
++river_emmc_cioctl(dev_t dev, u_long cmd, caddr_t data, int flag, struct proc *p)
++{
++	return river_emmc_ioctl(dev, cmd, data, flag, p, 1);
++}
++
++static int
++river_emmc_psize(dev_t dev)
++{
++	int m = minor(dev);
++	if (!ready || m < 0 || m >= MAX_PARTS || !parts[m].count) {
++		return -1;
++	}
++	return (int)MIN(parts[m].count * BLOCK / parts[m].secsize, INT_MAX);
++}
++
++static int
++river_emmc_read(dev_t dev, struct uio *uio, __unused int ioflag)
++{
++	int m = minor(dev);
++	if (m < 0 || m >= MAX_PARTS || !parts[m].count) {
++		return ENXIO;
++	}
++	return physio(river_emmc_strategy, NULL, dev, B_READ, minphys, uio, (int)parts[m].secsize);
++}
++
++static int
++river_emmc_write(__unused dev_t dev, __unused struct uio *uio, __unused int ioflag)
++{
++	return EROFS;
++}
++
++static const struct bdevsw river_emmc_bdevsw = {
++	.d_open     = river_emmc_open,
++	.d_close    = river_emmc_close,
++	.d_strategy = river_emmc_strategy,
++	.d_ioctl    = river_emmc_bioctl,
++	.d_dump     = eno_dump,
++	.d_psize    = river_emmc_psize,
++	.d_type     = D_DISK,
++};
++
++static const struct cdevsw river_emmc_cdevsw = {
++	.d_open       = river_emmc_open,
++	.d_close      = river_emmc_close,
++	.d_read       = river_emmc_read,
++	.d_write      = river_emmc_write,
++	.d_ioctl      = river_emmc_cioctl,
++	.d_stop       = eno_stop,
++	.d_reset      = eno_reset,
++	.d_ttys       = NULL,
++	.d_select     = eno_select,
++	.d_mmap       = eno_mmap,
++	.d_strategy   = eno_strat,
++	.d_reserved_1 = eno_getc,
++	.d_reserved_2 = eno_putc,
++	.d_type       = D_DISK,
++};
++
++static void
++river_emmc_devices(void)
++{
++	bmajor = bdevsw_add(-1, &river_emmc_bdevsw);
++	if (bmajor < 0) {
++		printf("RIVER eMMC: no block major\n");
++		return;
++	}
++	cmajor = cdevsw_add_with_bdev(-1, &river_emmc_cdevsw, bmajor);
++	if (cmajor < 0) {
++		printf("RIVER eMMC: no char major\n");
++		return;
++	}
++	uint32_t n = 0;
++	for (int m = 0; m < MAX_PARTS; m++) {
++		if (!parts[m].count) {
++			continue;
++		}
++		parts[m].secsize = BLOCK;
++		if (m == 0) {
++			devfs_make_node(makedev(bmajor, 0), DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0440, "emmc0");
++			devfs_make_node(makedev(cmajor, 0), DEVFS_CHAR, UID_ROOT, GID_OPERATOR, 0440, "remmc0");
++		} else {
++			devfs_make_node(makedev(bmajor, m), DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0440, "emmc0s%d", m);
++			devfs_make_node(makedev(cmajor, m), DEVFS_CHAR, UID_ROOT, GID_OPERATOR, 0440, "remmc0s%d", m);
++			n++;
++		}
++	}
++	printf("RIVER eMMC: read-only /dev/emmc0, /dev/remmc0 and %u partitions (b %d, c %d)\n",
++	    n, bmajor, cmajor);
++}
++
++/* Time 1 MiB of single-block reads from boot_b (p42). */
++static void
++river_emmc_bench(void)
++{
++	if (!parts[42].count) {
++		return;
++	}
++	uint64_t t0 = mach_absolute_time(), ns;
++	for (uint32_t i = 0; i < 2048; i++) {
++		if (river_emmc_read_block(parts[42].first + i, block)) {
++			printf("RIVER eMMC: bench read %u failed\n", i);
++			return;
++		}
++	}
++	absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
++	printf("RIVER eMMC: 1 MiB in %llu ms (%llu KiB/s)\n", ns / NSEC_PER_MSEC,
++	    ns ? 1024ULL * NSEC_PER_SEC / ns : 0);
 +}
 +
 +void river_emmc_probe(void);
@@ -561,6 +869,10 @@ index 0000000..b75df32
 +		ready = false;
 +		return;
 +	}
++	if (river_emmc_speed_up()) {
++		river_emmc_bench();
++	}
++	river_emmc_devices();
 +	printf("RIVER eMMC: read-only probe done\n");
 +}
 +#endif /* ARM64_BOARD_CONFIG_SWEET && RIVER */
