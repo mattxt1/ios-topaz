@@ -615,3 +615,17 @@ its cause is not established. The r11-identity GUI image remains the fallback.
 Recovery debugfs was mounted as a virtual filesystem for read-only pin/clock
 inventory; no partition was flashed. The next log name is
 `../logs-private/r12-input.txt` when the user returns to recovery.
+
+
+### r12 test failure (reported by user)
+
+The user reports a frozen kernel-panic screen ending with "handshake
+structure not initialized". This is a panic-output diagnostic, not the
+original panic reason: Apple's matching xnu-8796.141.3
+`osfmk/kdp/output_stages/out_shmem.c:499`, in `panic_spin_shmcon`, prints it
+when the hardware shared-memory dump handshake is absent. The actual panic
+line/backtrace is not yet available. Requested a full-screen photo before
+reset and recovery entry to read `../logs-private/r12-input.txt`.
+No code fix or cause is established. Do not treat the handshake message as
+a touch-controller handshake failure. Phone has no ADB/fastboot enumeration
+while frozen; waiting for recovery. r11-identity remains the GUI fallback.

@@ -57,7 +57,10 @@ Patch 0132 prepares polled QUPv2 touch + SPMI v2/v3 buttons, software HID
 and river coordinate height, opt-in riverinput=1. Corrected firmware endpoint is 0x01 (DT 0x62 is unused hardware endpoint).
 Commit 130c72e passed CI 39468990896. r12 RAM boot accepted, image SHA-256
 0149a52229379a0b8c93055740261dd889133a6f2f71fd02069ff40f4aa8ee05.
-Touch/button interaction pending; user asked to swipe up and press volume.
+r12 PANICKED before a successful interaction result. User reports final
+"handshake structure not initialized" line; verified this is panic-output
+code (out_shmem.c:499), not the original cause. Asked for full panic photo
+and recovery to pull r12-input.txt; diagnosis pending.
 Next recovery log: r12-input.txt. Preserve r11-identity as GUI fallback.
 Details in RIVER.md.
 
