@@ -1,0 +1,42 @@
+diff --git a/osfmk/kern/exception.c b/osfmk/kern/exception.c
+--- a/osfmk/kern/exception.c
++++ b/osfmk/kern/exception.c
+@@ -1034,6 +1034,38 @@
+ 				break;
+ 			}
+ 			fp = frame[0];
++		}
++		printf("%s\n", line);
++
++		/*
++		 * Why is it there? Run state and block hint, wait event, the user
++		 * fault address/syndrome (FAR/ESR are those of the last user
++		 * exception: a data abort here means a page fault in progress), and
++		 * for a thread that is not running its kernel frame-pointer chain,
++		 * bounded to its own kernel stack (unslid, for the kernel dSYM).
++		 */
++		n = snprintf(line, sizeof(line), "SMP %s t%d st 0x%x hint 0x%x wev 0x%llx far 0x%llx esr 0x%x",
++		    name, tn - 1, thread->state, thread->block_hint,
++		    (uint64_t)VM_KERNEL_UNSLIDE_OR_PERM(thread->wait_event),
++		    get_saved_state_far(ss), get_saved_state_esr(ss));
++		vm_offset_t lo = thread->kernel_stack, hi = lo + kernel_stack_size;
++		if (!(thread->state & TH_RUN) && thread != current_thread() && lo != 0 &&
++		    thread->machine.kstackptr > lo && thread->machine.kstackptr < hi) {
++			arm_kernel_saved_state_t *ks =
++			    &((thread_kernel_state_t)thread->machine.kstackptr)->machine.ss;
++			n += snprintf(line + n, sizeof(line) - n, " kbt 0x%lx",
++			    (unsigned long)VM_KERNEL_UNSLIDE(ks->lr));
++			uint64_t kfp = ks->fp;
++			for (int i = 0; i < 14 && kfp >= lo && kfp + 16 <= hi && (kfp & 7) == 0 &&
++			    n < (int)sizeof(line) - 24; i++) {
++				uint64_t const *frame = (uint64_t const *)kfp;
++				n += snprintf(line + n, sizeof(line) - n, " 0x%lx",
++				    (unsigned long)VM_KERNEL_UNSLIDE(frame[1]));
++				if (frame[0] <= kfp) {
++					break;
++				}
++				kfp = frame[0];
++			}
+ 		}
+ 		printf("%s\n", line);
+ 	}
