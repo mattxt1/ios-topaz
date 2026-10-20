@@ -11,9 +11,13 @@ the ring follows. Byte n of the console stream is at ring offset n % size.
 import struct, sys
 
 data = open(sys.argv[1], 'rb').read()
+if len(data) < 4096:
+    sys.exit('short log area (missing header block)')
 magic, version, size, total, seq = struct.unpack_from('<8sIIQQ', data, 0)
 if magic != b'SWEETLOG':
     sys.exit('no SWEETLOG header (log never flushed, or wrong area)')
+if version != 1 or size == 0 or size % 4096 or len(data) < 4096 + size:
+    sys.exit('invalid or truncated SWEETLOG area')
 ring = data[4096:4096 + size]
 if total <= size:
     text = ring[:total]

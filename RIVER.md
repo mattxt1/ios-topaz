@@ -464,6 +464,42 @@ contains the new `RIVER FB` messages and the existing userdata-only CMD24
 guard. `fastboot boot` accepted `shim-river/out/river-r10-boot.img` on
 2026-10-20 (SHA-256
 `987eea90a1d321188c6b741a6e180a67970bda9ad81176709a7f3464e1e8a66d`).
-This was a RAM boot; no partition was flashed for the display test. The
-screen result is pending. `river-r10-console-boot.img` is a local fallback
+This was a RAM boot; no partition was flashed for the display test.
+The user observed an Apple logo, which remained after eight minutes. This
+establishes graphical output but does not identify which service prevents
+startup completing. After the user returned to fastboot,
+`fastboot boot` accepted `river-r10-console-boot.img` (SHA-256
+`041cd31244fbf164323e7b009d8e09b08d945e043f44f1b8b101de772959e51d`).
+The user reports progressing `exec` messages without an identified error.
+`river-r10-console-boot.img` is a local fallback
 with the same kernel and published display service but swaps suppressed.
+
+## Persistent river console (r11 preparation)
+
+Patch 0131 reuses the existing 4 MiB SWEET console ring and decoder with an
+eMMC backend, separately enabled by `riverlog=1` (also requires
+`rivermmcrw=1`). The backend checks the p64 HFS+/HFSX volume header before
+enabling any log writes. Its block size must be a valid power of two and
+the volume's declared byte length must end before the log region. The log
+occupies the final 4 MiB + 4 KiB of userdata, aligned down to 4 KiB. This is
+far beyond the current 16 GiB root inside the 53,729,017,344-byte partition.
+There are independent log-region and low-level userdata LBA bounds checks.
+The same eMMC mutex serializes filesystem and log writes. A header is
+written after each flush, every ten seconds; only one logger is started.
+This also starts the existing software-only SpringBoard/backboardd thread
+sampler (first at 90 seconds, then every 120 seconds) to diagnose a logo
+without a crash. It does not enable the topaz hardware probes.
+
+`tools/river-log-pull.sh PRIVATE.txt` reads the tail from root ADB in the
+installed recovery, checking recovery state, river model, exact userdata
+device and length. It saves the binary ring and decoded text with private
+permissions. It writes nothing to the phone. Logs must stay outside git.
+No log can be retrieved from earlier r9/r10 boots, which did not enable this
+backend.
+
+Local builds passed for river's eMMC and shared logger, plus the topaz
+logger. A host harness compiled the actual eMMC log guard functions and
+verified opt-in/write gating, HFS overlap/signature/block-size rejection,
+valid first/last blocks and rejection of zero, oversized or out-of-range
+writes. Decoder tests covered unwrapped, wrapped, multi-wrap and truncated
+header input. CI and phone verification pending.

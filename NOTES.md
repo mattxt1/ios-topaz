@@ -33,7 +33,11 @@ using cached BGRA software composition copied to the measured 24bpp river
 splash; topaz MDP/DSI/modem paths stay excluded. Commit `a5a5fd7` passed CI
 `39394024834`. `fastboot boot` accepted r10 with GUI output enabled,
 `sweetfb_stayon=1 sweetfb_hz=5`; screen result pending. Same-kernel console
-fallback prepared locally. Details in RIVER.md.
+fallback prepared locally. The user saw the Apple logo for eight minutes;
+the fallback console image was then RAM-booted and is showing progressing
+exec messages. Patch 0131 in preparation adds the existing console ring's
+eMMC backend (`riverlog=1`) in the unused userdata tail, guarded against HFS
+overlap. Its recovery pull script reads the log locally. Details in RIVER.md.
 
 ## Agent handoff / active work (2026-10-15, latest)
 

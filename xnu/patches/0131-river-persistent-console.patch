@@ -1,0 +1,237 @@
+diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
+index 7dc5eae..6f2c1ac 100644
+--- a/bsd/dev/river_emmc.c
++++ b/bsd/dev/river_emmc.c
+@@ -39,6 +39,7 @@
+ /* osfmk/arm/machine_routines.h, not exported to the BSD layer */
+ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+ extern void delay(int usec);
++extern void river_log_start(void);
+ 
+ /* SD Host Controller Simplified Spec 3.0 register offsets (32-bit access) */
+ #define SDHCI_BLOCK		0x04	/* block size | block count << 16 */
+@@ -919,6 +920,9 @@ river_emmc_rootdev(const char *name, dev_t *dev)
+ 		return ENXIO;
+ 	}
+ 	*dev = makedev(bmajor, n);
++	if (n == 64) {
++		river_log_start();
++	}
+ 	return 0;
+ }
+ 
+@@ -941,6 +945,70 @@ river_emmc_bench(void)
+ 	    ns ? 1024ULL * NSEC_PER_SEC / ns : 0);
+ }
+ 
++/* Persistent console area: last 4 MiB + 4 KiB, aligned to 4 KiB and wholly
++ * inside userdata. Never enable it if the HFS volume reaches that area. */
++#define RIVER_LOG_BLOCKS4K 1025ULL
++static uint64_t river_log_base4k;
++uint64_t river_emmc_log_base(void);
++int river_emmc_log_write(uint64_t block4k, uint32_t count4k, const void *src);
++
++uint64_t
++river_emmc_log_base(void)
++{
++	return river_log_base4k;
++}
++
++int
++river_emmc_log_write(uint64_t block4k, uint32_t count4k, const void *src)
++{
++	if (!write_enabled || river_log_base4k == 0 || count4k == 0 || count4k > 16 ||
++	    block4k < river_log_base4k ||
++	    block4k - river_log_base4k >= RIVER_LOG_BLOCKS4K ||
++	    count4k > RIVER_LOG_BLOCKS4K - (block4k - river_log_base4k)) {
++		return EROFS;
++	}
++	int error = 0;
++	lck_mtx_lock(&river_emmc_lock);
++	for (uint32_t n = 0; n < count4k * 8 && !error; n++) {
++		error = river_emmc_write_block(block4k * 8 + n, (const uint8_t *)src + n * BLOCK);
++	}
++	lck_mtx_unlock(&river_emmc_lock);
++	return error;
++}
++
++static uint32_t
++river_be32(const uint8_t *p)
++{
++	return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3];
++}
++
++static void
++river_emmc_log_init(void)
++{
++	uint32_t on = 0, header[BLOCK / 4];
++	if (!write_enabled || !PE_parse_boot_argn("riverlog", &on, sizeof(on)) || on != 1) {
++		return;
++	}
++	lck_mtx_lock(&river_emmc_lock);
++	int error = river_emmc_read_block(parts[64].first + 2, header);
++	lck_mtx_unlock(&river_emmc_lock);
++	const uint8_t *h = (const uint8_t *)header;
++	if (error || h[0] != 'H' || (h[1] != 'X' && h[1] != '+')) {
++		printf("RIVER LOG: no HFS volume header; refusing log writes\n");
++		return;
++	}
++	uint32_t blockSize = river_be32(h + 40), blocks = river_be32(h + 44);
++	uint64_t base = ((parts[64].first + parts[64].count) / 8 - RIVER_LOG_BLOCKS4K) * 8;
++	uint64_t volumeBytes = (uint64_t)blockSize * blocks;
++	if (blockSize < 512 || blockSize > (1U << 20) || (blockSize & (blockSize - 1)) ||
++	    !blocks || base <= parts[64].first || volumeBytes > (base - parts[64].first) * BLOCK) {
++		printf("RIVER LOG: HFS volume overlaps reserved log area; refusing log writes\n");
++		return;
++	}
++	river_log_base4k = base / 8;
++	printf("RIVER LOG: HFS %llu bytes; log outside filesystem at userdata tail\n", volumeBytes);
++}
++
+ void river_emmc_probe(void);
+ void
+ river_emmc_probe(void)
+@@ -993,6 +1061,7 @@ river_emmc_probe(void)
+ 		river_emmc_bench();
+ 	}
+ 	river_emmc_devices();
++	river_emmc_log_init();
+ 	printf("RIVER eMMC: probe done\n");
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET && RIVER */
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 22ea71d..cb63842 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -30,6 +30,7 @@
+ #include <miscfs/devfs/devfs.h>
+ #include <kern/locks.h>
+ #include <kern/clock.h>
++#include <kern/kalloc.h>
+ #include <kern/sched_prim.h>
+ #include <machine/machine_routines.h>
+ #include <arm/caches_internal.h>
+@@ -49,6 +50,11 @@ extern kern_return_t kernel_thread_start(thread_continue_t, void *, thread_t *);
+ extern void thread_deallocate(thread_t);
+ extern int hz;
+ static void sweet_log_start(void);
++#if defined(RIVER)
++extern uint64_t river_emmc_log_base(void);
++extern int river_emmc_log_write(uint64_t block4k, uint32_t count4k, const void *src);
++void river_log_start(void);
++#endif
+ extern void sweet_sample_start(void);
+ extern void sweet_keys_init(void);
+ extern void sweet_touch_init(void);
+@@ -921,9 +927,22 @@ struct sweet_log_header {
+ static void
+ sweet_log_thread(__unused void *arg, __unused wait_result_t wr)
+ {
++#if defined(RIVER)
++	uint64_t base = river_emmc_log_base();
++	const uint32_t chunk = 64u << 10;
++	void *bounce = kalloc_data(chunk, Z_WAITOK | Z_ZERO);
++	if (base == 0 || bounce == NULL) {
++		if (bounce != NULL) {
++			kfree_data(bounce, chunk);
++		}
++		return;
++	}
++#else
+ 	uint64_t base = su.first_block + su.nblocks - SWEET_LOG_BLOCKS;
+-	uint64_t flushed = 0, seq = 0;
++	const uint32_t chunk = BOUNCE_SIZE;
+ 	void *bounce = (void *)(su.dma + DMA_BOUNCE);
++#endif
++	uint64_t flushed = 0, seq = 0;
+ 
+ 	printf("SWEET LOG: console log to the last %u KiB of the partition (block 0x%llx)\n",
+ 	    SWEET_LOG_BLOCKS * UFS_BLOCK >> 10, base);
+@@ -936,15 +955,21 @@ sweet_log_thread(__unused void *arg, __unused wait_result_t wr)
+ 		uint64_t pos = total - flushed >= SWEET_LOG_SIZE ? total - SWEET_LOG_SIZE : flushed;
+ 		int error = 0;
+ 
++#if !defined(RIVER)
+ 		lck_mtx_lock(&sweet_ufs_lock);
++#endif
+ 		while (pos < total && !error) {
+ 			uint32_t off = (uint32_t)(pos % SWEET_LOG_SIZE);
+ 			uint32_t blk = off / UFS_BLOCK;
+ 			uint64_t need = ((uint64_t)off % UFS_BLOCK + (total - pos) + UFS_BLOCK - 1) / UFS_BLOCK;
+ 			uint32_t n = (uint32_t)MIN(MIN(need, (uint64_t)(SWEET_LOG_SIZE / UFS_BLOCK - blk)),
+-			    (uint64_t)(BOUNCE_SIZE / UFS_BLOCK));
++			    (uint64_t)(chunk / UFS_BLOCK));
+ 			memcpy(bounce, sweet_log_ring + (uint64_t)blk * UFS_BLOCK, n * UFS_BLOCK);
++#if defined(RIVER)
++			error = river_emmc_log_write(base + 1 + blk, n, bounce);
++#else
+ 			error = ufs_write_blocks(base + 1 + blk, n);
++#endif
+ 			pos += (uint64_t)(blk + n) * UFS_BLOCK - off;
+ 		}
+ 		if (!error) {
+@@ -954,14 +979,23 @@ sweet_log_thread(__unused void *arg, __unused wait_result_t wr)
+ 			};
+ 			bzero(bounce, UFS_BLOCK);
+ 			memcpy(bounce, &h, sizeof(h));
++#if defined(RIVER)
++			error = river_emmc_log_write(base, 1, bounce);
++#else
+ 			error = ufs_write_blocks(base, 1);
++#endif
+ 		}
++#if !defined(RIVER)
+ 		if (!error) {
+ 			error = ufs_sync_cache();
+ 		}
+ 		lck_mtx_unlock(&sweet_ufs_lock);
++#endif
+ 		if (error) {
+ 			printf("SWEET LOG: write failed (%d), stopping\n", error);
++#if defined(RIVER)
++			kfree_data(bounce, chunk);
++#endif
+ 			return;
+ 		}
+ 		flushed = total;
+@@ -974,10 +1008,19 @@ sweet_log_start(void)
+ 	uint32_t on = 1;
+ 	thread_t thread;
+ 
++#if defined(RIVER)
++	/* Opt in separately: the eMMC backend checks that the log is beyond HFS. */
++	on = 0;
++	PE_parse_boot_argn("riverlog", &on, sizeof(on));
++	if (on != 1 || river_emmc_log_base() == 0) {
++		return;
++	}
++#else
+ 	PE_parse_boot_argn("sweetlog", &on, sizeof(on));
+ 	if (!on || !su.writable || su.nblocks < 2 * SWEET_LOG_BLOCKS) {
+ 		return;
+ 	}
++#endif
+ 	PE_parse_boot_argn("ufslogsecs", &sweet_log_secs, sizeof(sweet_log_secs));
+ 	if (sweet_log_secs == 0 || sweet_log_secs > 60) {
+ 		sweet_log_secs = SWEET_LOG_SECS;
+@@ -987,6 +1030,20 @@ sweet_log_start(void)
+ 	}
+ }
+ 
++#if defined(RIVER)
++void
++river_log_start(void)
++{
++	static bool started;
++	if (!started && river_emmc_log_base() != 0) {
++		started = true;
++		sweet_log_start();
++		/* Software-only stack samples help diagnose a logo with no crash. */
++		sweet_sample_start();
++	}
++}
++#endif
++
+ /* Root device for rd=ufsroot0 (IOFindBSDRoot). */
+ int sweet_ufs_rootdev(dev_t *dev);
+ 
