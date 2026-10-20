@@ -66,6 +66,13 @@ log, so no r12 log persisted. Same-kernel r12-console RAM boot sent
 Next recovery log: r12-input.txt. Preserve r11-identity as GUI fallback.
 Details in RIVER.md.
 
+2026-10-20 r12 panic diagnosed from IMG_0352: first 1 MiB TLMM ml_io_map
+cannot fit the 8 MiB permanent I/O pool after the 7,356,416-byte splash map.
+Flags 0x100021 match permanent io_map allocation; error 3 is no space.
+Patch 0133 maps only nine 16 KiB register pages through kernel_map via
+ml_io_map_unmappable(..., VM_WIMG_IO). Local river/topaz compile and physical
+address/bounds checks passed; r13 CI/test pending. Phone in fastboot.
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<

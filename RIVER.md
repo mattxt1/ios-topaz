@@ -638,3 +638,30 @@ initial panic without framebuffer swaps:
 `river-r12-console-boot.img`, SHA-256
 `0c006d3c04f33b9f7df6542ca4ed666dfd85c4422dbb26e2d563e36a966bf911`.
 It keeps riverinput=1 and riverlog=1; screen/panic photo pending.
+
+
+### Panic cause identified from IMG_0352; patch 0133
+
+The original panic is `kmem_alloc(..., 1048576, 0x100021): failed with 3`
+at vm_kern.c:178. The displayed caller resolves to `__kmem_failed_panic`.
+Flags decode as KMA_NOFAIL | KMA_PAGEABLE | KMA_PERMANENT, exactly the
+allocation performed by `osfmk/arm/io_map.c` for ordinary `ml_io_map`.
+That file limits its permanent `io_submap` to **8 MiB**. The framebuffer's
+3240×2270 splash mapping rounds to 7,356,416 bytes, leaving only 1,032,192
+bytes even before other mappings. r12's first input probe requested a
+1,048,576-byte TLMM window, which cannot fit. Its later whole 8 MiB SPMI
+observer window would also have been invalid for this pool. This is virtual
+I/O mapping exhaustion, not exhaustion of the phone's physical RAM.
+It happens before the first RIVER INPUT probe print and before eMMC logging.
+
+Patch 0133 replaces broad register windows with nine 16 KiB pages (144 KiB
+maximum): GPIO10/11, GPIO64/65, GPIO85, SPMI core and just the selected PON
+observer channel, three GCC pages, and QUP3. It uses
+`ml_io_map_unmappable(..., VM_WIMG_IO)`, which maps through kernel_map rather
+than the small permanent I/O pool. Physical register addresses and device
+memory attributes are preserved; no change to register writes or touch
+protocol. Each page is announced before mapping for diagnostic visibility.
+Local object checks passed for river and topaz. A bounds/address check
+verified all fixed register accesses and all 256 possible PON channel
+page offsets. Reverse patch application passed. Phone is in fastboot;
+replacement r13 CI and hardware test pending. Photo remains private.
