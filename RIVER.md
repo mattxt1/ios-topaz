@@ -298,25 +298,44 @@ tries a write open.
   Raw and block reads from user space work, writes are refused, on 4 CPUs
   with the HFS RAM root. Nothing was written to the eMMC; nothing flashed.
 
-### eMMC root (2026-10-20, in progress)
+### First boot with root on eMMC (2026-10-20, photo IMG_0338)
 
 0128 adds `rd=emmc0sN` (read-only root on GPT entry N, `river_emmc_rootdev`);
 CI run 39377752332 (`0b8230d`), kernel `../k-r8/`. The user approved wiping
-the phone. `fastboot flash userdata` of the 8 MiB HFS+ test root
-(`../k-r8/root-hfs.img`, SHA-256 `6a3d0e7b…`) was **refused by the Moto
-bootloader** (`flash permission denied`, `partition-type:userdata raw`,
-size 0xc827fbe00); nothing was written. Android's partition map:
-boot_a p41, boot_b p42, vendor_a p60, vendor_b p61, **system_a p62**,
-system_b p63, userdata p64. Plan: flash the test root to the inactive
-`system_a` (Android keeps booting slot b) and RAM-boot
-`shim-river/out/river-r8-sys62-boot.img` (`rd=emmc0s62`, SHA-256
-`60cad53e…`). Not done yet.
+the phone. `fastboot flash userdata` was **refused by the Moto bootloader**
+(`flash permission denied`; `partition-type:userdata raw`, size
+0xc827fbe00), so nothing was written there. Partition map from Android:
+boot_a p41, boot_b p42, vendor_a p60, vendor_b p61, system_a p62, system_b
+p63, userdata p64 (LBA 17203200, 51239 MiB).
+
+Instead the 8 MiB HFS+ test root (`../k-r8/root-hfs.img`, SHA-256
+`6a3d0e7b…`, `/sbin/launchd` = `tools/river-init.S`) was written with
+`fastboot flash system_a` (**inactive slot a**, raw, 0xb0000000 bytes;
+`Writing 'system_a' OKAY`; slot b stays current, so Android still boots).
+Then `fastboot boot shim-river/out/river-r8-sys62-boot.img` (no RAM disk,
+boot-args `… cpus=4 … rd=emmc0s62 rivermmc=1`, SHA-256 `60cad53e…`):
+
+    BSD root: emmc0s62, major 1, minor 62
+    hfs: mounted SweetRoot on device b(1, 62)
+    SWEET: root volume is not authenticated (error 25); continuing unsealed
+    load_init_program: attempting to load /sbin/launchd
+    *** RIVER userspace: eMMC test init running as PID 1 ***
+    /dev/remmc0s42: first bytes ANDROID!
+    /dev/emmc0s42: first bytes ANDROID!
+    RIVER init: open for writing refused (read-only) OK
+    RIVER init: still alive
+
+**XNU now boots its root filesystem from the phone's eMMC**, read-only, on
+four Gold cores, with the kernel loaded from RAM. Slot a's system image is
+gone (a LineageOS update or `fastboot flash system_a` restores it).
 
 ## Next work
 
 1. Faster I/O if needed: multi-block CMD18 needs CMD12 STOP (also a
    non-writing command), and 4/8-bit or HS modes need CMD6 (a volatile
    EXT_CSD write, so the user's approval first).
-2. Mount a filesystem read-only from eMMC. No river partition holds HFS; an
-   iOS root would have to be written to a partition (on sweet: userdata).
-   That replaces Android data and is a separate decision for the user.
+2. iOS userland: system_a (2.75 GiB) is too small for an iOS 16 root
+   (~10+ GiB uncompressed on sweet). userdata (51 GiB) cannot be flashed
+   from fastboot on this Moto, so an iOS root needs either a kernel write
+   path (CMD24/25, limited to userdata) or Android-side root to dd it.
+   The user approved wiping the phone.
