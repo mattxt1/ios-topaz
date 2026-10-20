@@ -37,7 +37,15 @@ fallback prepared locally. The user saw the Apple logo for eight minutes;
 the fallback console image was then RAM-booted and is showing progressing
 exec messages. Patch 0131 in preparation adds the existing console ring's
 eMMC backend (`riverlog=1`) in the unused userdata tail, guarded against HFS
-overlap. Its recovery pull script reads the log locally. Details in RIVER.md.
+overlap. Its recovery pull script reads the log locally. Commit `064a5e7`
+passed CI `39399757005`; r11 log persistence verified by recovery readback
+(540,839 bytes, flush #2037). Backboardd opens the valid display and submits
+frames. SpringBoard spends samples 5–38 in LaunchServices initialization;
+lsd burns CPU and exceeds 32 threads. Later PosterBoard traps in first-time
+wallpaper setup (`!_stateLock_switcherConfiguration`). Same-kernel focused
+r11 image with lsd/PosterBoard sampling, heap scans and stdout tee is now
+awaiting recovery log retrieval. No proven fix for the logo yet. Details in
+RIVER.md.
 
 ## Agent handoff / active work (2026-10-15, latest)
 

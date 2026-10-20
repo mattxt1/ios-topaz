@@ -1,8 +1,10 @@
 # Moto G7 river bring-up (local branch)
 
-19 October 2026. This branch borrows the topaz XNU work as a starting point;
-it has not booted XNU on river. Device dumps and boot images stay outside git
-in the adjacent private `work/river-device` and `work/river-port` directories.
+Started 19 October 2026. This branch borrows the topaz XNU work as a starting
+point. River now runs iOS 16.7.16 services from userdata and displays the
+Apple logo; graphical startup remains incomplete. Device dumps, photos,
+logs, Apple artifacts and boot images stay in the adjacent private handoff
+folders or ignored output directories.
 
 ## Direct device observations
 
@@ -334,10 +336,11 @@ gone (a LineageOS update or `fastboot flash system_a` restores it).
 1. Faster I/O if needed: multi-block CMD18 needs CMD12 STOP (also a
    non-writing command), and 4/8-bit or HS modes need CMD6 (a volatile
    EXT_CSD write, so the user's approval first).
-2. iOS userland: the 16 GiB root now resides on userdata, but XNU's eMMC
-   driver remains read-only. For iOS daemons that need persistent writes,
-   add CMD24/25 with every write bounded to the verified userdata GPT range.
-   Display, input and USB logging still need river-specific drivers.
+2. iOS userland: r9 enables userdata-limited CMD24 writes; r10 adds the
+   software splash display and reaches the Apple logo. r11 saves a console
+   log and process samples to the unused userdata tail. Investigate the
+   LaunchServices wait and PosterBoard first-time wallpaper assertion below.
+   Input and USB logging still need river-specific drivers.
 
 ## iOS 16 root preparation (2026-10-20)
 
@@ -502,4 +505,33 @@ logger. A host harness compiled the actual eMMC log guard functions and
 verified opt-in/write gating, HFS overlap/signature/block-size rejection,
 valid first/last blocks and rejection of zero, oversized or out-of-range
 writes. Decoder tests covered unwrapped, wrapped, multi-wrap and truncated
-header input. CI and phone verification pending.
+header input. Commit `064a5e7` passed CI `39399757005`. The resulting
+`river-r11-boot.img` (SHA-256
+`37f8582e51ed7a89ff412bde8659c77f1c7a8e0bfc4b60e153bd1dbc4f291bf1`)
+was accepted by `fastboot boot`, with `riverlog=1`, on 2026-10-20.
+**Persistence verified:** root ADB in the installed recovery retrieved a
+valid version-1 ring with 540,839 bytes of console text, flush sequence
+2037, including early boot and all 40 process samples. The binary and text
+are in `../logs-private/r11.txt[.bin]`, outside git. The phone stayed on the
+Apple logo. `fastboot reboot recovery` is not supported by Moto ABL
+(`Unknown command`); the user selected Recovery Mode from its menu. ADB
+`reboot bootloader` works from recovery.
+
+The log confirms AppleCLCD is published as 1125x2436, backboardd opens it,
+creates BGRA surfaces and submits frames; no SpringBoard/backboardd crash
+was recorded. Backboardd's main thread settles in the CFRunLoop. Samples
+5–38 show SpringBoard waiting in LaunchServices context initialization
+while ControlCenterServices filters modules by installed app availability.
+`lsd` is flagged for >50% CPU over 180 seconds and >32 threads. Later,
+SpringBoard advances and submits more frames. PosterBoard then traps in
+`-[PBFPosterExtensionDataStore _stateLock_setupSwitcherConfigurationForFirstTime]`;
+local disassembly identifies its assertion `!_stateLock_switcherConfiguration`.
+This identifies investigated dependencies, not a proven fix for the logo.
+
+A same-kernel focused diagnostic image,
+`river-r11-services-boot.img` (SHA-256
+`b52cacf29d7651a6a648881bfe0da557dfa14eae5d53601dc88c8ff9ec07e9b7`),
+was RAM-booted from recovery via `adb reboot bootloader`, with
+`sweetsample=SpringBoard,backboardd,lsd,PosterBoard`, and matching `sweetscan`
+and `sweetnull` lists to capture the missing exception text and database
+worker stacks. Focused log retrieval pending.
