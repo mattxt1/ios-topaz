@@ -745,3 +745,52 @@ r14 image, and inspect enumeration/probe output. Only configure the matching
 synthetic USB interface; macOS may require administrator authorization.
 If no interface appears, return to recovery and inspect r14-usb.txt before
 changing power/clock/PHY setup. Keep all raw logs local and outside git.
+
+## r14 live USB, Gold clock fix, storage bottleneck (2026-10-20, Claude session)
+
+### r14 live USB log: works
+`river-r14-boot.img` RAM-booted 15:21:45. The DWC3 CDC-ECM gadget enumerated
+at +50 s (`0x1209/0001`, 480 Mbps). macOS first blocked it ("device
+functionality blocked by transport restrictions": Apple Silicon accessory
+security; the user clicked Allow). The host receiver then got the live
+console over UDP. The `SWEET USB: event` lines are a bounded 200-line burst
+(capped in code), not a feedback loop. The live log also caught the user's
+touch and Power (0x30) / Volume-down (0xea) presses reaching iOS HID.
+
+### Boot-time diagnosis: Gold ran at 19.2 MHz
+The iOS clock starts at 0 on boot, so launchd timestamps are uptime; host
+stamps (`tools/river-log-stamp.py`) agree. r14: root at ~+49 s, launchd ~+92 s,
+SpringBoard exec +254 s, still in dyld init at +378 s. Kernel/CPU evidence:
+`pmap_startup` 345 ms; FIPS RSA 747 ms, ECDSA 1415 ms, PBKDF 2490 ms.
+ABL runs only on Silver and never programs the Gold (perf) cluster clock;
+Linux does it in `clock-cpu-sdm632.c` `cpu_clock_init()` (early_initcall,
+before any regulator/CPR work): APCS_ALIAS1 CMD_RCGR `0x0b011050`, CFG
+`0x401` (GPLL0 sel 4, div 1 = 800 MHz), update, core CBCR enable. The shim
+now does exactly that before CPU_ON (`--no-gold-clk` restores old behaviour)
+and prints the RCG before/after plus a spin-loop MHz.
+
+### r15clk (r14 kernel + new shim): eMMC panic, photo IMG_0355
+`IOFindBSDRoot: river eMMC root emmc0s64 unavailable` after
+`CMD7 arg 0x10000 timeout, status 0x00000002`. CMD3 -> CMD7 at 400 kHz were
+issued back to back; the slow CPU had always provided the >= 8 card clock
+gap. Patch 0135 waits 50 us (400 kHz) / 1 us (25 MHz) before each command and
+retries card init once with a 1 ms gap.
+
+### r15 (CI 39485698710, commit 0635c91): verified 43x CPU
+`river-r15-boot.img` sha256 a6012c54...48e2, booted 15:49:08. eMMC init
+first try. FIPS: RSA 17 ms, ECDSA 33 ms, PBKDF 58 ms (43x; 800/19.2 = 41.7).
+USB at +35 s, launchd +61 s, SpringBoard exec +141 s, backboardd +157 s.
+eMMC unchanged at 1216 KiB/s (bus-bound). SpringBoard then sat at the same
+pc/lr/sp (dyld notifyDtrace, forEachSection+0x34) across samples 1-2 (as in
+r14) and moved on between +364 and +604 s; at +724 s still in dyld ObjC
+category loading. Other processes progressed. Interpretation (not yet
+proven): page-ins at 1.2 MB/s dominate. The shared region is fine: "not in
+trust cache" is a soft warning that falls back to the root-owner check, and
+all processes share one slide.
+
+### r16 (patches 0136, 0137; commit 4979786): built, testing
+0136: EXT_CSD read, CMD6 BUS_WIDTH=2 + host 8-bit, CMD6 HS_TIMING=1 + host
+high speed + 50 MHz, each verified by EXT_CSD re-read with fallback;
+CMD23+CMD18 multi-block reads up to 64 KiB, verified against single-block
+reads. CMD6 gated to those two volatile bytes. 0137: sampler prints thread
+state, block hint, wait event, user FAR/ESR and kernel backtrace.
