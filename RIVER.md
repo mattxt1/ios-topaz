@@ -809,3 +809,23 @@ Center module metadata. New sampler fields worked (e.g. mediaremoted at
 mutex). PosterBoard crashed at +292 s (ns 2 code 0x5), not yet analysed.
 Remaining throughput limit is PIO (CPU copies every word); ADMA is the next
 storage step.
+
+### r17 (0138, 0139; CI build of 7a87126): **iOS home screen, interactive**
+`river-r17-boot.img` sha256 6759b48d...51bd7, RAM-booted 16:24:12.
+0138 reads the Novatek report every 10 ms (its INT is a per-frame pulse,
+Linux IRQ_TYPE_EDGE_RISING, so the old level-gated poll missed nearly all
+move frames); 0139 ends a lift at the last position (was the top-left
+corner) and logs the move count. Swipes now carry 14-78 moves.
+Swipes first did nothing: the lock screen was drawn at +338 s and iOS
+requested display off at +344.7 s (normal lock-screen auto-sleep);
+`sweetfb_stayon` keeps the last frame visible, so the panel looked awake
+while iOS ignored touches. Tap-to-wake needs an Apple touch-controller wake
+gesture we do not provide. **Short Power press at +610.7 s -> `display on`;
+swipe up at +613.9 s -> unlocked to the home screen (user report).**
+Two SpringBoard crashes in this run (+166 s, +295 s, before any touch):
+SIGBUS with pc == far in SpringBoard's own malloc heap ("Data/Stack
+execution not permitted"), in FBSApplicationLibrary load and MediaRemote
+routing discovery. Not in r14-r16. Suspected eMMC multi-block data errors
+(or an SMP race); r18 (0140, rivermmcverify=1) tests that.
+Usage notes: wake with a short Power press, then swipe within ~5 s; set
+Auto-Lock to Never once unlocked.
