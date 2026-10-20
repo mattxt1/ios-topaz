@@ -8,6 +8,14 @@ diagnostics, and the next kernel work. The sweet/topaz notes below describe
 other devices; their GICv3, UFS, boot image, and display addresses do not apply
 to river.
 
+2026-10-20: patch 0127 reworked after review (river is now `SWEET_BOARD=river`
+on MACHINE_CONFIG=SWEET, not a new machine config; GICv2 IPIs, 24bpp splash
+console, topaz drivers and UFS disabled). Changed files compile locally for
+topaz and river with `tools/river-cc.py`; **no CI build yet**. New
+`shim-river/` header-v1 shim built locally, **not yet booted**. Next: shim-only
+`fastboot boot` photo, then a `board=river` CI build on a fork. Details and
+commands in `RIVER.md`.
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<

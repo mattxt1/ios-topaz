@@ -1,84 +1,328 @@
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 143db60..22ea71d 100644
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -745,6 +745,20 @@ sweet_ufs_init(void)
+ 	char want[64] = "userdata";
+ 	int error;
+ 
++#if defined(RIVER)
++	/*
++	 * river has eMMC (SDHCI), not UFS, and its first boots are storage-free:
++	 * never map or touch a storage controller, whatever the device tree says.
++	 * This also keeps the UFS log, sampler, touch, keys and USB probes off.
++	 */
++	(void)node;
++	(void)reg;
++	(void)size;
++	(void)want;
++	(void)error;
++	printf("RIVER: no UFS; storage-free kernel\n");
++	return ENODEV;
++#endif
+ 	if (SecureDTLookupEntry(NULL, "/sweet-ufs", &node) != kSuccess ||
+ 	    SecureDTGetProperty(node, "reg", (void const **)&reg, &size) != kSuccess ||
+ 	    size < 2 * sizeof(uintptr_t)) {
+diff --git a/iokit/Kernel/arm/SweetCPU.cpp b/iokit/Kernel/arm/SweetCPU.cpp
+index 96c557b..a8b7b21 100644
+--- a/iokit/Kernel/arm/SweetCPU.cpp
++++ b/iokit/Kernel/arm/SweetCPU.cpp
+@@ -20,6 +20,9 @@
+ 
+ extern "C" void sweet_secondary_entry(void);
+ extern "C" boolean_t sweet_cpu_signal_is_enabled(unsigned int cpu);
++#if defined(RIVER)
++extern "C" void river_gic_send_sgi(uint64_t mpidr);
++#endif
+ 
+ class SweetCPU;
+ static SweetCPU *sweet_cpus[MAX_CPUS];
+@@ -220,6 +223,10 @@ SweetCPU::signalCPU(IOCPU *target)
+ 	}
+ 	/* Use the TARGET affinity, including Aff1, never the sender's MPIDR. */
+ 	uint64_t mpidr = topology->cpus[logical].phys_id;
++#if defined(RIVER)
++	/* GICv2: no ICC_SGI1R_EL1 (UNDEFINED here); GICD_SGIR by interface number. */
++	river_gic_send_sgi(mpidr);
++#else
+ 	unsigned int aff0 = mpidr & 0xff;
+ 	if (aff0 >= 16) {
+ 		panic("SWEET CPU: SGI target requires unsupported range selector");
+@@ -230,6 +237,7 @@ SweetCPU::signalCPU(IOCPU *target)
+ 	    ((uint64_t)SWEET_IPI_SGI << 24) | (1ULL << aff0);
+ 	__builtin_arm_dsb(DSB_ISHST);
+ 	__builtin_arm_wsr64("ICC_SGI1R_EL1", sgi);
++#endif
+ 	__builtin_arm_isb(ISB_SY);
+ }
+ 
+diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
+index 92f3e26..6e838fb 100644
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -62,6 +62,10 @@ const char * gIOKernelConfigTables =
+     "     'IOProviderClass' = IOResources;"
+     "     'IOMatchCategory' = IOCoreSurfaceRoot;"
+     "   },"
++#if !defined(RIVER)
++    /* river: none of these topaz drivers. AppleCLCD programs topaz MDP/DSI
++     * registers and starts TopazModem; SweetBattery maps topaz cpufreq, I2C
++     * and SPMI blocks; the HID services expect topaz touch/key drivers. */
+     "   {"
+     "     'IOClass'         = AppleCLCD;"
+     "     'IOProviderClass' = IOPlatformDevice;"
+@@ -82,6 +86,7 @@ const char * gIOKernelConfigTables =
+     "     'IOProviderClass' = IOResources;"
+     "     'IOMatchCategory' = SweetBattery;"
+     "   },"
++#endif /* !RIVER */
+ #endif
+     "   {"
+     "     'IOClass'         = IOPanicPlatform;"
 diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
+index 004c5fc..1407b8c 100644
 --- a/makedefs/MakeInc.def
 +++ b/makedefs/MakeInc.def
-@@ -29,7 +29,7 @@
- else ifneq ($(findstring _host,$(RC_ProjectName)),)
- SUPPORTED_ARM64_MACHINE_CONFIGS = NONE
- else
--SUPPORTED_ARM64_MACHINE_CONFIGS = BCM2837 T6000 T8101 T8103 VMAPPLE SWEET
-+SUPPORTED_ARM64_MACHINE_CONFIGS = BCM2837 T6000 T8101 T8103 VMAPPLE SWEET RIVER
- 
- endif
- 
-@@ -64,6 +64,7 @@
+@@ -64,6 +64,11 @@ MACHINE_FLAGS_ARM64_BCM2837 = -DARM64_BOARD_CONFIG_BCM2837
  # topaz: Cortex-A53/A73 are ARMv8.0 (no LSE atomics, RCpc, PAN or FP16). An explicit
  # -mcpu: -arch arm64 otherwise keeps clang's apple-m1 default and its LSE/RCpc features
  MACHINE_FLAGS_ARM64_SWEET = -DARM64_BOARD_CONFIG_SWEET                -mcpu=cortex-a53
-+MACHINE_FLAGS_ARM64_RIVER = -DARM64_BOARD_CONFIG_SWEET -DRIVER=1      -mcpu=cortex-a53
++# river (Moto G7, SDM632): same SWEET machine config and MASTER file, selected
++# with SWEET_BOARD=river in the environment; board differences are #if RIVER.
++ifeq ($(SWEET_BOARD),river)
++MACHINE_FLAGS_ARM64_SWEET += -DRIVER=1
++endif
  
  
  #
-@@ -263,7 +264,7 @@
- export ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG := $(shell echo $(CURRENT_ARCH_CONFIG) | tr A-Z a-z)
- ifneq ($(filter arm64,$(ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG)),)
- # sweet's Cortex-A76/A55 have no pointer authentication: stay plain arm64
--ifneq ($(CURRENT_MACHINE_CONFIG),SWEET)
-+ifeq ($(filter SWEET RIVER,$(CURRENT_MACHINE_CONFIG)),)
- export ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG := arm64e
- endif
- endif
-diff --git a/pexpert/pexpert/arm64/SWEET.h b/pexpert/pexpert/arm64/SWEET.h
---- a/pexpert/pexpert/arm64/SWEET.h
-+++ b/pexpert/pexpert/arm64/SWEET.h
-@@ -24,7 +24,11 @@
-  * CPU_ON; the scheduler does not know the A76s are faster (no AMP/P-E
-  * clusters yet).
-  */
-+#if defined(RIVER)
-+#define SWEET_SMP_MAX_CPUS         4
-+#else
- #define SWEET_SMP_MAX_CPUS         8
-+#endif
- 
- #define ARM_ARCH_TIMER
- #define __ARM_ARCH__              8
-@@ -37,7 +41,11 @@
- /* topaz: Cortex-A53/A73 have no PAN (ARMv8.1); MSR PAN is undefined there */
- #define __ARM_16K_PG__            1
+diff --git a/osfmk/arm64/arm_vm_init.c b/osfmk/arm64/arm_vm_init.c
+index 06bb568..3fab725 100644
+--- a/osfmk/arm64/arm_vm_init.c
++++ b/osfmk/arm64/arm_vm_init.c
+@@ -1843,7 +1843,7 @@ sweet_early_map_final(void)
+ 	tt_entry_t *l2 = (tt_entry_t *)phystokv(l1 & ARM_TTE_TABLE_MASK);
+ 	tt_entry_t *slot = &l2[(va & ARM_TT_L2_INDEX_MASK) >> ARM_TT_L2_SHIFT];
+ 	assert(*slot == ARM_TTE_EMPTY);
+-	*slot = 0x9c000000ULL | ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK |
++	*slot = (tt_entry_t)SWEET_EARLY_FB_BLOCK | ARM_TTE_VALID | ARM_TTE_TYPE_BLOCK |
+ 	    ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) |
+ 	    ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) |
+ 	    ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX;
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+index a2a8c1b..dd3cbb5 100644
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1925,6 +1925,11 @@ handle_simd_trap(arm_saved_state_t *state, uint32_t esr)
+ 	__builtin_unreachable();
+ }
  
 +#if defined(RIVER)
-+#define HAS_GIC_V3                0
-+#else
- #define HAS_GIC_V3                1
++extern vm_offset_t river_gicc_base;
++extern void river_gic_mask_intid(uint32_t intid);
 +#endif
++
+ void
+ sleh_irq(arm_saved_state_t *state)
+ {
+@@ -1934,7 +1939,37 @@ sleh_irq(arm_saved_state_t *state)
+ #endif
  
- #ifndef ASSEMBLER
- #define PLATFORM_PANIC_LOG_DISABLED
-@@ -48,7 +56,11 @@
-  * virt, hyp) instead of the usual 13/14/11/10: the virtual timer XNU uses
-  * (CNTV) is INTID 16 + 3 = 19.
-  */
+ 
+-#if defined(SWEET)
 +#if defined(RIVER)
-+#define SWEET_VTIMER_INTID        20
-+#else
- #define SWEET_VTIMER_INTID        19
++	uint32_t iar = *(volatile uint32_t *)(river_gicc_base + GICC_V2_IAR);
++	uint32_t intid = iar & 0x3ff;
++	if (intid >= 1020) {
++		return; /* spurious */
++	}
++	if (intid == sweet_vtimer_intid) {
++		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_TIMER);
++		cdp->cpu_decrementer = -1;
++		INTERRUPT_MASKED_DEBUG_START(rtclock_intr, DBG_INTR_TYPE_TIMER);
++		rtclock_intr(TRUE);
++		INTERRUPT_MASKED_DEBUG_END();
++	} else if (intid < 16) {
++		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_IPI);
++	} else {
++		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_OTHER);
++		if (cdp->interrupt_handler) {
++			cdp->interrupt_handler(cdp->interrupt_target,
++			    cdp->interrupt_refCon, cdp->interrupt_nub, intid);
++		} else {
++			/* ABL may leave unrelated sources pending on the Gold core. */
++			river_gic_mask_intid(intid);
++		}
++	}
++	/* EOI with the whole IAR: for SGIs it carries the source CPU ID. */
++	*(volatile uint32_t *)(river_gicc_base + GICC_V2_EOIR) = iar;
++	__asm__ volatile("dsb sy; isb" ::: "memory");
++	if (intid < 16) {
++		cpu_signal_handler();
++	}
++#elif defined(SWEET)
+ 	/*
+ 	 * sweet: TrustZone owns GIC Group 0, so the timer and IPIs that other
+ 	 * ARM64 targets take as FIQs arrive here as Group 1 IRQs.
+diff --git a/osfmk/arm64/start.s b/osfmk/arm64/start.s
+index 023086f..949df5d 100644
+--- a/osfmk/arm64/start.s
++++ b/osfmk/arm64/start.s
+@@ -306,11 +306,14 @@ LEXT(sweet_secondary_entry)
+ 	mov		x1, #3
+ 	msr		CNTHCTL_EL2, x1
+ 	msr		CNTVOFF_EL2, xzr
+-	/* Permit ICC_SRE_EL1 and GIC CPU interface system-register access. */
++#if !defined(RIVER)
++	/* Permit ICC_SRE_EL1 and GIC CPU interface system-register access.
++	 * river's GICv2 has no system-register interface: ICC_* is UNDEFINED. */
+ 	mrs		x1, ICC_SRE_EL2
+ 	orr		x1, x1, #1
+ 	orr		x1, x1, #8
+ 	msr		ICC_SRE_EL2, x1
 +#endif
- #define SWEET_IPI_SGI             1       // SGI used for cross-CPU signals
+ 	/* Known Armv8 SCTLR RES1 bits, M/C/I off, little endian. */
+ 	MOV64	x1, 0x30d00800
+ 	msr		SCTLR_EL1, x1
+@@ -514,13 +517,14 @@ LEXT(start_first_cpu)
+ 	mov		x21, #0
  
- #define GIC_SPURIOUS_IRQ          1023    // IRQ no. for GIC spurious interrupt
+ #if defined(SWEET)
+-	/* Stage 0: white 64x32 band, no stack or page tables needed. */
+-	MOV64	x0, (0x9c000000 + 2368 * 4320)
++	/* Stage 0: white 64x32 band, no stack or page tables needed. White is
++	 * all-ones bytes, so 64 pixels are 16 * BPP words at any pixel depth. */
++	MOV64	x0, (SWEET_EARLY_FB_PA + (SWEET_EARLY_FB_HEIGHT - 32) * SWEET_EARLY_FB_STRIDE)
+ 	mov		w1, #-1
+ 	mov		x2, #32
+-	mov		x4, #4320
++	MOV64	x4, SWEET_EARLY_FB_STRIDE
+ Lsweet_mark_row:
+-	mov		x3, #64
++	mov		x3, #(16 * SWEET_EARLY_FB_BPP)
+ 	mov		x5, x0
+ Lsweet_mark_pixel:
+ 	str		w1, [x5], #4
+@@ -686,7 +690,7 @@ Lkernelcache_base_found:
+ 	 * SWEET uses 16K pages and all bring-up RAM is below 4GB, so the first
+ 	 * V=P L2 page is bootstrap_pagetables + 2*PGBYTES.
+ 	 */
+-	MOV64	x10, 0x9c000000
++	MOV64	x10, SWEET_EARLY_FB_BLOCK
+ 	MOV64	x11, (ARM_TTE_TYPE_BLOCK | ARM_TTE_VALID | ARM_TTE_BLOCK_SH(SH_OUTER_MEMORY) | ARM_TTE_BLOCK_ATTRINDX(CACHE_ATTRINDX_WRITECOMB) | ARM_TTE_BLOCK_AF | ARM_TTE_BLOCK_PNX | ARM_TTE_BLOCK_NX)
+ 	orr		x11, x11, x10
+ 	and		x12, x10, #(ARM_TT_L2_INDEX_MASK)
+diff --git a/osfmk/arm64/sweet_early.c b/osfmk/arm64/sweet_early.c
+index 6928957..2138356 100644
+--- a/osfmk/arm64/sweet_early.c
++++ b/osfmk/arm64/sweet_early.c
+@@ -11,11 +11,14 @@
+ #include <stdint.h>
+ #include <kern/misc_protos.h>
+ 
+-static volatile uint32_t *early_fb = (volatile uint32_t *)(uintptr_t)0x9c000000;
+-#define EARLY_FB early_fb
+-#define EARLY_WIDTH 1080u
+-#define EARLY_HEIGHT 2400u
+-#define EARLY_STRIDE (4320u / 4)
++#include <pexpert/arm64/board_config.h>
++
++/* Byte address of the visible splash; 3 (river) or 4 (topaz) bytes per pixel. */
++static volatile uint8_t *early_fb = (volatile uint8_t *)(uintptr_t)SWEET_EARLY_FB_PA;
++#define EARLY_WIDTH SWEET_EARLY_FB_WIDTH
++#define EARLY_HEIGHT SWEET_EARLY_FB_HEIGHT
++#define EARLY_STRIDE SWEET_EARLY_FB_STRIDE
++#define EARLY_BPP SWEET_EARLY_FB_BPP
+ #define EARLY_SCALE 2u
+ #define EARLY_CELL_W (8u * EARLY_SCALE)
+ #define EARLY_CELL_H (16u * EARLY_SCALE)
+@@ -28,13 +31,27 @@ extern unsigned char iso_font[256 * 16];
+ static unsigned int early_row, early_col;
+ static unsigned int early_started, early_disabled, early_panicking;
+ 
++/* Pixel (x, y) as 0xAARRGGBB; 24bpp drops alpha. Gray/white/black only, so
++ * the panel's RGB vs. BGR byte order does not matter for console text. */
++static inline void
++sweet_early_pixel(unsigned int x, unsigned int y, uint32_t argb)
++{
++	volatile uint8_t *p = early_fb + y * EARLY_STRIDE + x * EARLY_BPP;
++#if EARLY_BPP == 4
++	*(volatile uint32_t *)p = argb;
++#else
++	p[0] = (uint8_t)argb;
++	p[1] = (uint8_t)(argb >> 8);
++	p[2] = (uint8_t)(argb >> 16);
++#endif
++}
++
+ static void
+ sweet_early_clear_row(void)
+ {
+ 	for (unsigned int y = 0; y < EARLY_CELL_H; y++) {
+-		volatile uint32_t *line = EARLY_FB + (early_row * EARLY_CELL_H + y) * EARLY_STRIDE;
+ 		for (unsigned int x = 0; x < EARLY_WIDTH; x++) {
+-			line[x] = 0xff000000u;
++			sweet_early_pixel(x, early_row * EARLY_CELL_H + y, 0xff000000u);
+ 		}
+ 	}
+ }
+@@ -64,13 +81,11 @@ sweet_early_putc(char c)
+ 	const unsigned char *glyph = iso_font + (unsigned char)c * 16;
+ 	for (unsigned int gy = 0; gy < 16; gy++) {
+ 		for (unsigned int sy = 0; sy < EARLY_SCALE; sy++) {
+-			volatile uint32_t *line = EARLY_FB +
+-			    (early_row * EARLY_CELL_H + gy * EARLY_SCALE + sy) * EARLY_STRIDE +
+-			    early_col * EARLY_CELL_W;
++			unsigned int y = early_row * EARLY_CELL_H + gy * EARLY_SCALE + sy;
+ 			for (unsigned int gx = 0; gx < 8; gx++) {
+ 				uint32_t pixel = (glyph[gy] & (1u << gx)) ? 0xffffffffu : 0xff000000u;
+ 				for (unsigned int sx = 0; sx < EARLY_SCALE; sx++) {
+-					line[gx * EARLY_SCALE + sx] = pixel;
++					sweet_early_pixel(early_col * EARLY_CELL_W + gx * EARLY_SCALE + sx, y, pixel);
+ 				}
+ 			}
+ 		}
+@@ -95,7 +110,7 @@ sweet_early_mark(unsigned int stage, const char *label)
+ 	uint32_t color = 0xff00ff00u | ((stage & 7u) * 32u << 16);
+ 	for (unsigned int y = EARLY_HEIGHT - 32; y < EARLY_HEIGHT; y++) {
+ 		for (unsigned int x = stage * 48; x < (stage + 1) * 48; x++) {
+-			EARLY_FB[y * EARLY_STRIDE + x] = color;
++			sweet_early_pixel(x, y, color);
+ 		}
+ 	}
+ 	__asm__ volatile("dsb sy" ::: "memory");
+@@ -129,7 +144,8 @@ void
+ sweet_early_relocate(uint64_t base)
+ {
+ 	sweet_early_mark(8, "leaving bootstrap TTBR0");
+-	early_fb = (volatile uint32_t *)(uintptr_t)base;
++	/* base maps SWEET_EARLY_FB_BLOCK; the splash may start inside the block. */
++	early_fb = (volatile uint8_t *)(uintptr_t)(base + (SWEET_EARLY_FB_PA - SWEET_EARLY_FB_BLOCK));
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	sweet_early_mark(9, "kernel framebuffer VA live");
+ }
 diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
+index 6089db9..370d1b3 100644
 --- a/pexpert/arm/pe_fiq.c
 +++ b/pexpert/arm/pe_fiq.c
-@@ -13,7 +13,81 @@
+@@ -13,7 +13,120 @@
  #include <pexpert/arm64/board_config.h>
  
  
 -#if HAS_GIC_V3
 +#if defined(RIVER)
-+/* River's GICv2 has banked SGI/PPI registers and an MMIO CPU interface. */
++/*
++ * river (SDM632): Qualcomm GICv2 with Security Extensions, entered in
++ * Non-secure EL1. SGI/PPI enable, priority and target registers are banked
++ * per CPU, and the CPU interface is MMIO (no ICC_* system registers: they
++ * are UNDEFINED on these cores). The virtual timer and IPIs are Group 1 IRQs
++ * taken through sleh_irq(); NS writes to GICD_IGROUPR are ignored, so their
++ * group is whatever the secure firmware set (Group 1 on the measured phone).
++ */
 +SECURITY_READ_ONLY_LATE(uint32_t) sweet_vtimer_intid = SWEET_VTIMER_INTID;
 +static vm_offset_t river_gicd_base;
 +vm_offset_t river_gicc_base;
++/* GIC CPU interface bit of each Gold core, indexed by MPIDR Aff0. */
++static uint8_t river_gic_iface[4];
 +
 +static uint32_t
 +river_gic_read32(vm_offset_t address)
@@ -96,9 +340,27 @@ diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
 +river_gic_mask_intid(uint32_t intid)
 +{
 +	if (intid < 1020) {
-+		river_gic_write32(river_gicd_base + 0x180 + 4 * (intid / 32),
-+		    1U << (intid % 32)); /* GICD_ICENABLERn */
++		river_gic_write32(river_gicd_base + GICD_V2_ICENABLER0 + 4 * (intid / 32),
++		    1U << (intid % 32));
 +	}
++}
++
++/* Raise SWEET_IPI_SGI on the Gold core with this MPIDR (SweetCPU::signalCPU). */
++void
++river_gic_send_sgi(uint64_t mpidr)
++{
++	unsigned int aff0 = mpidr & 3;
++	uint32_t iface = river_gic_iface[aff0];
++	if (((mpidr >> 8) & 0xff) != 1 || (mpidr & 0xfc)) {
++		panic("river: SGI target 0x%llx is not a Gold core", mpidr);
++	}
++	if (iface == 0) {
++		/* Not yet in pe_init_fiq: SDM632 numbers Gold interfaces 4-7. */
++		iface = (uint8_t)(1U << (4 + aff0));
++	}
++	__asm__ volatile("dsb ishst" ::: "memory");
++	/* TargetListFilter 0: the CPUTargetList in bits 23:16; NSATT 0 */
++	river_gic_write32(river_gicd_base + GICD_V2_SGIR, ((uint32_t)iface << 16) | SWEET_IPI_SGI);
 +}
 +
 +void
@@ -134,74 +396,197 @@ diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
 +		if (!river_gicd_base || !river_gicc_base) {
 +			panic("river: cannot map GICv2 registers");
 +		}
++		kprintf("RIVER GIC: v2 virtual timer INTID %u\n", sweet_vtimer_intid);
 +	}
 +
-+	uint32_t bit = 1U << sweet_vtimer_intid;
 +	vm_offset_t d = river_gicd_base;
 +	vm_offset_t c = river_gicc_base;
-+	river_gic_write32(d + 0x80, river_gic_read32(d + 0x80) | bit); /* IGROUPR0 */
-+	*(volatile uint8_t *)(d + 0x400 + sweet_vtimer_intid) = 0xa0;
-+	river_gic_write32(d + 0x100, bit); /* ISENABLER0 */
-+	river_gic_write32(d, river_gic_read32(d) | 1U); /* Enable Group 1 */
-+	river_gic_write32(c + 0x4, 0xff); /* GICC_PMR */
-+	river_gic_write32(c, river_gic_read32(c) | 1U); /* GICC_CTLR */
++	/* Banked GICD_ITARGETSR0..7 read back this CPU's own interface bit. */
++	uint8_t iface = (uint8_t)river_gic_read32(d + GICD_V2_ITARGETSR0);
++	uint64_t mpidr = __builtin_arm_rsr64("MPIDR_EL1");
++	if (iface == 0 || (iface & (iface - 1))) {
++		panic("river: GICD_ITARGETSR0 reads 0x%x on MPIDR 0x%llx", iface, mpidr & 0xffff);
++	}
++	river_gic_iface[mpidr & 3] = iface;
++
++	uint32_t bits = (1U << sweet_vtimer_intid) | (1U << SWEET_IPI_SGI);
++	river_gic_write32(d + GICD_V2_IGROUPR0, river_gic_read32(d + GICD_V2_IGROUPR0) | bits);
++	*(volatile uint8_t *)(d + GICD_V2_IPRIORITYR + sweet_vtimer_intid) = 0xa0;
++	*(volatile uint8_t *)(d + GICD_V2_IPRIORITYR + SWEET_IPI_SGI) = 0xa0;
++	/* SGI enable bits may be RAO/WI; PPI enables are banked. */
++	river_gic_write32(d + GICD_V2_ISENABLER0, bits);
++	river_gic_write32(d + GICD_CTLR, river_gic_read32(d + GICD_CTLR) | GICD_CTLR_ENABLEGRP1);
++	river_gic_write32(c + GICC_V2_PMR, 0xff);
++	river_gic_write32(c + GICC_V2_CTLR, river_gic_read32(c + GICC_V2_CTLR) | 1U); /* EnableGrp1 */
 +	__asm__ volatile("dsb sy; isb" ::: "memory");
++	kprintf("RIVER GIC: cpu mpidr 0x%llx interface 0x%x\n", mpidr & 0xffff, iface);
 +}
 +
 +#elif HAS_GIC_V3
  #define GICR_WAKE_TIMEOUT_NS (1000000000ULL) // timeout for redistributor wakeup (default 1s)
  MACHINE_TIMEOUT(gicr_wake_timeout_ns, "gicr-wake-timeout", GICR_WAKE_TIMEOUT_NS, MACHINE_TIMEOUT_UNIT_NSEC, NULL);
  
-diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
---- a/osfmk/arm64/sleh.c
-+++ b/osfmk/arm64/sleh.c
-@@ -1925,6 +1925,11 @@
- 	__builtin_unreachable();
+diff --git a/pexpert/arm/pe_serial.c b/pexpert/arm/pe_serial.c
+index 19f27cd..15e1f23 100644
+--- a/pexpert/arm/pe_serial.c
++++ b/pexpert/arm/pe_serial.c
+@@ -706,7 +706,9 @@ register_serial_functions(struct pe_serial_functions *fns)
+  * the boot framebuffer described by the ADT node "sweet-fbcon":
+  *   reg    = <phys size>       absolute physical address, not arm-io relative
+  *   width, height              pixels
+- *   stride                     bytes per line, 32bpp
++ *   stride                     bytes per line
++ *   bytes-per-pixel            optional: 4 (default, a8r8g8b8) or 3 (river's
++ *                              24bpp ABL splash)
+  * Lines wrap back to the top instead of scrolling; the line after the cursor
+  * is kept blank so the newest output is easy to find.
+  */
+@@ -717,17 +719,29 @@ extern unsigned char iso_font[256 * 16];
+ #define FBCON_FG        0xffffffffu
+ #define FBCON_BG        0xff000000u
+ 
+-static volatile uint32_t *fbcon_base;
+-static uint32_t fbcon_width, fbcon_height, fbcon_stride;
++static volatile uint8_t *fbcon_base;
++static uint32_t fbcon_width, fbcon_height, fbcon_stride, fbcon_bpp = 4;
+ static uint32_t fbcon_cols, fbcon_rows, fbcon_col, fbcon_row;
+ 
++static inline void
++fbcon_pixel(uint32_t x, uint32_t y, uint32_t argb)
++{
++	volatile uint8_t *p = fbcon_base + y * fbcon_stride + x * fbcon_bpp;
++	if (fbcon_bpp == 4) {
++		*(volatile uint32_t *)p = argb;
++	} else {
++		p[0] = (uint8_t)argb;
++		p[1] = (uint8_t)(argb >> 8);
++		p[2] = (uint8_t)(argb >> 16);
++	}
++}
++
+ static void
+ fbcon_clear_row(uint32_t row)
+ {
+ 	for (uint32_t y = row * 16 * FBCON_SCALE; y < (row + 1) * 16 * FBCON_SCALE; y++) {
+-		volatile uint32_t *line = fbcon_base + y * (fbcon_stride / 4);
+ 		for (uint32_t x = 0; x < fbcon_width; x++) {
+-			line[x] = FBCON_BG;
++			fbcon_pixel(x, y, FBCON_BG);
+ 		}
+ 	}
  }
+@@ -776,11 +790,11 @@ fbcon_transmit_data(uint8_t c)
+ 	uint32_t x0 = fbcon_col * 8 * FBCON_SCALE, y0 = fbcon_row * 16 * FBCON_SCALE;
+ 	for (uint32_t gy = 0; gy < 16; gy++) {
+ 		for (uint32_t sy = 0; sy < FBCON_SCALE; sy++) {
+-			volatile uint32_t *line = fbcon_base + (y0 + gy * FBCON_SCALE + sy) * (fbcon_stride / 4) + x0;
++			uint32_t y = y0 + gy * FBCON_SCALE + sy;
+ 			for (uint32_t gx = 0; gx < 8; gx++) {
+ 				uint32_t px = (glyph[gy] & (1u << gx)) ? FBCON_FG : FBCON_BG;
+ 				for (uint32_t sx = 0; sx < FBCON_SCALE; sx++) {
+-					line[gx * FBCON_SCALE + sx] = px;
++					fbcon_pixel(x0 + gx * FBCON_SCALE + sx, y, px);
+ 				}
+ 			}
+ 		}
+@@ -831,11 +845,16 @@ fbcon_probe(void)
+ 	if (SecureDTGetProperty(entry, "stride", (void const **)&val, &size) == kSuccess) {
+ 		fbcon_stride = *val;
+ 	}
+-	if (!fbcon_width || !fbcon_height || fbcon_stride < fbcon_width * 4) {
++	if (SecureDTGetProperty(entry, "bytes-per-pixel", (void const **)&val, &size) == kSuccess) {
++		fbcon_bpp = *val;
++	}
++	if ((fbcon_bpp != 3 && fbcon_bpp != 4) || !fbcon_width || !fbcon_height ||
++	    fbcon_stride < fbcon_width * fbcon_bpp ||
++	    (uint64_t)fbcon_stride * fbcon_height > reg[1]) {
+ 		return;
+ 	}
+ 	sweet_early_mark(17, "fbcon config read; mapping");
+-	fbcon_base = (volatile uint32_t *)ml_io_map_wcomb(reg[0], reg[1]);
++	fbcon_base = (volatile uint8_t *)ml_io_map_wcomb(reg[0], reg[1]);
+ 	sweet_early_mark(18, "fbcon mapping returned");
+ 	if (fbcon_base != NULL) {
+ 		register_serial_functions(&sweet_fbcon_serial_functions);
+diff --git a/pexpert/pexpert/arm64/SWEET.h b/pexpert/pexpert/arm64/SWEET.h
+index 424e1c0..b170154 100644
+--- a/pexpert/pexpert/arm64/SWEET.h
++++ b/pexpert/pexpert/arm64/SWEET.h
+@@ -24,7 +24,11 @@
+  * CPU_ON; the scheduler does not know the A76s are faster (no AMP/P-E
+  * clusters yet).
+  */
++#if defined(RIVER)
++#define SWEET_SMP_MAX_CPUS         4
++#else
+ #define SWEET_SMP_MAX_CPUS         8
++#endif
+ 
+ #define ARM_ARCH_TIMER
+ #define __ARM_ARCH__              8
+@@ -37,7 +41,11 @@
+ /* topaz: Cortex-A53/A73 have no PAN (ARMv8.1); MSR PAN is undefined there */
+ #define __ARM_16K_PG__            1
  
 +#if defined(RIVER)
-+extern vm_offset_t river_gicc_base;
-+extern void river_gic_mask_intid(uint32_t intid);
++#define HAS_GIC_V3                0
++#else
+ #define HAS_GIC_V3                1
++#endif
+ 
+ #ifndef ASSEMBLER
+ #define PLATFORM_PANIC_LOG_DISABLED
+@@ -48,13 +56,53 @@
+  * virt, hyp) instead of the usual 13/14/11/10: the virtual timer XNU uses
+  * (CNTV) is INTID 16 + 3 = 19.
+  */
++#if defined(RIVER)
++#define SWEET_VTIMER_INTID        20
++#else
+ #define SWEET_VTIMER_INTID        19
++#endif
+ #define SWEET_IPI_SGI             1       // SGI used for cross-CPU signals
+ 
+ #define GIC_SPURIOUS_IRQ          1023    // IRQ no. for GIC spurious interrupt
+ 
++/*
++ * Bootloader splash scanout used by the early console (sweet_early.c, the
++ * start.s stage-0 band and the arm_vm_init alias). FB_BLOCK is the 32MB
++ * (16K-granule L2 block) aligned base that is mapped Normal-NC.
++ * river: ABL's splash at 0x90001000 is 24bpp, 3 bytes per pixel, 3240-byte
++ * rows (photographs of 32bpp writes at Android fb0's 4352 stride show the
++ * bands running ~1.34x further down the panel than intended).
++ */
++#if defined(RIVER)
++#define SWEET_EARLY_FB_PA         0x90001000
++#define SWEET_EARLY_FB_BLOCK      0x90000000
++#define SWEET_EARLY_FB_BPP        3
++#define SWEET_EARLY_FB_STRIDE     3240
++#define SWEET_EARLY_FB_WIDTH      1080
++#define SWEET_EARLY_FB_HEIGHT     2270
++#else
++#define SWEET_EARLY_FB_PA         0x9c000000
++#define SWEET_EARLY_FB_BLOCK      0x9c000000
++#define SWEET_EARLY_FB_BPP        4
++#define SWEET_EARLY_FB_STRIDE     4320
++#define SWEET_EARLY_FB_WIDTH      1080
++#define SWEET_EARLY_FB_HEIGHT     2400
 +#endif
 +
- void
- sleh_irq(arm_saved_state_t *state)
- {
-@@ -1934,7 +1939,36 @@
- #endif
+ #define GICR_PE_SIZE              0x20000 // Size of each redistributor region
  
++/* river: GICv2 (Arm IHI 0048B), Non-secure view; SGI/PPI registers are banked per CPU */
++#define GICD_V2_IGROUPR0          0x080
++#define GICD_V2_ISENABLER0        0x100
++#define GICD_V2_ICENABLER0        0x180
++#define GICD_V2_IPRIORITYR        0x400
++#define GICD_V2_ITARGETSR0        0x800   // read: this CPU's interface bit
++#define GICD_V2_SGIR              0xf00
++#define GICC_V2_CTLR              0x000
++#define GICC_V2_PMR               0x004
++#define GICC_V2_IAR               0x00c
++#define GICC_V2_EOIR              0x010
++
+ /* GICv3 register definitions; see GICv3 spec (Arm IHI 0069G) */
+ #define GICD_CTLR                 0x0
  
--#if defined(SWEET)
-+#if defined(RIVER)
-+	uint32_t iar = *(volatile uint32_t *)(river_gicc_base + 0xc); /* GICC_IAR */
-+	uint32_t intid = iar & 0x3ff;
-+	if (intid >= 1020) {
-+		return; /* spurious */
-+	}
-+	if (intid == sweet_vtimer_intid) {
-+		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_TIMER);
-+		cdp->cpu_decrementer = -1;
-+		INTERRUPT_MASKED_DEBUG_START(rtclock_intr, DBG_INTR_TYPE_TIMER);
-+		rtclock_intr(TRUE);
-+		INTERRUPT_MASKED_DEBUG_END();
-+	} else if (intid < 16) {
-+		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_IPI);
-+	} else {
-+		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_OTHER);
-+		if (cdp->interrupt_handler) {
-+			cdp->interrupt_handler(cdp->interrupt_target,
-+			    cdp->interrupt_refCon, cdp->interrupt_nub, intid);
-+		} else {
-+			/* ABL may leave unrelated sources pending on the Gold core. */
-+			river_gic_mask_intid(intid);
-+		}
-+	}
-+	*(volatile uint32_t *)(river_gicc_base + 0x10) = iar; /* GICC_EOIR */
-+	__asm__ volatile("dsb sy; isb" ::: "memory");
-+	if (intid < 16) {
-+		cpu_signal_handler();
-+	}
-+#elif defined(SWEET)
- 	/*
- 	 * sweet: TrustZone owns GIC Group 0, so the timer and IPIs that other
- 	 * ARM64 targets take as FIQs arrive here as Group 1 IRQs.

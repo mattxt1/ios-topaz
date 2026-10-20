@@ -22,6 +22,8 @@ GICD = 0x0B000000
 GICC = 0x0B002000
 FB = 0x90001000
 FB_SIZE = 0x013FF000
+FB_STRIDE = 1080 * 3
+FB_BPP = 3
 TIMER_HZ = 19_200_000
 VIRT_TIMER_INTID = 20  # FDT /soc/timer third interrupt: PPI 4 + 16
 
@@ -49,7 +51,10 @@ def make_tree():
     mkadt.FB_SIZE = FB_SIZE
     mkadt.FB_W = 1080
     mkadt.FB_H = 2270
-    mkadt.FB_STRIDE = 4352  # Android fb0; ABL's splash layout is unconfirmed
+    # ABL's splash scanout is 24bpp RGB with 1080 * 3 byte rows (inferred from
+    # the diagnostic photos), not Android fb0's 32bpp/4352 layout. The SWEET
+    # framebuffer console reads bytes-per-pixel from this node (patch 0127).
+    mkadt.FB_STRIDE = FB_STRIDE
     mkadt.TIMEBASE = TIMER_HZ
     mkadt.VTIMER_INTID = VIRT_TIMER_INTID
     mkadt.SWEET_ECID = 0x5249564552000001  # synthetic 'RIVER' + 1
@@ -76,6 +81,9 @@ def make_tree():
     disp = child(arm_io, 'disp0')
     set_prop(disp, 'canvas-height', mkadt.u32(2270))
 
+    fbcon = child(root, 'sweet-fbcon')
+    fbcon.props.append(('bytes-per-pixel', 0, mkadt.u32(FB_BPP)))
+
     root.children = [item for item in root.children if item.name != 'sweet-ufs']
     assert all(item.name != 'sweet-ufs' for item in root.children)
     return root
@@ -90,6 +98,11 @@ def main():
     parsed, end = adt.parse(blob)
     assert end == len(blob)
     assert child(child(parsed, 'arm-io'), 'gic').prop('compatible') == b'arm,gic-v2\0'
+    fbcon = child(parsed, 'sweet-fbcon')
+    assert struct.unpack('<QQ', fbcon.prop('reg')) == (FB, FB_SIZE)
+    assert struct.unpack('<I', fbcon.prop('stride'))[0] == FB_STRIDE
+    assert struct.unpack('<I', fbcon.prop('bytes-per-pixel'))[0] == FB_BPP
+    assert FB_STRIDE * 2270 <= FB_SIZE
     with open(args.output, 'wb') as file:
         file.write(blob)
     if args.dump:

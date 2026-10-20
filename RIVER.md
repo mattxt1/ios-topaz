@@ -35,33 +35,100 @@ generator using a conservative 0xa0000000–0xee000000 RAM window, four Gold
 cores, GICv2 registers, timer INTID 20, and framebuffer metadata. It removes
 the inherited UFS node. The `D22AP`/`iPhone10,3` identity and `xiaomi,sweet`
 compatible remain placeholders used by the existing XNU configuration and
-platform expert. The output is only an early boot scaffold.
-
-Generate and parse-check the tree:
+platform expert. Its `sweet-fbcon` node describes ABL's splash as 24bpp
+(`stride` 3240, `bytes-per-pixel` 3). The output is only an early boot
+scaffold.
 
 ```sh
 python3 tools/mkadt_river.py /tmp/river-early.adt
 ```
 
-`xnu/patches/0127-river-gicv2-early.patch` is a **draft** kernel change for
-`MACHINE_CONFIG=RIVER`. It reuses the SWEET platform code with a Cortex-A53
-instruction baseline, switches off GICv3, maps river's GICv2 distributor and
-CPU interface, and routes the virtual timer through `sleh_irq`. It applies
-cleanly to the exact topaz build tree from CI run 39292140455. It has not
-been compiled or booted; the current CI log does not contain verbose compile
-commands, and local Xcode differs from the pinned CI toolchain. Review the
-GICv2 register path and obtain a RIVER CI build before any XNU boot attempt.
+### Kernel patch 0127 (reworked 2026-10-20)
+
+The first draft added `MACHINE_CONFIG=RIVER`. Review against the topaz build
+tree showed that would not build: there is no `config/MASTER.arm64.river`
+(doconf would drop SWEET's mockfs/HFS/pthread options) and
+`bsd/conf/Makefile.template` gates SWEET's pthread include flags on
+`CURRENT_MACHINE_CONFIG == SWEET`. River is now a **board variant of
+MACHINE_CONFIG=SWEET**: `SWEET_BOARD=river` in the environment makes
+`MakeInc.def` add `-DRIVER=1`, and the CI workflow has a `board` input.
+The kernel artifact is still `kernel.development.sweet`.
+
+`xnu/patches/0127-river-gicv2-early.patch`, all under `#if RIVER` unless noted:
+
+| Area | Change |
+| --- | --- |
+| `SWEET.h` | 4 CPUs max, `HAS_GIC_V3 0`, vtimer INTID 20, GICv2 offsets; early-console framebuffer constants for both boards (topaz values unchanged) |
+| `pe_fiq.c` | GICv2 init: maps GICD/GICC from `/arm-io/gic`, records each Gold core's CPU-interface bit from banked `GICD_ITARGETSR0`, enables vtimer + SGI1, Group 1, PMR 0xff; `river_gic_send_sgi()` |
+| `sleh.c` | IRQ via `GICC_IAR`/`GICC_EOIR` (whole IAR, so SGI source ID round-trips); unhandled sources masked |
+| `SweetCPU.cpp` | IPIs through `GICD_SGIR`. **The draft missed this**: `initCPU` sends a self-IPI even with `cpus=1`, and the old `ICC_SGI1R_EL1` write is UNDEFINED on a GICv2-only core |
+| `start.s` | Stage-0 band and the 32 MB Normal-NC splash block use the board constants (river: 0x90001000 in block 0x90000000); EL2 secondary path skips `ICC_SRE_EL2` |
+| `sweet_early.c`, `arm_vm_init.c` | Early console draws 3- or 4-byte pixels; the post-TTBR0 alias keeps the splash offset inside its block. **The draft would have drawn at topaz's 0x9c000000 with 32bpp/4320 stride** |
+| `pe_serial.c` (both boards) | `sweet-fbcon` honours an optional `bytes-per-pixel` (default 4) and checks the node's size |
+| `KernelConfigTables.cpp` | River drops AppleCLCD (topaz MDP/DSI + TopazModem), SweetBattery (topaz cpufreq/I2C/SPMI MMIO) and the topaz HID services |
+| `sweet_ufs.c` | River `sweet_ufs_init` returns `ENODEV` before any mapping, which also keeps the UFS log, sampler, touch, keys and USB probes off |
+
+Hardware audit, everything else SWEET-specific: `sweet_cpufreq`, `sweet_i2c1`,
+`sweet_spmi`, `sweet_rpmh`, `sweet_touch`, `sweet_keys`, `sweet_usb` and
+`TopazModem` are reachable only through SweetBattery, AppleCLCD or
+`sweet_ufs_init`, all disabled above. IOWatchdog, AppleKeyStore,
+IOCoreSurfaceRoot, AMFI, HFS, crash/log/sample code are software only.
+`ICC_*` system registers no longer appear in any river object. Topaz's Gold
+core (Snapdragon 685, Kryo 265) is the same Cortex-A73 class as river's
+(Kryo 250), so the CPU-level SWEET code is already proven on that core.
+
+Local compile check (`tools/river-cc.py`, the CI build tree's recorded flags,
+local Apple clang 21): all ten changed sources compile for topaz and for
+`-DRIVER=1`. For topaz, every changed object except `sweet_early.c` and
+`pe_serial.c` (refactored pixel writes) is instruction-identical to the
+baseline apart from `__LINE__` constants and an equivalent `MOV64`. This is
+not a CI build or link; a newer clang can accept what Xcode 15 rejects.
+
+```sh
+tar xzf ../xnu-buildtree/buildtree.tgz -C /tmp/bt   # apply 0127 in /tmp/bt/xnu first
+python3 tools/river-cc.py /tmp/bt -DRIVER=1 pexpert/arm/pe_fiq.c osfmk/arm64/sleh.c \
+    osfmk/arm64/start.s iokit/Kernel/arm/SweetCPU.cpp
+```
+
+### River shim (`shim-river/`)
+
+A new header-v1 boot shim; it reuses `shim/start.S`, `fdt.c` and the font.
+Silver clears the splash to black, draws calibration bands, prints its
+MIDR/MPIDR/EL/TGran16, PSCI version and the `/chosen` initrd range, then
+`CPU_ON(0x100)` and parks. Gold prints its IDs, requires TGran16, and runs
+`loader.c`, which validates the SWEETXNU payload (the boot image ramdisk) and
+refuses any write outside 0xa0000000–0xee000000 before copying. Boot args
+carry no boot video (`v_baseAddr = 0`): xnu then forces serial mode instead
+of mapping a 24bpp buffer its video console cannot draw. Without a payload,
+or on any error or exception, it holds the screen 60 s and then calls PSCI
+`SYSTEM_RESET`, which returns to Android. It touches no GIC, clock, regulator
+or storage register.
+
+Qualcomm ABL (`QcomModulePkg` `UpdateBootParams`) places the ramdisk at the
+end of a fixed kernel buffer, the DTB 2 MB below it, and decompresses the
+kernel at the start; the payload must fit in that buffer (likely below
+0x84300000 on river), and ABL refuses the boot rather than overlap. That is
+a fastboot-side failure, not a phone-state risk.
+
+```sh
+python3 shim-river/build.py --boot ../device-private/boot_b.img \
+    --dtb ../device-private/boot_b-kernel.dtb            # shim-only test image
+REPO=<fork>/ios-topaz tools/kbuild-river.sh r1           # CI kernel + XNU image
+```
+
+Images land in `shim-river/out/` (ignored: they embed the phone's header and
+DTB). Builds need `ld.lld` (`brew install lld`).
 
 ## Next work
 
-1. Compile and review the draft GICv2 kernel patch, then use a storage-free,
-   Gold-only first boot with screen markers or a functioning early console.
-   The handler acknowledges and EOIs via GICC and masks unrelated sources.
-2. Adapt the shim to river's boot image and RAM placement. Do not reuse
-   topaz's boot header, GIC, UFS, framebuffer, or memory addresses.
-3. Bind an eMMC SDHCI driver only after early kernel execution is observable.
-
-Temporary tests use `fastboot boot`; do not flash a partition for this
-milestone. Keep live dumps, serial numbers, and ramdisk-containing images out
-of git. The adjacent `outputs/river-xnu-bringup.md` report carries the
-user-facing evidence and links to related projects.
+1. **Shim-only RAM test**: `fastboot boot shim-river/out/river-shim-boot.img`.
+   Expect clean (not sheared) gray/white text on black: that confirms the
+   24bpp/3240 splash layout the kernel patch now assumes, plus initrd
+   discovery and the Gold handoff. Photograph it; it resets to Android
+   after 60 s.
+2. **CI build** with `board=river` on a fork of ios-topaz (the upstream repo
+   is MakrSas's). Check the log for `-DRIVER=1`, then `kbuild-river.sh`.
+3. **First XNU RAM test** with `cpus=1` and no root device. Success is the
+   SWEET EARLY stage bands at the bottom edge and fbcon text, ending in a
+   root-device wait or panic. Hold power to return to Android if it hangs.
+4. Bind an eMMC SDHCI driver only after early kernel execution is observable.
