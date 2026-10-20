@@ -15,7 +15,8 @@ topaz and river with `tools/river-cc.py`; **no CI build yet**. New
 `shim-river/` header-v1 shim: shim-only RAM boot worked (IMG_0321): 24bpp
 splash confirmed, initrd found at 0x13600000, Gold handoff OK, auto-reset to
 Android. First `board=river` CI build succeeded (fork mattxt1/ios-topaz, run
-39368830465); XNU RAM-boot image `river-r1` built, not yet booted. Details and
+39368830465); `river-r1` RAM boot (IMG_0322): **XNU runs on Gold 0x100 to the root-device
+wait**, GICv2 SGI and vtimer working. Next: md0 RAM root, cpus=4, eMMC. Details and
 commands in `RIVER.md`.
 
 ## Agent handoff / active work (2026-10-15, latest)

@@ -152,11 +152,34 @@ system-register instructions. Its bytes include the river stage-0 constants
 The payload (17,161,840 bytes, boot-args `debug=0xc serial=3 cpus=1
 keepsyms=1 -noprogress wdt=-1`) and the image
 `shim-river/out/river-r1-boot.img` were built locally; the kernel lives in
-`../k-r1/`. **Not booted yet.**
+`../k-r1/`.
+
+### First XNU boot on river (2026-10-20, photo IMG_0322)
+
+`fastboot boot shim-river/out/river-r1-boot.img` (SHA-256 `cd97ebb9…0b918270`)
+returned OKAY; nothing was flashed. **XNU booted on Gold CPU 0x100 to the
+root-device wait.** The 24bpp framebuffer console (fbcon wraps, so the
+newest line sits just above the blank gap) shows, among others:
+
+- `SWEET CPU: cpu=0 mpidr=0x100 came alive; SGI1 OK` and `1/1 CPUs
+  initialized, SGI1 verified`: GICv2 IPIs through `GICD_SGIR` work.
+- Scheduler, timers and kernel threads run (`dlil` threads scheduled,
+  `standard timeslicing quantum is 10000 us`, `mbinit`, `mcache: 1 CPU(s)`),
+  so the virtual timer IRQ (INTID 20) drives XNU.
+- `SWEET AMFI`, `SWEET AKS`, `SWEET WDT`, `SWEET SURF`, `SWEET Sandbox`,
+  `SWEET HFS hfs-627.100.6`, MAC framework and the platform expert start.
+- The green stage-marker band along the bottom edge (early console stages).
+- Last line: `Waiting on <dict>…IOMedia…Apple_HFS…</dict>` then
+  `Failed to write boot-picker-bringup-reason to NVRAM.`: no root device,
+  exactly what a storage-free kernel without `rd=` should do.
+
+The phone stays at that wait; hold power to reboot into Android.
 
 ## Next work
 
-1. **First XNU RAM test** with `cpus=1` and no root device. Success is the
-   SWEET EARLY stage bands at the bottom edge and fbcon text, ending in a
-   root-device wait or panic. Hold power to return to Android if it hangs.
-2. Bind an eMMC SDHCI driver only after early kernel execution is observable.
+1. A RAM root: `tools/mkpayload.py --ramdisk` with a small HFS image and
+   `rd=md0`, to reach launchd without touching eMMC.
+2. `cpus=4` to bring up the other three Gold cores (PSCI CPU_ON + GICv2
+   SGIs); Silver stays parked.
+3. A read-only eMMC SDHCI driver (0x07824900), only with explicit approval
+   before any write path exists.
