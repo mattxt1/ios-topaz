@@ -71,7 +71,11 @@ cannot fit the 8 MiB permanent I/O pool after the 7,356,416-byte splash map.
 Flags 0x100021 match permanent io_map allocation; error 3 is no space.
 Patch 0133 maps only nine 16 KiB register pages through kernel_map via
 ml_io_map_unmappable(..., VM_WIMG_IO). Local river/topaz compile and physical
-address/bounds checks passed; r13 CI/test pending. Phone in fastboot.
+address/bounds checks passed. Commit 1aea7be passed CI 39473085016.
+r13 RAM boot accepted, SHA-256
+ec61397d2392a54512b383044795c92144654cb97a60cdc7d9ed58c6e405f466.
+Awaiting panic/lock-screen and swipe/volume result. Next recovery log
+r13-input.txt.
 
 ## Agent handoff / active work (2026-10-15, latest)
 

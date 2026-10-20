@@ -665,3 +665,12 @@ Local object checks passed for river and topaz. A bounds/address check
 verified all fixed register accesses and all 256 possible PON channel
 page offsets. Reverse patch application passed. Phone is in fastboot;
 replacement r13 CI and hardware test pending. Photo remains private.
+
+
+Commit `1aea7be` passed CI **39473085016** (full kernel build and link).
+`river-r13-boot.img`, SHA-256
+`ec61397d2392a54512b383044795c92144654cb97a60cdc7d9ed58c6e405f466`,
+was verified to embed the matching payload, riverinput=1/riverlog=1 args,
+and sparse mapping code; fastboot accepted the RAM boot. User was asked
+to report panic/lock-screen result and test swipe-up plus short volume.
+Hardware verification pending. Next private log: `../logs-private/r13-input.txt`.
