@@ -141,11 +141,22 @@ ADB in Android. ABL places the kernel buffer in **low RAM**, not near
 of roughly 45–50 MB should still fit (the shim needs only 80 KB), and the
 initrd is far below the 0xa0000000 kernel window.
 
+### First river kernel build (2026-10-20)
+
+Fork `mattxt1/ios-topaz`, branch `river-bringup` at `00ff667`, workflow run
+39368830465 with `board=river`: **success**, no compile errors. The log shows
+`-DRIVER=1`. `kernel.development.sweet` (17,776,752 bytes, SHA-256
+`11b5b18ed4f3e5c78aa489f025d318fa9788c5ccb88ba53a2d43b04939cdfe18`) contains the `RIVER GIC` strings and no `ICC_*`/GICv3
+system-register instructions. Its bytes include the river stage-0 constants
+(0x906eb4b0, stride 3240, block 0x90000000) and none of topaz's 0x9c000000.
+The payload (17,161,840 bytes, boot-args `debug=0xc serial=3 cpus=1
+keepsyms=1 -noprogress wdt=-1`) and the image
+`shim-river/out/river-r1-boot.img` were built locally; the kernel lives in
+`../k-r1/`. **Not booted yet.**
+
 ## Next work
 
-1. **CI build** with `board=river` on a fork of ios-topaz (the upstream repo
-   is MakrSas's). Check the log for `-DRIVER=1`, then `kbuild-river.sh`.
-2. **First XNU RAM test** with `cpus=1` and no root device. Success is the
+1. **First XNU RAM test** with `cpus=1` and no root device. Success is the
    SWEET EARLY stage bands at the bottom edge and fbcon text, ending in a
    root-device wait or panic. Hold power to return to Android if it hangs.
 3. Bind an eMMC SDHCI driver only after early kernel execution is observable.

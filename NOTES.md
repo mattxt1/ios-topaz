@@ -14,7 +14,8 @@ console, topaz drivers and UFS disabled). Changed files compile locally for
 topaz and river with `tools/river-cc.py`; **no CI build yet**. New
 `shim-river/` header-v1 shim: shim-only RAM boot worked (IMG_0321): 24bpp
 splash confirmed, initrd found at 0x13600000, Gold handoff OK, auto-reset to
-Android. Next: a `board=river` CI build on a fork. Details and
+Android. First `board=river` CI build succeeded (fork mattxt1/ios-topaz, run
+39368830465); XNU RAM-boot image `river-r1` built, not yet booted. Details and
 commands in `RIVER.md`.
 
 ## Agent handoff / active work (2026-10-15, latest)
