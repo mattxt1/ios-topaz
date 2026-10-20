@@ -18,6 +18,11 @@
 # keybagd reads with /defaults/no-effaceable-storage (tools/mkadt.py).
 set -euo pipefail
 
+# macOS can mount the APFS images directly and create a bare HFSX image.
+if [[ $(uname -s) == Darwin ]]; then
+	exec "$(dirname "$0")/mkiosroot-macos.sh" "$@"
+fi
+
 [[ $# -ge 4 ]] || { sed -n '2,12p' "$0"; exit 2; }
 os=$(realpath "$1") sysos=$(realpath "$2") appos=$(realpath "$3") out=$4 size=${5:-16G}
 [[ ! -e $out ]] || { echo "refusing to overwrite $out" >&2; exit 1; }

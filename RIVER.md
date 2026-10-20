@@ -334,8 +334,64 @@ gone (a LineageOS update or `fastboot flash system_a` restores it).
 1. Faster I/O if needed: multi-block CMD18 needs CMD12 STOP (also a
    non-writing command), and 4/8-bit or HS modes need CMD6 (a volatile
    EXT_CSD write, so the user's approval first).
-2. iOS userland: system_a (2.75 GiB) is too small for an iOS 16 root
-   (~10+ GiB uncompressed on sweet). userdata (51 GiB) cannot be flashed
-   from fastboot on this Moto, so an iOS root needs either a kernel write
-   path (CMD24/25, limited to userdata) or Android-side root to dd it.
-   The user approved wiping the phone.
+2. iOS userland: the 16 GiB root now resides on userdata, but XNU's eMMC
+   driver remains read-only. For iOS daemons that need persistent writes,
+   add CMD24/25 with every write bounded to the verified userdata GPT range.
+   Display, input and USB logging still need river-specific drivers.
+
+## iOS 16 root preparation (2026-10-20)
+
+Chose **root ADB in the installed Lineage recovery + `dd`** for the first
+userdata image. `adb root` also works in Android, but `/data` is mounted
+there; recovery reports `uid=0`, `/dev/block/by-name/userdata` points to
+`/dev/block/mmcblk0p64` (53,729,017,344 bytes), and p64 is unmounted.
+Rebooting into recovery did not flash any partition. A binary ADB stream into
+recovery RAM was tested before writing the partition. The Moto fastboot
+bootloader still refuses `fastboot flash userdata`.
+
+`tools/mkiosroot.sh` now dispatches to `tools/mkiosroot-macos.sh` on macOS.
+The macOS builder mounts the three APFS source images natively with owners
+enabled, copies their numeric owners, groups, hard links, symlinks and extended
+attributes, then makes a **bare**, case-sensitive journaled HFS+ volume. The
+output has no partition table or DMG footer (`HX` at offset 1024), and the
+size defaults to 16 GiB. It adds the cryptex shared-cache links, logd markers
+and system keybag from the Linux builder. It requires administrator privileges
+to preserve iOS owners; macOS privacy rules required staging this one build
+under `/private/tmp`, then moving its output back to the private handoff folder.
+
+The source is Apple's iPhone X iOS 16.7.16 (20H392) IPSW. The D22AP Erase
+identity in `BuildManifest.plist` selects `087-86698-044.dmg` (OS),
+`087-86593-047.dmg` (SystemOS) and `087-86715-047.dmg` (AppOS). Only these
+three entries were extracted with `tools/remotezip.py`, each passing its ZIP
+CRC-32, because this Mac did not have room for the full archive beside a
+16 GiB root. The output is `../ios16-private/ios16-root.img` (local, outside
+git): 16 GiB, about 11 GiB used. `tools/sweet-root-tweaks.py` was run on it;
+`/sbin/launchd` and the keybag are owner 0:0. Its activation tweak reported
+no existing mobileactivationd container, so it skipped the data ark.
+
+The Apple `DeviceTree.d22ap.im4p` was also extracted into ignored
+`research/ipsw-x/d22ap.adt`. A new `mkadt_river.py` output therefore includes
+the real D22AP `/product` properties (61 properties) for iOS userland.
+`../ios16-private/river-ios16.adt` and the git-ignored
+`shim-river/out/river-ios16-boot.img` use the existing r8 kernel with
+`rd=emmc0s64 rivermmc=1`, `ignition_level=1` and the sweet userland boot args.
+No new kernel build is needed to read the root from p64, but the current eMMC
+driver still mounts it **read-only**. A writable iOS userland will need a
+separate, userdata-limited XNU write path in a later step.
+
+`tools/flash-iosroot-userdata.sh IMAGE` checks that exactly one recovery ADB
+device is connected (or uses `RIVER_SERIAL`), then verifies the river model,
+root shell, p64 link and length, unmounted state,
+HFSX signature and image size before its only write. It streams the image to
+p64, then SHA-256 compares a readback of exactly the written length.
+
+The recovery write completed: 17,179,869,184 bytes to p64 at about 30 MB/s.
+The full readback hash matched the image,
+`fa28e3a7f80bfe0ac55a1ce8f46aed2c1b4fab2a72f6131c0c25273ebd096ba9`.
+This replaces Android's `/data` filesystem; slot b boot, bootloader, modem,
+persist and recovery were not flashed. From recovery, the phone rebooted to
+fastboot (`product: river`, `current-slot: b`), then `fastboot boot` accepted
+`shim-river/out/river-ios16-boot.img` (SHA-256
+`4ef56353e0ffb2b942b1b695af495af018edd070b4679117a16b7834f8f3633c`).
+This only loaded the kernel from RAM. The phone screen needs a photo to
+establish whether the iOS root mounted and how far launchd progressed.

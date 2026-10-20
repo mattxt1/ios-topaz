@@ -2,8 +2,9 @@
 """Early-boot Apple Device Tree for Moto G7 river (SDM632).
 
 Derived from mkadt.py's topaz tree. Hardware addresses are from the live
-river FDT captured on 2026-10-19. This is an early XNU bring-up tree: the
-existing SWEET kernel still needs a GICv2 port, and no eMMC driver is bound.
+river FDT captured on 2026-10-19, with the river GICv2 and eMMC patches.
+For iOS userland, place the Apple D22AP tree at research/ipsw-x/d22ap.adt
+so mkadt.py can copy its /product identity properties.
 """
 
 import argparse
