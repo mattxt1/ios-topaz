@@ -199,8 +199,22 @@ verified`** and `mcache: 4 CPU(s)`. Boot continues to the same root-device
 wait. Cross-CPU GICv2 SGIs (each core's banked `GICD_ITARGETSR0`
 interface bit) and secondary PSCI entry at EL1 work. Silver stays parked.
 
+### HFS+ root from RAM, four cores (2026-10-20, photo IMG_0325)
+
+An 8 MB case-sensitive, non-journaled HFS+ volume `SweetRoot` made with
+macOS `hdiutil` (`tools/mkroot-macos.sh`; `/sbin/launchd` = sweet-init,
+plus `/dev`, `/private/var`, `/tmp`), passed with `--ramdisk` and boot-args
+`… cpus=4 … rd=md0`. Image `river-r1-hfs-boot.img` SHA-256 `e5ee5782…`.
+Screen: 4/4 CPUs, `BSD root: md0, major 1, minor 0`, **`hfs: mounted
+SweetRoot on device b(1, 0)`**, `load_init_program: attempting to load
+/sbin/launchd`, `*** SWEET userspace: init running as PID 1 ***`, `SWEET
+init: still alive`. The built-in HFS works on river; this is the same
+milestone that preceded iOS userland on sweet.
+
 ## Next work
 
-1. An HFS RAM root (as sweet's `research/root-hfs.img`), then iOS userland.
-2. A read-only eMMC SDHCI driver (0x07824900), only with explicit approval
-   before any write path exists.
+1. iOS userland needs far more than fits in RAM beside the kernel, so the next
+   real step is a **read-only** eMMC SDHCI driver (0x07824900), with explicit
+   approval before any write path exists.
+2. Booting an iOS root later needs a writable partition; on sweet that
+   replaced Android's userdata. That is a separate decision for the user.
