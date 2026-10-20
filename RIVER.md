@@ -414,4 +414,13 @@ The r9 GitHub Actions kernel build (`39383612244`) passed, and
 The compiled kernel contains the CMD24 userdata guard. On 2026-10-20,
 `fastboot boot` accepted this image from slot-b fastboot; it did not flash a
 partition. Boot args include `rivermmc=1 rivermmcrw=1 rd=emmc0s64 rootrw=1`.
-The screen result is pending observation.
+After 42 minutes, the screen still showed repeated `exec xpcproxy`,
+`fairplayd.H2` and `bluetoothd` lines, plus `STR terminating due to uncaught
+exception of type NSException`. It also printed `STR Version 16.7.16 (Build
+20H392)` and `STR <KCDisplayMode 0 x 0 fmt: range:undefined>`. The earlier
+read-only root remount panic was absent, and iOS service launch advanced well
+beyond it. This is a service restart loop, not a completed graphical boot.
+The user was advised to stop the run; persistent CMD24 writes could otherwise
+continue without useful progress. The next investigation should identify the
+first failing service and collect a bounded boot log, rather than leave it
+running indefinitely. The photo remains in the private handoff folder only.
