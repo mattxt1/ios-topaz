@@ -12,10 +12,10 @@ index 21cdb5c..c741ee0 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
 new file mode 100644
-index 0000000..06eaf7d
+index 0000000..c0fa618
 --- /dev/null
 +++ b/bsd/dev/river_emmc.c
-@@ -0,0 +1,860 @@
+@@ -0,0 +1,874 @@
 +/*
 + * river (Moto G7, SDM632) eMMC: READ-ONLY polled driver for the SDHCI-MSM
 + * host sdhc_1. Boot-arg rivermmc=1 enables it; otherwise nothing is mapped.
@@ -642,6 +642,12 @@ index 0000000..06eaf7d
 +		error = EIO;
 +		goto done;
 +	}
++	/*
++	 * physio() on /dev/remmc0* hands over the caller's own (wired) user
++	 * address, and strategy runs in that thread: copy out to it. Storing
++	 * to it directly is a kernel data abort (IMG_0330).
++	 */
++	bool user = (buf_flags(bp) & B_PHYS) && (vm_offset_t)vaddr < VM_MIN_KERNEL_ADDRESS;
 +	lck_mtx_lock(&river_emmc_lock);
 +	for (uint32_t done = 0; done < count;) {
 +		uint64_t pos = off + done;
@@ -651,7 +657,15 @@ index 0000000..06eaf7d
 +		if (error) {
 +			break;
 +		}
-+		memcpy(vaddr + done, (const char *)block + skip, want);
++		if (user) {
++			error = copyout((const char *)block + skip,
++			    (user_addr_t)(uintptr_t)(vaddr + done), want);
++			if (error) {
++				break;
++			}
++		} else {
++			memcpy(vaddr + done, (const char *)block + skip, want);
++		}
 +		done += want;
 +		buf_setresid(bp, count - done);
 +	}
