@@ -15,7 +15,7 @@ priv=${RIVER_PRIVATE:-../device-private}
 args=${2:-"debug=0xc serial=3 cpus=1 keepsyms=1 -noprogress wdt=-1"}
 branch=$(git rev-parse --abbrev-ref HEAD)
 head=$(git rev-parse HEAD)
-[ "$(git rev-parse "origin/$branch" 2>/dev/null)" = "$head" ] || { echo "push $branch first" >&2; exit 1; }
+[ "$(git rev-parse "@{u}" 2>/dev/null)" = "$head" ] || { echo "push $branch to its upstream first" >&2; exit 1; }
 
 t0=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 gh workflow run xnu.yml -R "$repo" --ref "$branch" -f board=river
