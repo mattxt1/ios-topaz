@@ -25,6 +25,11 @@ FB_SIZE = 0x013FF000
 FB_STRIDE = 1080 * 3
 FB_BPP = 3
 TIMER_HZ = 19_200_000
+# live FDT sdhci@7824900 (sdhc_1, eMMC): hc_mem, core_mem; GCC page with the
+# SDCC1 apps/ahb CBCRs at 0x1842018/0x184201c (gcc-msm8953.c).
+EMMC_HC = (0x07824900, 0x500)
+EMMC_CORE = (0x07824000, 0x800)
+GCC_SDCC1 = (0x01842000, 0x1000)
 VIRT_TIMER_INTID = 20  # FDT /soc/timer third interrupt: PPI 4 + 16
 
 
@@ -85,6 +90,11 @@ def make_tree():
     fbcon.props.append(('bytes-per-pixel', 0, mkadt.u32(FB_BPP)))
 
     root.children = [item for item in root.children if item.name != 'sweet-ufs']
+    # bsd/dev/river_emmc.c (patch 0128): read-only probe, only with rivermmc=1.
+    root.children.append(mkadt.node('river-emmc', [
+        ('compatible', mkadt.cstr('qcom,sdhci-msm')),
+        ('reg', mkadt.u64(*EMMC_HC, *EMMC_CORE, *GCC_SDCC1)),
+    ]))
     assert all(item.name != 'sweet-ufs' for item in root.children)
     return root
 
@@ -103,6 +113,8 @@ def main():
     assert struct.unpack('<I', fbcon.prop('stride'))[0] == FB_STRIDE
     assert struct.unpack('<I', fbcon.prop('bytes-per-pixel'))[0] == FB_BPP
     assert FB_STRIDE * 2270 <= FB_SIZE
+    emmc = child(parsed, 'river-emmc')
+    assert struct.unpack('<6Q', emmc.prop('reg')) == EMMC_HC + EMMC_CORE + GCC_SDCC1
     with open(args.output, 'wb') as file:
         file.write(blob)
     if args.dump:
