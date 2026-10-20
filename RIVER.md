@@ -119,16 +119,33 @@ REPO=<fork>/ios-topaz tools/kbuild-river.sh r1           # CI kernel + XNU image
 Images land in `shim-river/out/` (ignored: they embed the phone's header and
 DTB). Builds need `ld.lld` (`brew install lld`).
 
+### Shim-only RAM test (2026-10-20, photo IMG_0321)
+
+`fastboot boot` of the shim-only image (SHA-256 `a6f72316…c969e27b`)
+returned OKAY; nothing was flashed. The photo shows crisp, unsheared text on
+black, so **ABL's splash is confirmed 24bpp with 3240-byte rows at
+0x90001000**, as patch 0127 and the ADT now assume. Read from the screen:
+
+| Line | Value | Meaning |
+| --- | --- | --- |
+| SILVER | MIDR 0x51AF801x, MPIDR 0x80000000, EL1, TGran16 0 | as before |
+| PSCI | version 0x00010000, DTB at 0x13400000 | PSCI 1.0 via SMC |
+| INITRD | 0x13600000–0x1360002E | 46-byte test ramdisk |
+| GOLD | MIDR 0x51AF8002, MPIDR 0x80000100, EL1, TGran16 1 | handoff and 16 KiB again confirmed |
+| STOP / RESET | "no payload: shim-only test done" | expected end |
+
+The phone then reset itself through PSCI `SYSTEM_RESET` and was back on
+ADB in Android. ABL places the kernel buffer in **low RAM**, not near
+0x80000000: the DTB sits exactly 2 MB below the ramdisk, matching
+`UpdateBootParams`, so the buffer ends near 0x13601000. A payload
+of roughly 45–50 MB should still fit (the shim needs only 80 KB), and the
+initrd is far below the 0xa0000000 kernel window.
+
 ## Next work
 
-1. **Shim-only RAM test**: `fastboot boot shim-river/out/river-shim-boot.img`.
-   Expect clean (not sheared) gray/white text on black: that confirms the
-   24bpp/3240 splash layout the kernel patch now assumes, plus initrd
-   discovery and the Gold handoff. Photograph it; it resets to Android
-   after 60 s.
-2. **CI build** with `board=river` on a fork of ios-topaz (the upstream repo
+1. **CI build** with `board=river` on a fork of ios-topaz (the upstream repo
    is MakrSas's). Check the log for `-DRIVER=1`, then `kbuild-river.sh`.
-3. **First XNU RAM test** with `cpus=1` and no root device. Success is the
+2. **First XNU RAM test** with `cpus=1` and no root device. Success is the
    SWEET EARLY stage bands at the bottom edge and fbcon text, ending in a
    root-device wait or panic. Hold power to return to Android if it hangs.
-4. Bind an eMMC SDHCI driver only after early kernel execution is observable.
+3. Bind an eMMC SDHCI driver only after early kernel execution is observable.

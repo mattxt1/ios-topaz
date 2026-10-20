@@ -12,8 +12,9 @@ to river.
 on MACHINE_CONFIG=SWEET, not a new machine config; GICv2 IPIs, 24bpp splash
 console, topaz drivers and UFS disabled). Changed files compile locally for
 topaz and river with `tools/river-cc.py`; **no CI build yet**. New
-`shim-river/` header-v1 shim built locally, **not yet booted**. Next: shim-only
-`fastboot boot` photo, then a `board=river` CI build on a fork. Details and
+`shim-river/` header-v1 shim: shim-only RAM boot worked (IMG_0321): 24bpp
+splash confirmed, initrd found at 0x13600000, Gold handoff OK, auto-reset to
+Android. Next: a `board=river` CI build on a fork. Details and
 commands in `RIVER.md`.
 
 ## Agent handoff / active work (2026-10-15, latest)
