@@ -719,3 +719,29 @@ rejections and verified read-only mode never starts the gadget. Host
 interface parser check selects the USB MAC without selecting the normal
 network interface. Patch reverse application passed. CI and USB hardware
 testing pending; phone is in recovery after the r13 log pull.
+
+### r14 ready for handoff; NOT phone-tested
+
+Commit `890463d` passed CI **39479040517**. The user requested finishing
+host preparation and handing off before the next phone boot. r14 has **not**
+been sent to the phone. Kernel/payload/ADT embedding, requested boot args
+and river USB/sparse-map strings were verified locally. Three private
+same-kernel images are ready under shim-river/out/:
+
+| Image | Mode | SHA-256 |
+| --- | --- | --- |
+| river-r14-boot.img | riverusb=2, graphical; guarded gadget attempt | 7a53db17af4813db2c21cee7db3242ef9101337af5bf4ffb4adbc6759abb2d59 |
+| river-r14-probe-boot.img | riverusb=1, graphical; read-only USB state | 2fc534b97f6edf12f176accad8c876f0f1f48be81db8c5d34c8d36259ec66d66 |
+| river-r14-console-boot.img | riverusb=2, sweetfb_console=1 | 163b81df5ed4949bb997260e3d3a0b6163089e5ed195040281fe9678b868df32 |
+
+All include riverinput=1, riverlog=1 and focused samples for SpringBoard,
+backboardd, mediaremoted and mediaserverd. The waiting host receiver was
+stopped (it had not seen a USB interface or written r14-live.txt). No host
+USB IP address was configured. Phone verified in root ADB recovery, model
+river, recovery binary present. Its ro.bootmode reports normal even here;
+use the ADB transport's `recovery` state, as river-log-pull.sh does.
+Next chat should verify the image, restart the receiver, RAM-boot the main
+r14 image, and inspect enumeration/probe output. Only configure the matching
+synthetic USB interface; macOS may require administrator authorization.
+If no interface appears, return to recovery and inspect r14-usb.txt before
+changing power/clock/PHY setup. Keep all raw logs local and outside git.

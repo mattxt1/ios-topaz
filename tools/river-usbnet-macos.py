@@ -9,6 +9,7 @@ import argparse
 import os
 from pathlib import Path
 import re
+import shlex
 import socket
 import subprocess
 import sys
@@ -70,7 +71,8 @@ def main():
         try:
             subprocess.run(command, check=True)
         except subprocess.CalledProcessError:
-            ap.error('USB address setup requires sudo authorization; run the printed ifconfig command in a local terminal: ' + ' '.join(command[2:] if command[0] == '/usr/bin/sudo' else command))
+            manual = ['sudo'] + command[2:] if command[0] == '/usr/bin/sudo' else command
+            ap.error('USB address setup requires administrator authorization; run this in a local terminal: ' + shlex.join(manual))
     output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
         sock.bind((HOST_IP, 5140))  # Bind the USB address, not other networks.

@@ -83,7 +83,11 @@ SpringBoard sample waits in MediaRemote audio routing discovery. Fresh
 private log r13-input.txt (221,832 bytes, flush #142). Patch 0134 prepares
 riverusb=1 read-only state probe / =2 guarded DWC3 CDC-ECM live logger,
 river-specific addresses and QUSB2v1 checks. macOS receiver prepared;
-compile/gate tests passed, CI and USB hardware test pending. Phone recovery.
+compile/gate tests passed. CI 39479040517 succeeded at source 890463d.
+r14 main/probe/console images prepared and locally verified; NOT BOOTED.
+User requested handoff before phone testing. Receiver stopped, no host USB
+IP configured, phone verified root ADB recovery (ro.bootmode misleadingly
+says normal). Next: prepared r14 USB test; see RIVER.md image hashes.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
