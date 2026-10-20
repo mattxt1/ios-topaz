@@ -16,10 +16,12 @@ in the adjacent private `work/river-device` and `work/river-port` directories.
   `0x0b002000`; `/soc/timer` frequency 19.2 MHz and virtual PPI 4 (INTID 20).
   Android `/proc/interrupts` also shows `arch_timer` on hardware IRQ 20.
 - Third temporary image proves the virtual timer expires under polling on
-  Gold. Its expected GICv2 IRQ band was black. This is a failed diagnostic,
-  not proof that the hardware cannot deliver the interrupt. A fourth image
-  distinguishes execution level, GIC enable/group bits, PPI pending, and timer
-  status; its full-screen photo is pending.
+  Gold. Its expected GICv2 IRQ band was black. A fourth image shows Gold at
+  EL1 and GIC Group 1/enable bits set, but no final pending PPI/timer status.
+  The first handler disarmed the timer for *any* IRQ, so a different pending
+  interrupt could have caused that result. A fifth RAM-only image records and
+  masks unrelated IRQs while leaving the timer armed. Its photo shows a white
+  expected-IRQ band: Gold received virtual timer INTID 20 via GICv2.
 - eMMC SDHCI `0x07824900`, not UFS. Live splash reservation `0x90001000` +
   `0x013ff000` is visibly scanned out after temporary boot. Android fb0 is
   1080×2270, 32 bpp, stride 4352; bootloader splash pixel layout differs.
@@ -43,15 +45,13 @@ python3 tools/mkadt_river.py /tmp/river-early.adt
 
 ## Next work
 
-1. Read the fourth diagnostic photo. If Gold is at EL1 and the timer is
-   pending, inspect the GICv2 nonsecure Group 1 interface path. If it is not
-   pending, check the PPI's group/configuration and timer routing.
-2. Port the topaz kernel's GICv3 timer/IRQ path to GICv2 and INTID 20. Keep
+1. Port the topaz kernel's GICv3 timer/IRQ path to GICv2 and INTID 20. Keep
    the first kernel boot storage-free and Gold-only, with screen markers or a
-   functioning early console.
-3. Adapt the shim to river's boot image and RAM placement. Do not reuse
+   functioning early console. Its handler must acknowledge and EOI via GICC,
+   ignore or mask unrelated interrupt sources, and disarm only the timer IRQ.
+2. Adapt the shim to river's boot image and RAM placement. Do not reuse
    topaz's boot header, GIC, UFS, framebuffer, or memory addresses.
-4. Bind an eMMC SDHCI driver only after early kernel execution is observable.
+3. Bind an eMMC SDHCI driver only after early kernel execution is observable.
 
 Temporary tests use `fastboot boot`; do not flash a partition for this
 milestone. Keep live dumps, serial numbers, and ramdisk-containing images out
