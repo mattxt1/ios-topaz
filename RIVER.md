@@ -393,5 +393,17 @@ persist and recovery were not flashed. From recovery, the phone rebooted to
 fastboot (`product: river`, `current-slot: b`), then `fastboot boot` accepted
 `shim-river/out/river-ios16-boot.img` (SHA-256
 `4ef56353e0ffb2b942b1b695af495af018edd070b4679117a16b7834f8f3633c`).
-This only loaded the kernel from RAM. The phone screen needs a photo to
-establish whether the iOS root mounted and how far launchd progressed.
+This only loaded the kernel from RAM. **IMG_0341** shows the iOS root did
+mount: `launchd` ran as PID 1, loaded dyld shared-cache mappings, printed its
+boot args, entered on-demand mode and ran `fsck` and `mount-phase-1`.
+`mount_hfs` then reported a read-only filesystem while trying to mount `/`,
+and XNU panicked because the `mount` boot task exited 1. There is still no
+river display driver beyond the framebuffer console.
+
+Patch 0129 adds polled CMD24 single-block writes behind `rivermmcrw=1`.
+The GPT must identify p64 as `userdata` with this phone's exact LBA range;
+the only write-capable device node is `/dev/emmc0s64` (and its raw twin).
+Every CMD24 is independently checked against that LBA range. The driver
+polls CMD13 until each written block is back in transfer state. This is
+needed for the iOS `mount` task to make the root writable. Until tested,
+boot without `rivermmcrw=1` retains the previous read-only behavior.

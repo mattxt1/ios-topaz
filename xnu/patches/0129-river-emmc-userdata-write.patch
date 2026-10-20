@@ -1,0 +1,379 @@
+diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
+index 06aca92..7dc5eae 100644
+--- a/bsd/dev/river_emmc.c
++++ b/bsd/dev/river_emmc.c
+@@ -1,6 +1,6 @@
+ /*
+- * river (Moto G7, SDM632) eMMC: READ-ONLY polled driver for the SDHCI-MSM
+- * host sdhc_1. Boot-arg rivermmc=1 enables it; otherwise nothing is mapped.
++ * river (Moto G7, SDM632) polled SDHCI-MSM eMMC driver. Boot-arg rivermmc=1
++ * enables reads; rivermmcrw=1 separately enables writes to userdata only.
+  *
+  * ABL hands over the host in legacy MCI mode (HC_MODE_EN clear, photo
+  * IMG_0326), so this driver initialises it as Linux's sdhci-msm does, in the
+@@ -10,11 +10,12 @@
+  * divider), 1.8 V signalling, 1-bit bus, default timing, PIO, no DMA and no
+  * interrupts. It then enumerates the card with CMD0/1/2/3/7.
+  *
+- * Read-only by construction: river_emmc_cmd() accepts only CMD0 GO_IDLE,
++ * river_emmc_cmd() accepts only CMD0 GO_IDLE,
+  * CMD1 SEND_OP_COND, CMD2 ALL_SEND_CID, CMD3 SET_RELATIVE_ADDR, CMD7
+- * SELECT_CARD, CMD13 SEND_STATUS and CMD17 READ_SINGLE_BLOCK, and panics on
+- * any other index. No write, erase, lock, switch (CMD6) or programming
+- * command can reach the eMMC from this file. The probe reads the protective
++ * SELECT_CARD, CMD13 SEND_STATUS, CMD17 READ_SINGLE_BLOCK and gated CMD24
++ * WRITE_BLOCK. CMD24 is checked again against the GPT userdata LBA range
++ * before reaching the host. No erase, lock or switch (CMD6) command can
++ * reach the eMMC from this file. The probe reads the protective
+  * MBR, both GPT headers and the partition table, and checks that boot_b
+  * starts with ANDROID!. Addresses come from the ADT node /river-emmc.
+  */
+@@ -60,6 +61,7 @@ extern void delay(int usec);
+ #define PRESENT_CARD		(1U << 16)
+ #define INT_CMD_DONE		(1U << 0)
+ #define INT_XFER_DONE		(1U << 1)
++#define INT_WRITE_READY		(1U << 4)
+ #define INT_READ_READY		(1U << 5)
+ #define INT_ERROR		(1U << 15)
+ #define RESET_ALL		(1U << 24)
+@@ -118,11 +120,15 @@ extern void delay(int usec);
+ #define RCG_CFG_25M		(31U | 4U << 8)
+ 
+ #define TIMEOUT_NS		(200ULL * NSEC_PER_MSEC)
++#define WRITE_TIMEOUT_NS	(2ULL * NSEC_PER_SEC)
+ #define BLOCK			512
+ #define RCA			1
++#define R1_ERRORS		0xfff9a088U
+ 
+ static vm_offset_t hc, core, gcc;
+ static bool ready;
++static bool write_enabled;
++static int userdata_minor;
+ static uint32_t block[BLOCK / 4];
+ 
+ /* minor 0 = whole user area, minor N = GPT entry N (1-based); count 0 = none */
+@@ -190,9 +196,9 @@ river_emmc_pwrctl(unsigned ms)
+ 
+ /* Wait for any of `bits` in the normal status; 0, or EIO/ETIMEDOUT. */
+ static int
+-river_emmc_wait(uint32_t bits, uint32_t *status)
++river_emmc_wait_ns(uint32_t bits, uint32_t *status, uint64_t ns)
+ {
+-	uint64_t end = deadline(TIMEOUT_NS);
++	uint64_t end = deadline(ns);
+ 	for (;;) {
+ 		uint32_t s = rd(hc, SDHCI_INT_STATUS);
+ 		if (s & INT_ERROR) {
+@@ -210,6 +216,12 @@ river_emmc_wait(uint32_t bits, uint32_t *status)
+ 	}
+ }
+ 
++static int
++river_emmc_wait(uint32_t bits, uint32_t *status)
++{
++	return river_emmc_wait_ns(bits, status, TIMEOUT_NS);
++}
++
+ static int
+ river_emmc_reset(uint32_t which)
+ {
+@@ -228,8 +240,8 @@ river_emmc_reset(uint32_t which)
+ }
+ 
+ /*
+- * The only way this file talks to the card. Read-only by construction:
+- * identification/selection, status, and single-block reads into `buf`.
++ * The only way this file talks to the card. CMD24 is separately gated to
++ * userdata here, below the BSD block/character-device checks.
+  */
+ static int
+ river_emmc_cmd(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uint32_t *buf)
+@@ -237,10 +249,18 @@ river_emmc_cmd(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uint3
+ 	switch (index) {
+ 	case 0: case 1: case 2: case 3: case 7: case 13: case 17:
+ 		break;
++	case 24:
++		if (!write_enabled || userdata_minor != 64 ||
++		    (uint64_t)arg < parts[64].first ||
++		    (uint64_t)arg - parts[64].first >= parts[64].count) {
++			panic("river eMMC: CMD24 outside userdata LBA 0x%x", arg);
++		}
++		break;
+ 	default:
+-		panic("river eMMC: refusing CMD%u (read-only driver)", index);
++		panic("river eMMC: refusing CMD%u", index);
+ 	}
+-	bool data = index == 17;
++	bool data = index == 17 || index == 24;
++	bool writing = index == 24;
+ 	uint32_t inhibit = PRESENT_CMD_INHIBIT | (data || rsp == RSP_R1B ? PRESENT_DAT_INHIBIT : 0);
+ 	uint64_t end = deadline(TIMEOUT_NS);
+ 	while (rd(hc, SDHCI_PRESENT) & inhibit) {
+@@ -254,7 +274,7 @@ river_emmc_cmd(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uint3
+ 	}
+ 	wr(hc, SDHCI_ARG, arg);
+ 	uint32_t cmd = index << 8 | rsp | (data ? CMD_DATA : 0);
+-	wr(hc, SDHCI_XFER_CMD, cmd << 16 | (data ? XFER_READ : 0));
++	wr(hc, SDHCI_XFER_CMD, cmd << 16 | (index == 17 ? XFER_READ : 0));
+ 
+ 	uint32_t status;
+ 	int error = river_emmc_wait(INT_CMD_DONE, &status);
+@@ -275,16 +295,22 @@ river_emmc_cmd(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uint3
+ 	if (!data) {
+ 		return 0;
+ 	}
+-	error = river_emmc_wait(INT_READ_READY, &status);
++	error = river_emmc_wait_ns(writing ? INT_WRITE_READY : INT_READ_READY,
++	    &status, writing ? WRITE_TIMEOUT_NS : TIMEOUT_NS);
+ 	if (!error) {
+-		wr(hc, SDHCI_INT_STATUS, INT_READ_READY);
++		wr(hc, SDHCI_INT_STATUS, writing ? INT_WRITE_READY : INT_READ_READY);
+ 		for (int i = 0; i < BLOCK / 4; i++) {
+-			buf[i] = rd(hc, SDHCI_BUFFER);
++			if (writing) {
++				wr(hc, SDHCI_BUFFER, buf[i]);
++			} else {
++				buf[i] = rd(hc, SDHCI_BUFFER);
++			}
+ 		}
+-		error = river_emmc_wait(INT_XFER_DONE, &status);
++		error = river_emmc_wait_ns(INT_XFER_DONE, &status,
++		    writing ? WRITE_TIMEOUT_NS : TIMEOUT_NS);
+ 	}
+ 	if (error) {
+-		printf("RIVER eMMC: CMD17 LBA 0x%x data %s, status 0x%08x\n", arg,
++		printf("RIVER eMMC: CMD%u LBA 0x%x data %s, status 0x%08x\n", index, arg,
+ 		    error == EIO ? "error" : "timeout", status);
+ 		river_emmc_reset(RESET_CMD | RESET_DAT);
+ 		return error;
+@@ -305,6 +331,42 @@ river_emmc_read_block(uint64_t lba, void *dst)
+ 	return river_emmc_cmd(17, (uint32_t)lba, RSP_R1, &resp, (uint32_t *)dst);
+ }
+ 
++static int
++river_emmc_write_block(uint64_t lba, const void *src)
++{
++	uint32_t resp, status;
++	if (!ready || !write_enabled || lba >> 32 || userdata_minor != 64 ||
++	    lba < parts[64].first || lba - parts[64].first >= parts[64].count) {
++		return EROFS;
++	}
++	int error = river_emmc_cmd(24, (uint32_t)lba, RSP_R1, &resp, (uint32_t *)src);
++	if (error) {
++		return error;
++	}
++	if (resp & R1_ERRORS) {
++		printf("RIVER eMMC: CMD24 LBA %llu rejected, R1 0x%x\n", lba, resp);
++		return EIO;
++	}
++	/* CMD24 transfer completion precedes the card's internal program cycle. */
++	uint64_t end = deadline(WRITE_TIMEOUT_NS);
++	do {
++		error = river_emmc_cmd(13, RCA << 16, RSP_R1, &status, NULL);
++		if (error) {
++			return error;
++		}
++		if (status & R1_ERRORS) {
++			printf("RIVER eMMC: CMD24 LBA %llu status error 0x%x\n", lba, status);
++			return EIO;
++		}
++		if ((status & (1U << 8)) && ((status >> 9) & 0xf) == 4) {
++			return 0;
++		}
++		delay(100);
++	} while (mach_absolute_time() < end);
++	printf("RIVER eMMC: CMD24 LBA %llu programming timeout, status 0x%x\n", lba, status);
++	return ETIMEDOUT;
++}
++
+ /* Reprogram GCC sdcc1_apps_clk_src; the branch stays enabled. */
+ static int
+ river_emmc_set_rcg(uint32_t cfg, bool mnd)
+@@ -554,6 +616,9 @@ river_emmc_gpt(void)
+ 		parts[i + 1].first = first;
+ 		parts[i + 1].count = last - first + 1;
+ 		gpt_name(e, name, sizeof(name));
++		if (i + 1 == 64 && !strcmp(name, "userdata")) {
++			userdata_minor = 64;
++		}
+ 		if (!strcmp(name, "boot_b")) {
+ 			boot_b = first;
+ 		}
+@@ -573,10 +638,9 @@ river_emmc_gpt(void)
+ }
+ 
+ /*
+- * Read-only BSD disk: /dev/emmc0 + /dev/remmc0 (whole user area) and
+- * /dev/emmc0sN + /dev/remmc0sN for GPT entry N. Opens for writing and every
+- * write request fail with EROFS; only river_emmc_read_block() touches the
+- * card, through river_emmc_cmd()'s read-only command list.
++ * BSD disk: /dev/emmc0 + /dev/remmc0 (whole user area) and per-GPT nodes.
++ * All nodes stay read-only except the named userdata partition p64, and
++ * that one only with rivermmcrw=1. The low-level CMD24 gate checks LBAs too.
+  */
+ static int
+ river_emmc_open(dev_t dev, int flags, __unused int devtype, __unused struct proc *p)
+@@ -585,7 +649,7 @@ river_emmc_open(dev_t dev, int flags, __unused int devtype, __unused struct proc
+ 	if (!ready || m < 0 || m >= MAX_PARTS || !parts[m].count) {
+ 		return ENXIO;
+ 	}
+-	return (flags & FWRITE) ? EROFS : 0;
++	return (flags & FWRITE) && (!write_enabled || m != userdata_minor) ? EROFS : 0;
+ }
+ 
+ static int
+@@ -601,16 +665,17 @@ river_emmc_strategy(buf_t bp)
+ 	caddr_t vaddr = NULL;
+ 	int m = minor(buf_device(bp));
+ 	uint32_t count = buf_count(bp);
++	bool reading = (buf_flags(bp) & B_READ) != 0;
+ 
+ 	buf_setresid(bp, count);
+-	if (!(buf_flags(bp) & B_READ)) {
+-		error = EROFS;
+-		goto done;
+-	}
+ 	if (!ready || m < 0 || m >= MAX_PARTS || !parts[m].count) {
+ 		error = ENXIO;
+ 		goto done;
+ 	}
++	if (!reading && (!write_enabled || m != userdata_minor)) {
++		error = EROFS;
++		goto done;
++	}
+ 	uint64_t off = (uint64_t)buf_blkno(bp) * parts[m].secsize;
+ 	uint64_t bytes = parts[m].count * BLOCK;
+ 	if (off > bytes || count > bytes - off) {
+@@ -626,8 +691,8 @@ river_emmc_strategy(buf_t bp)
+ 	}
+ 	/*
+ 	 * physio() on /dev/remmc0* hands over the caller's own (wired) user
+-	 * address, and strategy runs in that thread: copy out to it. Storing
+-	 * to it directly is a kernel data abort (IMG_0330).
++	 * address, and strategy runs in that thread. Use copyin/copyout rather
++	 * than dereferencing it in the kernel (IMG_0330).
+ 	 */
+ 	bool user = (buf_flags(bp) & B_PHYS) && (vm_offset_t)vaddr < VM_MIN_KERNEL_ADDRESS;
+ 	lck_mtx_lock(&river_emmc_lock);
+@@ -635,18 +700,33 @@ river_emmc_strategy(buf_t bp)
+ 		uint64_t pos = off + done;
+ 		uint32_t skip = (uint32_t)(pos % BLOCK);
+ 		uint32_t want = MIN(count - done, BLOCK - skip);
+-		error = river_emmc_read_block(parts[m].first + pos / BLOCK, block);
+-		if (error) {
+-			break;
+-		}
+-		if (user) {
+-			error = copyout((const char *)block + skip,
+-			    (user_addr_t)(uintptr_t)(vaddr + done), want);
++		uint64_t lba = parts[m].first + pos / BLOCK;
++		if (reading || skip || want != BLOCK) {
++			error = river_emmc_read_block(lba, block);
+ 			if (error) {
+ 				break;
+ 			}
++		}
++		if (reading) {
++			if (user) {
++				error = copyout((const char *)block + skip,
++				    (user_addr_t)(uintptr_t)(vaddr + done), want);
++			} else {
++				memcpy(vaddr + done, (const char *)block + skip, want);
++			}
+ 		} else {
+-			memcpy(vaddr + done, (const char *)block + skip, want);
++			if (user) {
++				error = copyin((user_addr_t)(uintptr_t)(vaddr + done),
++				    (char *)block + skip, want);
++			} else {
++				memcpy((char *)block + skip, vaddr + done, want);
++			}
++			if (!error) {
++				error = river_emmc_write_block(lba, block);
++			}
++		}
++		if (error) {
++			break;
+ 		}
+ 		done += want;
+ 		buf_setresid(bp, count - done);
+@@ -691,7 +771,7 @@ river_emmc_ioctl(dev_t dev, u_long cmd, caddr_t data, __unused int flag,
+ 		*o = parts[m].count * BLOCK / parts[m].secsize;
+ 		return 0;
+ 	case DKIOCISWRITABLE:
+-		*f = 0;
++		*f = write_enabled && m == userdata_minor;
+ 		return 0;
+ 	case DKIOCSYNCHRONIZE:
+ 	case DKIOCSYNCHRONIZECACHE:
+@@ -700,7 +780,8 @@ river_emmc_ioctl(dev_t dev, u_long cmd, caddr_t data, __unused int flag,
+ 		*o = (128 * 1024) / parts[m].secsize;
+ 		return 0;
+ 	case DKIOCGETMAXBLOCKCOUNTWRITE:
+-		*o = 0;
++		*o = write_enabled && m == userdata_minor ?
++		    (128 * 1024) / parts[m].secsize : 0;
+ 		return 0;
+ 	case DKIOCGETMAXSEGMENTCOUNTREAD:
+ 	case DKIOCGETMAXSEGMENTCOUNTWRITE:
+@@ -749,9 +830,13 @@ river_emmc_read(dev_t dev, struct uio *uio, __unused int ioflag)
+ }
+ 
+ static int
+-river_emmc_write(__unused dev_t dev, __unused struct uio *uio, __unused int ioflag)
++river_emmc_write(dev_t dev, struct uio *uio, __unused int ioflag)
+ {
+-	return EROFS;
++	int m = minor(dev);
++	if (!write_enabled || m != userdata_minor || !parts[m].count) {
++		return EROFS;
++	}
++	return physio(river_emmc_strategy, NULL, dev, B_WRITE, minphys, uio, (int)parts[m].secsize);
+ }
+ 
+ static const struct bdevsw river_emmc_bdevsw = {
+@@ -800,17 +885,18 @@ river_emmc_devices(void)
+ 			continue;
+ 		}
+ 		parts[m].secsize = BLOCK;
++		int mode = write_enabled && m == userdata_minor ? 0660 : 0440;
+ 		if (m == 0) {
+ 			devfs_make_node(makedev(bmajor, 0), DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0440, "emmc0");
+ 			devfs_make_node(makedev(cmajor, 0), DEVFS_CHAR, UID_ROOT, GID_OPERATOR, 0440, "remmc0");
+ 		} else {
+-			devfs_make_node(makedev(bmajor, m), DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0440, "emmc0s%d", m);
+-			devfs_make_node(makedev(cmajor, m), DEVFS_CHAR, UID_ROOT, GID_OPERATOR, 0440, "remmc0s%d", m);
++			devfs_make_node(makedev(bmajor, m), DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, mode, "emmc0s%d", m);
++			devfs_make_node(makedev(cmajor, m), DEVFS_CHAR, UID_ROOT, GID_OPERATOR, mode, "remmc0s%d", m);
+ 			n++;
+ 		}
+ 	}
+-	printf("RIVER eMMC: read-only /dev/emmc0, /dev/remmc0 and %u partitions (b %d, c %d)\n",
+-	    n, bmajor, cmajor);
++	printf("RIVER eMMC: %u partitions (b %d, c %d), userdata %s\n",
++	    n, bmajor, cmajor, write_enabled ? "read-write" : "read-only");
+ }
+ 
+ /* Root device for rd=emmc0sN (IOFindBSDRoot); read-only like every node. */
+@@ -893,10 +979,20 @@ river_emmc_probe(void)
+ 		ready = false;
+ 		return;
+ 	}
++	uint32_t rw = 0;
++	if (PE_parse_boot_argn("rivermmcrw", &rw, sizeof(rw)) && rw == 1 &&
++	    userdata_minor == 64 && parts[64].first == 17203200 &&
++	    parts[64].count == 104939487) {
++		write_enabled = true;
++		printf("RIVER eMMC: CMD24 enabled ONLY for userdata p64 LBA %llu..%llu\n",
++		    parts[64].first, parts[64].first + parts[64].count - 1);
++	} else if (rw) {
++		printf("RIVER eMMC: rivermmcrw requested but userdata geometry did not match; read-only\n");
++	}
+ 	if (river_emmc_speed_up()) {
+ 		river_emmc_bench();
+ 	}
+ 	river_emmc_devices();
+-	printf("RIVER eMMC: read-only probe done\n");
++	printf("RIVER eMMC: probe done\n");
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET && RIVER */
