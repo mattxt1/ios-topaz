@@ -60,7 +60,9 @@ Commit 130c72e passed CI 39468990896. r12 RAM boot accepted, image SHA-256
 r12 PANICKED before a successful interaction result. User reports final
 "handshake structure not initialized" line; verified this is panic-output
 code (out_shmem.c:499), not the original cause. Asked for full panic photo
-and recovery to pull r12-input.txt; diagnosis pending.
+and recovery; r12-input.txt pull was byte-identical to old r11-identity
+log, so no r12 log persisted. Same-kernel r12-console RAM boot sent
+(sweetfb_console=1, riverinput=1); need original panic line/photo.
 Next recovery log: r12-input.txt. Preserve r11-identity as GUI fallback.
 Details in RIVER.md.
 

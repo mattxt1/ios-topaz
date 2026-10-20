@@ -629,3 +629,12 @@ reset and recovery entry to read `../logs-private/r12-input.txt`.
 No code fix or cause is established. Do not treat the handshake message as
 a touch-controller handshake failure. Phone has no ADB/fastboot enumeration
 while frozen; waiting for recovery. r11-identity remains the GUI fallback.
+
+Recovery pull saved r12-input.txt, but its header (359,962 bytes, flush #224)
+and entire decoded text are byte-identical to r11-identity.txt. Thus no r12
+log was persisted; an early failure before its first flush is suspected,
+not proved. Same-kernel console image prepared and RAM-booted to expose the
+initial panic without framebuffer swaps:
+`river-r12-console-boot.img`, SHA-256
+`0c006d3c04f33b9f7df6542ca4ed666dfd85c4422dbb26e2d563e36a966bf911`.
+It keeps riverinput=1 and riverlog=1; screen/panic photo pending.
