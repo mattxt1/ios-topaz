@@ -12,10 +12,10 @@ index 21cdb5c..c741ee0 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
 new file mode 100644
-index 0000000..be60939
+index 0000000..06aca92
 --- /dev/null
 +++ b/bsd/dev/river_emmc.c
-@@ -0,0 +1,879 @@
+@@ -0,0 +1,902 @@
 +/*
 + * river (Moto G7, SDM632) eMMC: READ-ONLY polled driver for the SDHCI-MSM
 + * host sdhc_1. Boot-arg rivermmc=1 enables it; otherwise nothing is mapped.
@@ -831,6 +831,29 @@ index 0000000..be60939
 +	    n, bmajor, cmajor);
 +}
 +
++/* Root device for rd=emmc0sN (IOFindBSDRoot); read-only like every node. */
++int river_emmc_rootdev(const char *name, dev_t *dev);
++int
++river_emmc_rootdev(const char *name, dev_t *dev)
++{
++	int n = 0;
++	const char *p = name + 6;	/* after "emmc0s" */
++	if (!*p) {
++		return EINVAL;
++	}
++	for (; *p; p++) {
++		if (*p < '0' || *p > '9' || n >= MAX_PARTS) {
++			return EINVAL;
++		}
++		n = n * 10 + (*p - '0');
++	}
++	if (!ready || bmajor < 0 || n <= 0 || n >= MAX_PARTS || !parts[n].count) {
++		return ENXIO;
++	}
++	*dev = makedev(bmajor, n);
++	return 0;
++}
++
 +/* Time 1 MiB of single-block reads from boot_b (p42). */
 +static void
 +river_emmc_bench(void)
@@ -912,3 +935,31 @@ index bb2a2bf..6eaccfe 100644
  #if SWEET_HFS
  	/* HFS is built in on SWEET: register it like its kext would, before mounting root. */
  	extern void sweet_hfs_register(void);
+diff --git a/iokit/bsddev/IOKitBSDInit.cpp b/iokit/bsddev/IOKitBSDInit.cpp
+index e6c74aa..ddd3dbc 100644
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -783,6 +783,23 @@ IOFindBSDRoot( char * rootName, unsigned int rootNameSize,
+ 		goto iofrootx;
+ 	}
+ #endif
++#if defined(RIVER)
++//
++//	river: read-only root on an eMMC GPT partition, rd=emmc0sN (bsd/dev/river_emmc.c)
++//
++	if (strncmp(rdBootVar, "emmc0s", 6) == 0) {
++		extern int river_emmc_rootdev(const char *name, dev_t *dev);
++		OSSafeReleaseNULL(matching);
++		int emmc_error = river_emmc_rootdev(rdBootVar, root);
++		if (emmc_error) {
++			panic("IOFindBSDRoot: river eMMC root %s unavailable: %d", rdBootVar, emmc_error);
++		}
++		strlcpy(rootName, rdBootVar, rootNameSize);
++		IOLog("BSD root: %s, major %d, minor %d\n", rootName, major(*root), minor(*root));
++		*oflags = 0;
++		goto iofrootx;
++	}
++#endif
+ 
+ //
+ //	Now check if we are trying to root on a memory device
