@@ -298,6 +298,20 @@ tries a write open.
   Raw and block reads from user space work, writes are refused, on 4 CPUs
   with the HFS RAM root. Nothing was written to the eMMC; nothing flashed.
 
+### eMMC root (2026-10-20, in progress)
+
+0128 adds `rd=emmc0sN` (read-only root on GPT entry N, `river_emmc_rootdev`);
+CI run 39377752332 (`0b8230d`), kernel `../k-r8/`. The user approved wiping
+the phone. `fastboot flash userdata` of the 8 MiB HFS+ test root
+(`../k-r8/root-hfs.img`, SHA-256 `6a3d0e7b…`) was **refused by the Moto
+bootloader** (`flash permission denied`, `partition-type:userdata raw`,
+size 0xc827fbe00); nothing was written. Android's partition map:
+boot_a p41, boot_b p42, vendor_a p60, vendor_b p61, **system_a p62**,
+system_b p63, userdata p64. Plan: flash the test root to the inactive
+`system_a` (Android keeps booting slot b) and RAM-boot
+`shim-river/out/river-r8-sys62-boot.img` (`rd=emmc0s62`, SHA-256
+`60cad53e…`). Not done yet.
+
 ## Next work
 
 1. Faster I/O if needed: multi-block CMD18 needs CMD12 STOP (also a
