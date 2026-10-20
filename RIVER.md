@@ -211,10 +211,34 @@ SweetRoot on device b(1, 0)`**, `load_init_program: attempting to load
 init: still alive`. The built-in HFS works on river; this is the same
 milestone that preceded iOS userland on sweet.
 
+### eMMC read-only probe, first run (2026-10-20, photo IMG_0326)
+
+Patch 0128 (`bsd/dev/river_emmc.c`, CI run 39371894070, kernel in
+`../k-r2/`), ADT `/river-emmc`, boot-args `… cpus=4 … rd=md0 rivermmc=1`,
+image `river-r2-emmc-boot.img` SHA-256 `b0c371ab…`. Screen:
+
+    RIVER eMMC: GCC SDCC1 apps CBCR 0x00004ff1, ahb CBCR 0x2000cff1
+    RIVER eMMC: MSM core HC_MODE 0x0 is not SDHCI mode; stopping
+
+Both SDCC1 clock branches are running (CLK_OFF clear). But the MSM core is
+**not in SDHCI mode** when XNU starts (`HC_MODE_EN` at core_mem+0x78 is 0),
+so ABL/XBL either drives sdhc_1 in legacy MCI mode or resets it on exit. The
+probe stopped as designed before any SDHCI register access or card command.
+Boot continued: HFS RAM root, PID 1, 4 CPUs, as before.
+
+Consequence: river cannot reuse ABL's controller state the way sweet reuses
+UFS. A read-only driver must initialise the host like Linux's sdhci-msm:
+set `HC_MODE_EN` (and `FF_CLK_SW_RST_DIS`), reset the host, answer the MSM
+power-control handshake (`CORE_PWRCTL_*` in core_mem), set the SDHCI clock
+divider from the GCC rate ABL left, then enumerate the card (CMD0, CMD1, CMD2,
+CMD3, CMD7, optionally CMD6 for 4/8-bit bus width) before CMD17 reads. CMD0
+resets the card's state machine and CMD6 changes a volatile EXT_CSD field;
+neither writes stored data, but both go beyond reading.
+
 ## Next work
 
-1. iOS userland needs far more than fits in RAM beside the kernel, so the next
-   real step is a **read-only** eMMC SDHCI driver (0x07824900), with explicit
-   approval before any write path exists.
+1. Decide whether the read-only driver may take over the host and enumerate
+   the card (CMD0/1/2/3/7, 1-bit bus to avoid CMD6). Then implement the
+   sdhci-msm init above and repeat the GPT/boot_b read test from RAM.
 2. Booting an iOS root later needs a writable partition; on sweet that
    replaced Android's userdata. That is a separate decision for the user.
