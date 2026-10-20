@@ -1,0 +1,64 @@
+diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
+index 22c92a3..72510aa 100644
+--- a/bsd/dev/river_emmc.c
++++ b/bsd/dev/river_emmc.c
+@@ -151,6 +151,9 @@ static int userdata_minor;
+ static uint32_t block[BLOCK / 4];
+ static uint32_t mblock[MULTI_MAX * BLOCK / 4];	/* multi-block read bounce */
+ static bool multi_ok;		/* CMD23 + CMD18 verified at probe */
++static uint32_t multi_verify;	/* boot-arg rivermmcverify=1: re-read every multi read singly */
++static uint64_t verify_reads, verify_bad;
++static uint32_t vblock[BLOCK / 4];
+ static uint32_t host_ctrl;	/* SDHCI host control 1 (power + width/timing bits) */
+ 
+ /* minor 0 = whole user area, minor N = GPT entry N (1-based); count 0 = none */
+@@ -888,6 +891,34 @@ river_emmc_strategy(buf_t bp)
+ 		if (reading && multi_ok && skip == 0 && count - done >= 2 * BLOCK) {
+ 			uint32_t n = MIN((count - done) / BLOCK, MULTI_MAX);
+ 			error = river_emmc_read_multi(lba, n, mblock);
++			if (!error && multi_verify) {
++				/* Diagnostic: compare with single-block reads, keep those. */
++				verify_reads++;
++				for (uint32_t b = 0; b < n && !error; b++) {
++					uint32_t *mb = mblock + b * (BLOCK / 4);
++					error = river_emmc_read_block(lba + b, block);
++					if (error || !memcmp(mb, block, BLOCK)) {
++						continue;
++					}
++					uint32_t w = 0;
++					while (w < BLOCK / 4 && mb[w] == block[w]) {
++						w++;
++					}
++					if (verify_bad++ < 40) {
++						/* A second single read says which copy is wrong. */
++						bool again = !river_emmc_read_block(lba + b, vblock);
++						printf("RIVER eMMC: VERIFY MISMATCH LBA %llu (+%u of %u) word %u multi 0x%08x single 0x%08x reread %s 0x%08x\n",
++						    lba + b, b, n, w, mb[w], block[w],
++						    !again ? "failed" : memcmp(vblock, block, BLOCK) ? "differs" : "same",
++						    again ? vblock[w] : 0);
++					}
++					memcpy(mb, block, BLOCK);
++				}
++				if ((verify_reads % 2048) == 0) {
++					printf("RIVER eMMC: verify %llu multi reads, %llu bad blocks\n",
++					    verify_reads, verify_bad);
++				}
++			}
+ 			if (!error) {
+ 				want = n * BLOCK;
+ 				if (user) {
+@@ -1289,6 +1320,14 @@ river_emmc_probe(void)
+ 		river_emmc_fast_bus();
+ 		river_emmc_bench();
+ 	}
++	uint32_t multi_arg = 1;
++	if (PE_parse_boot_argn("rivermmcmulti", &multi_arg, sizeof(multi_arg)) && multi_arg == 0) {
++		multi_ok = false;
++		printf("RIVER eMMC: multi-block reads disabled by rivermmcmulti=0\n");
++	}
++	if (PE_parse_boot_argn("rivermmcverify", &multi_verify, sizeof(multi_verify)) && multi_verify) {
++		printf("RIVER eMMC: verifying every multi-block read against single-block reads\n");
++	}
+ 	river_emmc_devices();
+ 	river_emmc_log_init();
+ 	printf("RIVER eMMC: probe done\n");
