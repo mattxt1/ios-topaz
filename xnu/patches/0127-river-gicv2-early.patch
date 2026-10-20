@@ -1,0 +1,207 @@
+diff --git a/makedefs/MakeInc.def b/makedefs/MakeInc.def
+--- a/makedefs/MakeInc.def
++++ b/makedefs/MakeInc.def
+@@ -29,7 +29,7 @@
+ else ifneq ($(findstring _host,$(RC_ProjectName)),)
+ SUPPORTED_ARM64_MACHINE_CONFIGS = NONE
+ else
+-SUPPORTED_ARM64_MACHINE_CONFIGS = BCM2837 T6000 T8101 T8103 VMAPPLE SWEET
++SUPPORTED_ARM64_MACHINE_CONFIGS = BCM2837 T6000 T8101 T8103 VMAPPLE SWEET RIVER
+ 
+ endif
+ 
+@@ -64,6 +64,7 @@
+ # topaz: Cortex-A53/A73 are ARMv8.0 (no LSE atomics, RCpc, PAN or FP16). An explicit
+ # -mcpu: -arch arm64 otherwise keeps clang's apple-m1 default and its LSE/RCpc features
+ MACHINE_FLAGS_ARM64_SWEET = -DARM64_BOARD_CONFIG_SWEET                -mcpu=cortex-a53
++MACHINE_FLAGS_ARM64_RIVER = -DARM64_BOARD_CONFIG_SWEET -DRIVER=1      -mcpu=cortex-a53
+ 
+ 
+ #
+@@ -263,7 +264,7 @@
+ export ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG := $(shell echo $(CURRENT_ARCH_CONFIG) | tr A-Z a-z)
+ ifneq ($(filter arm64,$(ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG)),)
+ # sweet's Cortex-A76/A55 have no pointer authentication: stay plain arm64
+-ifneq ($(CURRENT_MACHINE_CONFIG),SWEET)
++ifeq ($(filter SWEET RIVER,$(CURRENT_MACHINE_CONFIG)),)
+ export ARCH_STRING_FOR_CURRENT_MACHINE_CONFIG := arm64e
+ endif
+ endif
+diff --git a/pexpert/pexpert/arm64/SWEET.h b/pexpert/pexpert/arm64/SWEET.h
+--- a/pexpert/pexpert/arm64/SWEET.h
++++ b/pexpert/pexpert/arm64/SWEET.h
+@@ -24,7 +24,11 @@
+  * CPU_ON; the scheduler does not know the A76s are faster (no AMP/P-E
+  * clusters yet).
+  */
++#if defined(RIVER)
++#define SWEET_SMP_MAX_CPUS         4
++#else
+ #define SWEET_SMP_MAX_CPUS         8
++#endif
+ 
+ #define ARM_ARCH_TIMER
+ #define __ARM_ARCH__              8
+@@ -37,7 +41,11 @@
+ /* topaz: Cortex-A53/A73 have no PAN (ARMv8.1); MSR PAN is undefined there */
+ #define __ARM_16K_PG__            1
+ 
++#if defined(RIVER)
++#define HAS_GIC_V3                0
++#else
+ #define HAS_GIC_V3                1
++#endif
+ 
+ #ifndef ASSEMBLER
+ #define PLATFORM_PANIC_LOG_DISABLED
+@@ -48,7 +56,11 @@
+  * virt, hyp) instead of the usual 13/14/11/10: the virtual timer XNU uses
+  * (CNTV) is INTID 16 + 3 = 19.
+  */
++#if defined(RIVER)
++#define SWEET_VTIMER_INTID        20
++#else
+ #define SWEET_VTIMER_INTID        19
++#endif
+ #define SWEET_IPI_SGI             1       // SGI used for cross-CPU signals
+ 
+ #define GIC_SPURIOUS_IRQ          1023    // IRQ no. for GIC spurious interrupt
+diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -13,7 +13,81 @@
+ #include <pexpert/arm64/board_config.h>
+ 
+ 
+-#if HAS_GIC_V3
++#if defined(RIVER)
++/* River's GICv2 has banked SGI/PPI registers and an MMIO CPU interface. */
++SECURITY_READ_ONLY_LATE(uint32_t) sweet_vtimer_intid = SWEET_VTIMER_INTID;
++static vm_offset_t river_gicd_base;
++vm_offset_t river_gicc_base;
++
++static uint32_t
++river_gic_read32(vm_offset_t address)
++{
++	return *(volatile uint32_t *)address;
++}
++
++static void
++river_gic_write32(vm_offset_t address, uint32_t value)
++{
++	*(volatile uint32_t *)address = value;
++}
++
++void
++river_gic_mask_intid(uint32_t intid)
++{
++	if (intid < 1020) {
++		river_gic_write32(river_gicd_base + 0x180 + 4 * (intid / 32),
++		    1U << (intid % 32)); /* GICD_ICENABLERn */
++	}
++}
++
++void
++pe_init_fiq(void)
++{
++	if (!river_gicd_base) {
++		DTEntry entry;
++		if (SecureDTLookupEntry(NULL, "/arm-io/gic", &entry) != kSuccess) {
++			panic("river: missing /arm-io/gic");
++		}
++		void const *reg;
++		unsigned int reg_size;
++		if (SecureDTGetProperty(entry, "reg", &reg, &reg_size) != kSuccess ||
++		    reg_size < 4 * sizeof(uint64_t)) {
++			panic("river: invalid GICv2 reg property");
++		}
++		void const *timer;
++		unsigned int timer_size;
++		if (SecureDTGetProperty(entry, "virtual-timer-intid", &timer,
++		    &timer_size) == kSuccess) {
++			if (timer_size != sizeof(uint32_t)) {
++				panic("river: invalid virtual timer INTID property");
++			}
++			sweet_vtimer_intid = *(const uint32_t *)timer;
++		}
++		if (sweet_vtimer_intid < 16 || sweet_vtimer_intid >= 32) {
++			panic("river: virtual timer INTID is not a PPI");
++		}
++		uint64_t const *regions = (uint64_t const *)reg;
++		vm_offset_t soc = pe_arm_get_soc_base_phys();
++		river_gicd_base = ml_io_map(soc + regions[0], regions[1]);
++		river_gicc_base = ml_io_map(soc + regions[2], regions[3]);
++		if (!river_gicd_base || !river_gicc_base) {
++			panic("river: cannot map GICv2 registers");
++		}
++	}
++
++	uint32_t bit = 1U << sweet_vtimer_intid;
++	vm_offset_t d = river_gicd_base;
++	vm_offset_t c = river_gicc_base;
++	river_gic_write32(d + 0x80, river_gic_read32(d + 0x80) | bit); /* IGROUPR0 */
++	*(volatile uint8_t *)(d + 0x400 + sweet_vtimer_intid) = 0xa0;
++	river_gic_write32(d + 0x100, bit); /* ISENABLER0 */
++	river_gic_write32(d, river_gic_read32(d) | 1U); /* Enable Group 1 */
++	river_gic_write32(c + 0x4, 0xff); /* GICC_PMR */
++	river_gic_write32(c, river_gic_read32(c) | 1U); /* GICC_CTLR */
++	__asm__ volatile("dsb sy; isb" ::: "memory");
++}
++
++#elif HAS_GIC_V3
+ #define GICR_WAKE_TIMEOUT_NS (1000000000ULL) // timeout for redistributor wakeup (default 1s)
+ MACHINE_TIMEOUT(gicr_wake_timeout_ns, "gicr-wake-timeout", GICR_WAKE_TIMEOUT_NS, MACHINE_TIMEOUT_UNIT_NSEC, NULL);
+ 
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1925,6 +1925,11 @@
+ 	__builtin_unreachable();
+ }
+ 
++#if defined(RIVER)
++extern vm_offset_t river_gicc_base;
++extern void river_gic_mask_intid(uint32_t intid);
++#endif
++
+ void
+ sleh_irq(arm_saved_state_t *state)
+ {
+@@ -1934,7 +1939,36 @@
+ #endif
+ 
+ 
+-#if defined(SWEET)
++#if defined(RIVER)
++	uint32_t iar = *(volatile uint32_t *)(river_gicc_base + 0xc); /* GICC_IAR */
++	uint32_t intid = iar & 0x3ff;
++	if (intid >= 1020) {
++		return; /* spurious */
++	}
++	if (intid == sweet_vtimer_intid) {
++		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_TIMER);
++		cdp->cpu_decrementer = -1;
++		INTERRUPT_MASKED_DEBUG_START(rtclock_intr, DBG_INTR_TYPE_TIMER);
++		rtclock_intr(TRUE);
++		INTERRUPT_MASKED_DEBUG_END();
++	} else if (intid < 16) {
++		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_IPI);
++	} else {
++		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_OTHER);
++		if (cdp->interrupt_handler) {
++			cdp->interrupt_handler(cdp->interrupt_target,
++			    cdp->interrupt_refCon, cdp->interrupt_nub, intid);
++		} else {
++			/* ABL may leave unrelated sources pending on the Gold core. */
++			river_gic_mask_intid(intid);
++		}
++	}
++	*(volatile uint32_t *)(river_gicc_base + 0x10) = iar; /* GICC_EOIR */
++	__asm__ volatile("dsb sy; isb" ::: "memory");
++	if (intid < 16) {
++		cpu_signal_handler();
++	}
++#elif defined(SWEET)
+ 	/*
+ 	 * sweet: TrustZone owns GIC Group 0, so the timer and IPIs that other
+ 	 * ARM64 targets take as FIQs arrive here as Group 1 IRQs.

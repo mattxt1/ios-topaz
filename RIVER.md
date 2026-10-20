@@ -43,12 +43,20 @@ Generate and parse-check the tree:
 python3 tools/mkadt_river.py /tmp/river-early.adt
 ```
 
+`xnu/patches/0127-river-gicv2-early.patch` is a **draft** kernel change for
+`MACHINE_CONFIG=RIVER`. It reuses the SWEET platform code with a Cortex-A53
+instruction baseline, switches off GICv3, maps river's GICv2 distributor and
+CPU interface, and routes the virtual timer through `sleh_irq`. It applies
+cleanly to the exact topaz build tree from CI run 39292140455. It has not
+been compiled or booted; the current CI log does not contain verbose compile
+commands, and local Xcode differs from the pinned CI toolchain. Review the
+GICv2 register path and obtain a RIVER CI build before any XNU boot attempt.
+
 ## Next work
 
-1. Port the topaz kernel's GICv3 timer/IRQ path to GICv2 and INTID 20. Keep
-   the first kernel boot storage-free and Gold-only, with screen markers or a
-   functioning early console. Its handler must acknowledge and EOI via GICC,
-   ignore or mask unrelated interrupt sources, and disarm only the timer IRQ.
+1. Compile and review the draft GICv2 kernel patch, then use a storage-free,
+   Gold-only first boot with screen markers or a functioning early console.
+   The handler acknowledges and EOIs via GICC and masks unrelated sources.
 2. Adapt the shim to river's boot image and RAM placement. Do not reuse
    topaz's boot header, GIC, UFS, framebuffer, or memory addresses.
 3. Bind an eMMC SDHCI driver only after early kernel execution is observable.
