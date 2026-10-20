@@ -175,11 +175,23 @@ newest line sits just above the blank gap) shows, among others:
 
 The phone stays at that wait; hold power to reboot into Android.
 
+### First userspace on river (2026-10-20, photo IMG_0323)
+
+Same kernel and ADT, payload built with `--ramdisk ../k-r1/sweet-init` (the
+static PID 1 from `tools/sweet-init.S` + `tools/mkinit.py`, built with local
+clang `-target arm64-apple-ios16.0`) and boot-args `... cpus=1 ... rd=md0`.
+Image `river-r1-md0-boot.img` SHA-256 `4f8aa497…6bfb311`, RAM-booted. Screen:
+`Added memory device md0/rmd0 … at 0xFFFFFE0008568000`, `BSD root: md0,
+major 1, minor 0`, `load_init_program: attempting to load /sbin/launchd`,
+**`*** SWEET userspace: init running as PID 1 ***`**, then repeated
+`SWEET init: still alive`. Exec, code signing (ad-hoc), syscalls, devfs
+`/dev/console` and timed `select()` all work on river. No storage touched,
+nothing flashed.
+
 ## Next work
 
-1. A RAM root: `tools/mkpayload.py --ramdisk` with a small HFS image and
-   `rd=md0`, to reach launchd without touching eMMC.
-2. `cpus=4` to bring up the other three Gold cores (PSCI CPU_ON + GICv2
+1. `cpus=4` to bring up the other three Gold cores (PSCI CPU_ON + GICv2
    SGIs); Silver stays parked.
+2. An HFS RAM root (as sweet's `research/root-hfs.img`), then iOS userland.
 3. A read-only eMMC SDHCI driver (0x07824900), only with explicit approval
    before any write path exists.
