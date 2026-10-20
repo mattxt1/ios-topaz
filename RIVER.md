@@ -459,4 +459,11 @@ combine recorded CXXFLAGS and CFLAGS, as XNU's build rule does; its previous
 CXXFLAGS-only invocation omitted target and board defines. The river
 framebuffer object references `ml_io_map_wcomb` and the buffered-surface
 allocator, with no TopazModem or scanout-geometry initializer reference.
-CI and phone test pending.
+Commit `a5a5fd7`, CI run `39394024834`: passed. The downloaded river kernel
+contains the new `RIVER FB` messages and the existing userdata-only CMD24
+guard. `fastboot boot` accepted `shim-river/out/river-r10-boot.img` on
+2026-10-20 (SHA-256
+`987eea90a1d321188c6b741a6e180a67970bda9ad81176709a7f3464e1e8a66d`).
+This was a RAM boot; no partition was flashed for the display test. The
+screen result is pending. `river-r10-console-boot.img` is a local fallback
+with the same kernel and published display service but swaps suppressed.

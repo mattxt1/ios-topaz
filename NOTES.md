@@ -30,7 +30,10 @@ NSInternalInconsistencyException because FBSDisplayConfiguration reports
 0x0 bounds/mode on wireless0. River still had AppleCLCD disabled. Phone was
 returned to fastboot by the user. Working next: patch 0130 publishes AppleCLCD
 using cached BGRA software composition copied to the measured 24bpp river
-splash; topaz MDP/DSI/modem paths stay excluded. Details in RIVER.md.
+splash; topaz MDP/DSI/modem paths stay excluded. Commit `a5a5fd7` passed CI
+`39394024834`. `fastboot boot` accepted r10 with GUI output enabled,
+`sweetfb_stayon=1 sweetfb_hz=5`; screen result pending. Same-kernel console
+fallback prepared locally. Details in RIVER.md.
 
 ## Agent handoff / active work (2026-10-15, latest)
 
