@@ -235,10 +235,45 @@ CMD3, CMD7, optionally CMD6 for 4/8-bit bus width) before CMD17 reads. CMD0
 resets the card's state machine and CMD6 changes a volatile EXT_CSD field;
 neither writes stored data, but both go beyond reading.
 
+### eMMC read-only driver: host init and card enumeration (2026-10-20)
+
+Second 0128 revision (CI run 39373264676, photo IMG_0327): SDHCI mode, reset,
+power-control handshake (`pwrctl 0x6` = BUS_ON + IO_LOW, acked), 1.8 V,
+GCC sdcc1_apps reprogrammed. ABL had left the RCG at **cfg 0x205 = GPLL4/3 =
+384 MHz (HS400)**. Result: `CMD1 … error, status 0x00018000` (command
+timeout); the card did not answer.
+
+Third revision (CI run 39374127195, `eee65eb`, image `river-r4-emmc-boot.img`
+SHA-256 `5c477eb3…`, photos IMG_0328/IMG_0329): before lowering the clock,
+restore the sdhci-msm vendor register (hc_mem+0x10c) to its POR value
+0xa9c and clear the power-save DLL bit, as Linux's probe and default-mode
+select do. ABL had left `vendor_spec 0x00358b1c`, i.e. MCLK select = HS400
+(divided DLL clock), which explains the silent CMD1. **The eMMC now reads:**
+
+    RCG now cfg 0x2017 m 0x1 n 0xfc (400 kHz from XO), CBCR 0x4ff1
+    pwrctl 0x6 acked; host 0x00000d00 clock 0x000e0005
+    OCR 0xc0ff8080 ready, sector mode
+    CID manufacturer 0x13 product "S0J9N8"            (Micron)
+    selected RCA 1, status 0x00000900 (state 4, 4 = tran)
+    GPT 64 entries of 128 bytes at LBA 2; last LBA 122142719 (59640 MiB)
+    backup GPT header OK at LBA 122142719
+    p1 sbl1_a LBA 256; p2 sbl1_b LBA 1280; p41 boot_a LBA 798720 +32 MiB;
+    p42 boot_b LBA 897024 +32 MiB; p61 vendor_b LBA 3932160 +848 MiB;
+    p63 system_b LBA 11436032 +2816 MiB; p64 userdata; 64 partitions
+    boot_b starts with ANDROID! (header v1 found)
+    read-only probe done
+
+Then the HFS RAM root mounted and PID 1 ran on four CPUs as before. Only
+CMD0/1/2/3/7/13/17 were issued; no data was written and nothing flashed.
+The card is left in 1-bit 400 kHz transfer state; Android re-initialises
+it on the next boot.
+
 ## Next work
 
-1. Decide whether the read-only driver may take over the host and enumerate
-   the card (CMD0/1/2/3/7, 1-bit bus to avoid CMD6). Then implement the
-   sdhci-msm init above and repeat the GPT/boot_b read test from RAM.
-2. Booting an iOS root later needs a writable partition; on sweet that
+1. Faster reads: raise sdcc1_apps (e.g. 25 MHz from GPLL0/2 /16, still
+   default speed) and, if wanted, 4/8-bit bus, which needs CMD6 (a volatile
+   EXT_CSD write, so it needs the user's approval first).
+2. Expose the eMMC as a read-only BSD block device (like `sweet_ufs.c`'s
+   bdevsw, writes refused) so HFS/other filesystems can be mounted from it.
+3. Booting an iOS root later needs a writable partition; on sweet that
    replaced Android's userdata. That is a separate decision for the user.
