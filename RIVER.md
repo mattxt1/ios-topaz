@@ -794,3 +794,18 @@ high speed + 50 MHz, each verified by EXT_CSD re-read with fallback;
 CMD23+CMD18 multi-block reads up to 64 KiB, verified against single-block
 reads. CMD6 gated to those two volatile bytes. 0137: sampler prints thread
 state, block hint, wait event, user FAR/ESR and kernel backtrace.
+
+### r16 result: lock screen in ~5 minutes (CI 39488596584)
+`river-r16-boot.img` RAM-booted 16:08:32. eMMC: EXT_CSD rev 8, card_type
+0x57; **8-bit bus, 50 MHz, multi-block reads on**; 1 MiB single-block 403 ms
+(2535 KiB/s), multi-block 88 ms (11569 KiB/s, ~9.5x r15). Timeline (host
+seconds after fastboot boot): launchd +38, early boot tasks done +47
+(r15: +128), SpringBoard exec +49 (r15 +141, r14 +254), HID touch/buttons
+opened by backboardd +103/+105, **lock screen reported by user ~+300 s**.
+Sample 1 (+244): backboardd, mediaserverd, mediaremoted idle in run loops
+(the r13 MediaRemote wait was not a hang); SpringBoard loading Control
+Center module metadata. New sampler fields worked (e.g. mediaremoted at
++124 s: instruction-fetch page fault, ESR 0x82000007, waiting on a kernel
+mutex). PosterBoard crashed at +292 s (ns 2 code 0x5), not yet analysed.
+Remaining throughput limit is PIO (CPU copies every word); ADMA is the next
+storage step.
