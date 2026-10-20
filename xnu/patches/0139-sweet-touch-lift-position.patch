@@ -1,0 +1,48 @@
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
+index 97775c4..6ae2c44 100644
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -457,6 +457,8 @@ SweetHIDTouch::start(IOService *provider)
+ 	return true;
+ }
+ 
++static uint32_t sweet_touch_moves[SWEET_TOUCH_FINGERS];	/* per touch, for the log */
++
+ void
+ SweetHIDTouch::touch(int finger, bool down, int x, int y)
+ {
+@@ -472,9 +474,10 @@ SweetHIDTouch::touch(int finger, bool down, int x, int y)
+ 
+ 	IOLockLock(fLock);
+ 	bool was = fDown[finger];
+-	/* Panel pixels -> the presented 1125x2436 display (SweetFramebuffer.cpp). */
+-	IOFixed nx = (IOFixed)(((int64_t)(x + fOffX) << 16) / fLogicalW);
+-	IOFixed ny = (IOFixed)(((int64_t)(y + fOffY) << 16) / fLogicalH);
++	/* Panel pixels -> the presented 1125x2436 display (SweetFramebuffer.cpp).
++	 * A lift reports no position: it ends where the finger last was. */
++	IOFixed nx = down ? (IOFixed)(((int64_t)(x + fOffX) << 16) / fLogicalW) : fX[finger];
++	IOFixed ny = down ? (IOFixed)(((int64_t)(y + fOffY) << 16) / fLogicalH) : fY[finger];
+ 	bool moved = down && (nx != fX[finger] || ny != fY[finger]);
+ 	if (was == down && !moved) {
+ 		IOLockUnlock(fLock);
+@@ -539,9 +542,18 @@ SweetHIDTouch::touch(int finger, bool down, int x, int y)
+ 	collection->setIntegerValue(kIOHIDEventFieldDigitizerButtonMask, any ? 1 : 0);
+ 	IOLockUnlock(fLock);
+ 
++	if (moved && was) {
++		sweet_touch_moves[finger]++;
++	}
+ 	if (was != down) {
+-		IOLog("SWEET HID: touch %d %s at %d,%d%s\n", finger, down ? "down" : "up", x, y,
+-		    fEdge[finger] ? " edge" : "");
++		if (down) {
++			sweet_touch_moves[finger] = 0;
++			IOLog("SWEET HID: touch %d down at %d,%d%s\n", finger, x, y, fEdge[finger] ? " edge" : "");
++		} else {
++			IOLog("SWEET HID: touch %d up after %u moves at %d,%d%s\n", finger,
++			    sweet_touch_moves[finger], (int)(((int64_t)nx * fLogicalW) >> 16) - fOffX,
++			    (int)(((int64_t)ny * fLogicalH) >> 16) - fOffY, fEdge[finger] ? " edge" : "");
++		}
+ 	}
+ 	dispatchEvent(collection);
+ 	collection->release();
