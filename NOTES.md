@@ -54,8 +54,11 @@ and correct time remain unverified/unimplemented. Preserve this baseline;
 recovery inventory confirms Novatek at QUP3 0x78b7000/0x62, GPIO65/64,
 volume-up GPIO85, PM8953 PON keys. r11-identity log pulled (359,962 bytes).
 Patch 0132 prepares polled QUPv2 touch + SPMI v2/v3 buttons, software HID
-and river coordinate height, opt-in riverinput=1. Build/test pending; phone
-is in recovery. Preserve r11-identity as the working GUI fallback.
+and river coordinate height, opt-in riverinput=1. Corrected firmware endpoint is 0x01 (DT 0x62 is unused hardware endpoint).
+Commit 130c72e passed CI 39468990896. r12 RAM boot accepted, image SHA-256
+0149a52229379a0b8c93055740261dd889133a6f2f71fd02069ff40f4aa8ee05.
+Touch/button interaction pending; user asked to swipe up and press volume.
+Next recovery log: r12-input.txt. Preserve r11-identity as GUI fallback.
 Details in RIVER.md.
 
 ## Agent handoff / active work (2026-10-15, latest)

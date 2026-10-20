@@ -595,3 +595,23 @@ References: matching [LineageOS river kernel](https://github.com/LineageOS/andro
 `gcc-msm8953.c` / `pinctrl-msm8953.c`. Local reference downloads and device
 inventory stay outside git. Local compilation encountered a blocked header
 read; CI compilation/link and a phone test remain required.
+
+Corrected commit `130c72e` passed river CI **39468990896**. The full kernel
+compiled and linked successfully. The actual frame-decoder host harness
+also passed corner coordinates, finger ID 10, release, and invalid ID/X/Y
+checks under address/undefined sanitizers. Patch reverse-application check
+passed. No topaz object change is intended outside preprocessor guards.
+`river-r12-boot.img` SHA-256:
+`0149a52229379a0b8c93055740261dd889133a6f2f71fd02069ff40f4aa8ee05`.
+Its payload embedding, `riverinput=1 riverlog=1` arguments and river/input
+kernel strings were checked before `fastboot boot` returned OKAY.
+Phone interaction result pending (swipe up and short volume press requested).
+
+Before r12 was sent, while CI was still running, the user reported a
+bootloader-screen loop. Neither ADB nor fastboot initially enumerated;
+the user restored stable fastboot with the buttons. r12 was then booted
+from that verified fastboot state. No image had been sent during the loop;
+its cause is not established. The r11-identity GUI image remains the fallback.
+Recovery debugfs was mounted as a virtual filesystem for read-only pin/clock
+inventory; no partition was flashed. The next log name is
+`../logs-private/r12-input.txt` when the user returns to recovery.
