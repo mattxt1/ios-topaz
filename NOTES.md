@@ -1,5 +1,13 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River side port handoff (2026-10-19)
+
+This local `river-bringup` branch is an experiment for the Moto G7 river. Read
+`RIVER.md` for its measured hardware facts, the early ADT, the temporary boot
+diagnostics, and the next kernel work. The sweet/topaz notes below describe
+other devices; their GICv3, UFS, boot image, and display addresses do not apply
+to river.
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
