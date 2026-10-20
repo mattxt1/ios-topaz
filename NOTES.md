@@ -16,7 +16,7 @@ topaz and river with `tools/river-cc.py`; **no CI build yet**. New
 splash confirmed, initrd found at 0x13600000, Gold handoff OK, auto-reset to
 Android. First `board=river` CI build succeeded (fork mattxt1/ios-topaz, run
 39368830465); `river-r1` RAM boot (IMG_0322): **XNU runs on Gold 0x100 to the root-device
-wait**, GICv2 SGI and vtimer working. md0 RAM root (IMG_0323): **PID 1 runs on river**. Next: cpus=4, HFS root, eMMC. Details and
+wait**, GICv2 SGI and vtimer working. md0 RAM root (IMG_0323): **PID 1 runs on river**. cpus=4 (IMG_0324): **4/4 Gold CPUs, SGIs verified**. Next: HFS RAM root, eMMC. Details and
 commands in `RIVER.md`.
 
 ## Agent handoff / active work (2026-10-15, latest)

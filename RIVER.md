@@ -188,10 +188,19 @@ major 1, minor 0`, `load_init_program: attempting to load /sbin/launchd`,
 `/dev/console` and timed `select()` all work on river. No storage touched,
 nothing flashed.
 
+### All four Gold cores (2026-10-20, photo IMG_0324)
+
+Same kernel, boot-args `debug=0xc serial=3 cpus=4 keepsyms=1 -noprogress
+wdt=-1`, image `river-r1-smp-boot.img` SHA-256 `66f2c3da…`, RAM-booted.
+`SWEET AKS: requested=4 selected=4 (limit=4)`; for cpu=1/2/3 `CPU_ON
+target=0x101/0x102/0x103 entry_pa=0xa14b8000`, `PSCI CPU_ON rc=0`, `mpidr=…
+came alive; SGI1 OK`; then **`SWEET CPU: 4/4 CPUs initialized, SGI1
+verified`** and `mcache: 4 CPU(s)`. Boot continues to the same root-device
+wait. Cross-CPU GICv2 SGIs (each core's banked `GICD_ITARGETSR0`
+interface bit) and secondary PSCI entry at EL1 work. Silver stays parked.
+
 ## Next work
 
-1. `cpus=4` to bring up the other three Gold cores (PSCI CPU_ON + GICv2
-   SGIs); Silver stays parked.
-2. An HFS RAM root (as sweet's `research/root-hfs.img`), then iOS userland.
-3. A read-only eMMC SDHCI driver (0x07824900), only with explicit approval
+1. An HFS RAM root (as sweet's `research/root-hfs.img`), then iOS userland.
+2. A read-only eMMC SDHCI driver (0x07824900), only with explicit approval
    before any write path exists.
