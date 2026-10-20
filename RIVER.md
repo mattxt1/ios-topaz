@@ -159,4 +159,4 @@ keepsyms=1 -noprogress wdt=-1`) and the image
 1. **First XNU RAM test** with `cpus=1` and no root device. Success is the
    SWEET EARLY stage bands at the bottom edge and fbcon text, ending in a
    root-device wait or panic. Hold power to return to Android if it hangs.
-3. Bind an eMMC SDHCI driver only after early kernel execution is observable.
+2. Bind an eMMC SDHCI driver only after early kernel execution is observable.
