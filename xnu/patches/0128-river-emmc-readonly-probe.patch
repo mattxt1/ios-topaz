@@ -12,10 +12,10 @@ index 21cdb5c..c741ee0 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
 new file mode 100644
-index 0000000..ee7615e
+index 0000000..b75df32
 --- /dev/null
 +++ b/bsd/dev/river_emmc.c
-@@ -0,0 +1,522 @@
+@@ -0,0 +1,548 @@
 +/*
 + * river (Moto G7, SDM632) eMMC: READ-ONLY polled driver for the SDHCI-MSM
 + * host sdhc_1. Boot-arg rivermmc=1 enables it; otherwise nothing is mapped.
@@ -103,6 +103,12 @@ index 0000000..ee7615e
 +#define PWRCTL_BUS_ON		(1U << 1)
 +#define PWRCTL_IO_LOW		(1U << 2)
 +#define PWRCTL_IO_HIGH		(1U << 3)
++/* sdhci-msm vendor registers in hc_mem (MCI variant offsets) */
++#define MSM_VENDOR_SPEC		0x10c
++#define MSM_VENDOR_SPEC_POR	0xa9c	/* default MCLK select, HC_SELECT_IN off */
++#define MSM_VENDOR_SPEC3	0x1b0
++#define MSM_PWRSAVE_DLL		(1U << 3)
++#define MSM_DLL_CONFIG		0x100	/* core_mem */
 +#define PWRCTL_BUS_SUCCESS	(1U << 0)
 +#define PWRCTL_IO_SUCCESS	(1U << 2)
 +
@@ -316,6 +322,9 @@ index 0000000..ee7615e
 +			return ETIMEDOUT;
 +		}
 +	}
++	printf("RIVER eMMC: sdcc1_apps RCG now cmd 0x%x cfg 0x%x m 0x%x n 0x%x d 0x%x, CBCR 0x%x\n",
++	    rd(gcc, GCC_RCG_CMD), rd(gcc, GCC_RCG_CFG), rd(gcc, GCC_RCG_M),
++	    rd(gcc, GCC_RCG_N), rd(gcc, GCC_RCG_D), rd(gcc, GCC_APPS_CBCR));
 +	return 0;
 +}
 +
@@ -328,6 +337,16 @@ index 0000000..ee7615e
 +	wr(core, MSM_HC_MODE, MSM_HC_MODE_EN);
 +	wr(core, MSM_HC_MODE, rd(core, MSM_HC_MODE) | MSM_FF_CLK_SW_RST_DIS);
 +	wr(core, MSM_PWRCTL_MASK, 0xf);
++	/*
++	 * ABL ran HS400 (sdcc1_apps at 384 MHz, IMG_0327): the MCLK select and
++	 * HC_SELECT_IN may still route the divided DLL clock. Return the vendor
++	 * registers to Linux's probe/default-mode state before the GCC rate
++	 * drops, as sdhci-msm does (POR value, power-save DLL off).
++	 */
++	printf("RIVER eMMC: vendor_spec 0x%08x spec3 0x%08x dll_config 0x%08x\n",
++	    rd(hc, MSM_VENDOR_SPEC), rd(hc, MSM_VENDOR_SPEC3), rd(core, MSM_DLL_CONFIG));
++	wr(hc, MSM_VENDOR_SPEC, MSM_VENDOR_SPEC_POR);
++	wr(hc, MSM_VENDOR_SPEC3, rd(hc, MSM_VENDOR_SPEC3) & ~MSM_PWRSAVE_DLL);
 +	printf("RIVER eMMC: SDHCI v%u caps 0x%08x present 0x%08x\n",
 +	    (rd(hc, SDHCI_VERSION) >> 16) & 0xff, rd(hc, SDHCI_CAPS), rd(hc, SDHCI_PRESENT));
 +
@@ -357,8 +376,10 @@ index 0000000..ee7615e
 +	wr(hc, SDHCI_CLOCK, 0xe << 16 | CLOCK_INT_ENABLE | CLOCK_SD_ENABLE);
 +	wr(hc, SDHCI_SIGNAL_ENABLE, 0);
 +	wr(hc, SDHCI_INT_ENABLE, 0x03ff00ff);
-+	printf("RIVER eMMC: pwrctl requests 0x%x acked; host 0x%08x clock 0x%08x ctrl2 0x%08x\n",
-+	    p, rd(hc, SDHCI_HOST_CTRL), rd(hc, SDHCI_CLOCK), rd(hc, SDHCI_HOST_CTRL2));
++	printf("RIVER eMMC: pwrctl 0x%x acked; host 0x%08x clock 0x%08x\n",
++	    p, rd(hc, SDHCI_HOST_CTRL), rd(hc, SDHCI_CLOCK));
++	printf("RIVER eMMC: ctrl2 0x%08x present 0x%08x vendor_spec 0x%08x\n",
++	    rd(hc, SDHCI_HOST_CTRL2), rd(hc, SDHCI_PRESENT), rd(hc, MSM_VENDOR_SPEC));
 +	delay(2000);	/* >= 1 ms and 74 card clocks before CMD0 */
 +	return 0;
 +}
@@ -368,19 +389,24 @@ index 0000000..ee7615e
 +{
 +	uint32_t r[4] = { 0 };
 +
-+	(void)river_emmc_cmd(0, 0, RSP_NONE, NULL, NULL);
-+	delay(1000);
-+	/* CMD1 until ready: sector mode, 2.7-3.6 V and 1.70-1.95 V windows. */
-+	uint64_t end = deadline(1000ULL * NSEC_PER_MSEC);
-+	do {
-+		if (river_emmc_cmd(1, 0x40ff8080, RSP_R3, r, NULL)) {
-+			return EIO;
-+		}
-+		if (r[0] & (1U << 31)) {
-+			break;
-+		}
++	/* CMD0, then CMD1 until ready (sector mode, 2.7-3.6 V and 1.70-1.95 V
++	 * windows); one more CMD0 if the card does not answer at all. */
++	int error = EIO;
++	for (int attempt = 0; attempt < 2 && error; attempt++) {
++		(void)river_emmc_cmd(0, 0, RSP_NONE, NULL, NULL);
 +		delay(1000);
-+	} while (mach_absolute_time() < end);
++		uint64_t end = deadline(1000ULL * NSEC_PER_MSEC);
++		do {
++			error = river_emmc_cmd(1, 0x40ff8080, RSP_R3, r, NULL);
++			if (error || (r[0] & (1U << 31))) {
++				break;
++			}
++			delay(1000);
++		} while (mach_absolute_time() < end);
++	}
++	if (error) {
++		return EIO;
++	}
 +	printf("RIVER eMMC: OCR 0x%08x%s\n", r[0],
 +	    (r[0] & (1U << 31)) ? ((r[0] & (1U << 30)) ? " ready, sector mode" : " ready, byte mode") : " NOT ready");
 +	if (!(r[0] & (1U << 31)) || !(r[0] & (1U << 30))) {
