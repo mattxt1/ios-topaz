@@ -2,7 +2,8 @@
 
 ## River side port handoff (2026-10-19)
 
-This local `river-bringup` branch is an experiment for the Moto G7 river. Read
+This `river-bringup` branch is the Moto G7 river port. The handoff folder's
+`HANDOFF.md` (one level up) is the entry point for a new session; then read
 `RIVER.md` for its measured hardware facts, the early ADT, the temporary boot
 diagnostics, and the next kernel work. The sweet/topaz notes below describe
 other devices; their GICv3, UFS, boot image, and display addresses do not apply
