@@ -407,3 +407,11 @@ Every CMD24 is independently checked against that LBA range. The driver
 polls CMD13 until each written block is back in transfer state. This is
 needed for the iOS `mount` task to make the root writable. Until tested,
 boot without `rivermmcrw=1` retains the previous read-only behavior.
+
+The r9 GitHub Actions kernel build (`39383612244`) passed, and
+`tools/kbuild-river.sh` packaged `shim-river/out/river-r9-boot.img`
+(SHA-256 `0fa15f83fe2c4c5eb543364af56729e6ed26d786c3c30328cfdf21a4e7817303`).
+The compiled kernel contains the CMD24 userdata guard. On 2026-10-20,
+`fastboot boot` accepted this image from slot-b fastboot; it did not flash a
+partition. Boot args include `rivermmc=1 rivermmcrw=1 rd=emmc0s64 rootrw=1`.
+The screen result is pending observation.
