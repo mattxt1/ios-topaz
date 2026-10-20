@@ -83,13 +83,13 @@ def symbol(elf, want):
     sys.exit(f'{want} not in {elf}')
 
 
-def build_image(out):
+def build_image(out, extra=()):
     cc = tool('clang', 'RIVER_SHIM_CC')
     lld = tool('ld.lld', 'RIVER_SHIM_LD')
     objs = []
     for src in SRCS:
         obj = os.path.join(out, os.path.basename(src).rsplit('.', 1)[0] + '.o')
-        subprocess.run([cc] + CFLAGS + ['-c', os.path.join(HERE, src), '-o', obj], check=True)
+        subprocess.run([cc] + CFLAGS + list(extra) + ['-c', os.path.join(HERE, src), '-o', obj], check=True)
         check_no_abs64(obj)
         objs.append(obj)
     elf = os.path.join(out, 'shim.elf')
@@ -149,11 +149,13 @@ def main():
     ap.add_argument('--boot', required=True, help="the phone's boot_b.img backup (header template)")
     ap.add_argument('--dtb', required=True, help='base DTB extracted from that image')
     ap.add_argument('--payload', help='SWEETXNU payload from tools/mkpayload.py')
+    ap.add_argument('--no-gold-clk', action='store_true',
+                    help='leave the Gold cluster clock at its reset source (pre-r15 behaviour)')
     ap.add_argument('-o', '--output', default=os.path.join(HERE, 'out', 'river-shim-boot.img'))
     args = ap.parse_args()
     out = os.path.join(HERE, 'out')
     os.makedirs(out, exist_ok=True)
-    image = build_image(out)
+    image = build_image(out, ['-DRIVER_NO_GOLD_CLK'] if args.no_gold_clk else [])
     if args.payload:
         ramdisk = open(args.payload, 'rb').read()
         assert ramdisk[:8] == b'SWEETXNU', 'payload magic'

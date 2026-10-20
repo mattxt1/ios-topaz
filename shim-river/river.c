@@ -2,9 +2,10 @@
  * Moto G7 river boot shim: ABL enters on a Silver core (Cortex-A53 class,
  * no 16 KiB translation granule), so Silver only reports, finds the
  * payload and wakes Gold CPU 0x100 through PSCI, then parks. Gold checks
- * its granule and boots xnu. Nothing here touches the GIC, clocks,
- * regulators or any storage controller; the only writes outside our own
- * image are the splash framebuffer and, for a valid payload, the
+ * its granule and boots xnu. Nothing here touches the GIC, regulators or
+ * any storage controller. The only clock write is the Gold (perf) cluster
+ * mux, copied from Linux's cpu_clock_init(); the only other writes outside
+ * our own image are the splash framebuffer and, for a valid payload, the
  * 0xa0000000-0xee000000 kernel window (loader.c).
  *
  * Without a payload (or on any failure) the screen keeps the report for
@@ -62,11 +63,65 @@ static void __attribute__((noreturn)) hold_and_reset(const char *why)
 		__asm__ volatile("wfi");
 }
 
+/*
+ * ABL runs only on Silver and never programs the Gold cluster clock; Linux
+ * does it in clock-cpu-sdm632.c cpu_clock_init() (an early_initcall, before
+ * any regulator/CPR or cpufreq work): APCS_ALIAS1 RCG source GPLL0 (sel 4),
+ * divider 1 (800 MHz), update, then enable the core branch. Without it Gold
+ * runs from the reset source, measured here with spin_mhz(). Same values and
+ * order as Linux; no PLL, voltage or CPR register is touched.
+ */
+#define APCS_ALIAS1_CMD_RCGR	0x0b011050UL
+#define APCS_ALIAS1_CFG_RCGR	(APCS_ALIAS1_CMD_RCGR + 4)
+#define APCS_ALIAS1_CORE_CBCR	(APCS_ALIAS1_CMD_RCGR + 8)
+#define APCS_CCI_CMD_RCGR	0x0b1d1050UL
+#define RCG_GPLL0_DIV1		((4U << 8) | 1U)
+
+static inline uint32_t rd32(uintptr_t a) { return *(volatile uint32_t *)a; }
+static inline void wr32(uintptr_t a, uint32_t v) { *(volatile uint32_t *)a = v; }
+#define dsb() __asm__ volatile("dsb sy" ::: "memory")
+
+/* Effective MHz of a 1-cycle dependent loop (A53 and A73 both retire subs+b.ne in ~1 cycle). */
+static uint32_t spin_mhz(void)
+{
+	uint64_t n = 1000000;
+	isb();
+	uint64_t t0 = rsr("cntpct_el0");
+	__asm__ volatile("1: subs %0, %0, #1\n b.ne 1b" : "+r"(n) :: "cc");
+	isb();
+	uint64_t ticks = rsr("cntpct_el0") - t0;
+	uint64_t hz = rsr("cntfrq_el0");
+	return ticks ? (uint32_t)(hz / ticks) : 0;	/* 1e6 iterations: MHz = hz / ticks */
+}
+
+static void gold_clock_gpll0(void)
+{
+	con_hex2("C1RCG", "cmd=", rd32(APCS_ALIAS1_CMD_RCGR), "cfg=", rd32(APCS_ALIAS1_CFG_RCGR));
+	con_hex2("C1RCG", "cbcr=", rd32(APCS_ALIAS1_CORE_CBCR), "ccicfg=", rd32(APCS_CCI_CMD_RCGR + 4));
+#ifndef RIVER_NO_GOLD_CLK
+	wr32(APCS_ALIAS1_CFG_RCGR, RCG_GPLL0_DIV1);
+	dsb();
+	wr32(APCS_ALIAS1_CMD_RCGR, rd32(APCS_ALIAS1_CMD_RCGR) | 1U);
+	dsb();
+	uint64_t end = rsr("cntpct_el0") + rsr("cntfrq_el0") / 1000;	/* Linux: 500 x 1 us */
+	while ((rd32(APCS_ALIAS1_CMD_RCGR) & 1U) && rsr("cntpct_el0") < end)
+		isb();
+	wr32(APCS_ALIAS1_CORE_CBCR, rd32(APCS_ALIAS1_CORE_CBCR) | 1U);
+	dsb();
+	con_hex2("C1GPLL0", "cmd=", rd32(APCS_ALIAS1_CMD_RCGR), "cfg=", rd32(APCS_ALIAS1_CFG_RCGR));
+	if (rd32(APCS_ALIAS1_CMD_RCGR) & 1U)
+		con_str("C1GPLL0", "update bit stuck (continuing)");
+#else
+	con_str("C1RCG", "left at reset source (RIVER_NO_GOLD_CLK)");
+#endif
+}
+
 static void report_cpu(const char *label)
 {
 	uint64_t mmfr0 = rsr("id_aa64mmfr0_el1");
 	con_hex2(label, "midr=", (uint32_t)rsr("midr_el1"), "mpidr=", (uint32_t)rsr("mpidr_el1"));
 	con_hex2(" ", "el=", (uint32_t)(rsr("CurrentEL") >> 2), "tg16=", (uint32_t)((mmfr0 >> 20) & 0xf));
+	con_hex(" spin MHz", spin_mhz());
 }
 
 void exc_handler(uint64_t slot, uint64_t *regs)
@@ -118,6 +173,9 @@ void shim_main(uint64_t dtb)
 		con_hex2("PAYLOAD", "at=", (uint32_t)lo, "len=", (uint32_t)(hi - lo));
 	rd_lo = why ? 0 : lo;
 	rd_hi = why ? 0 : hi;
+
+	stage = "gold_clk";
+	gold_clock_gpll0();
 
 	stage = "cpu_on";
 	gold_dtb = dtb;

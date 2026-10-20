@@ -1,0 +1,60 @@
+diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
+index 6f2c1ac..212066e 100644
+--- a/bsd/dev/river_emmc.c
++++ b/bsd/dev/river_emmc.c
+@@ -240,6 +240,15 @@ river_emmc_reset(uint32_t which)
+ 	return 0;
+ }
+ 
++/*
++ * Gap before each command: the card needs >= 8 card clocks (N_RC/N_CC)
++ * after a response before the next command. Under the old 19.2 MHz Gold
++ * clock the CPU always provided it; with Gold on GPLL0 (shim r15) CMD3 ->
++ * CMD7 at 400 kHz lost CMD_DONE (status 0x2). 50 us = 20 clocks at 400 kHz;
++ * 1 us = 25 clocks at 25 MHz.
++ */
++static uint32_t cmd_gap_us = 50;
++
+ /*
+  * The only way this file talks to the card. CMD24 is separately gated to
+  * userdata here, below the BSD block/character-device checks.
+@@ -269,6 +278,7 @@ river_emmc_cmd(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uint3
+ 			return EBUSY;
+ 		}
+ 	}
++	delay(cmd_gap_us);
+ 	wr(hc, SDHCI_INT_STATUS, 0xffffffff);
+ 	if (data) {
+ 		wr(hc, SDHCI_BLOCK, (1U << 16) | BLOCK);
+@@ -426,12 +436,14 @@ static bool
+ river_emmc_speed_up(void)
+ {
+ 	uint32_t r;
++	cmd_gap_us = 1;
+ 	if (!river_emmc_card_clock(RCG_CFG_25M, false) &&
+ 	    !river_emmc_cmd(13, RCA << 16, RSP_R1, &r, NULL) && ((r >> 9) & 0xf) == 4) {
+ 		printf("RIVER eMMC: 25 MHz default speed, 1-bit\n");
+ 		return true;
+ 	}
+ 	printf("RIVER eMMC: 25 MHz failed; back to 400 kHz\n");
++	cmd_gap_us = 50;
+ 	(void)river_emmc_card_clock(RCG_CFG_400K, true);
+ 	return false;
+ }
+@@ -1037,7 +1049,15 @@ river_emmc_probe(void)
+ 	}
+ 	core = ml_io_map(reg[2], reg[3]);
+ 	hc = ml_io_map(reg[0], reg[1]);
+-	if (river_emmc_host_init() || river_emmc_card_init()) {
++	int init_error = river_emmc_host_init();
++	if (!init_error && (init_error = river_emmc_card_init())) {
++		/* CMD0 restarts identification from any state; retry once slower. */
++		cmd_gap_us = 1000;
++		printf("RIVER eMMC: card init failed; retrying with %u us command gap\n", cmd_gap_us);
++		init_error = river_emmc_card_init();
++		cmd_gap_us = 50;
++	}
++	if (init_error) {
+ 		printf("RIVER eMMC: init failed; host left idle\n");
+ 		return;
+ 	}
