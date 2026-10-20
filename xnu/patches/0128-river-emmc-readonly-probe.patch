@@ -12,27 +12,29 @@ index 21cdb5c..c741ee0 100644
  bsd/dev/sweet_touch.c			standard
 diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
 new file mode 100644
-index 0000000..4a09927
+index 0000000..ee7615e
 --- /dev/null
 +++ b/bsd/dev/river_emmc.c
-@@ -0,0 +1,351 @@
+@@ -0,0 +1,522 @@
 +/*
-+ * river (Moto G7, SDM632) eMMC: READ-ONLY polled probe of the SDHCI-MSM
-+ * host (sdhc_1) that ABL leaves initialised and the card in transfer state.
++ * river (Moto G7, SDM632) eMMC: READ-ONLY polled driver for the SDHCI-MSM
++ * host sdhc_1. Boot-arg rivermmc=1 enables it; otherwise nothing is mapped.
 + *
-+ * Boot-arg rivermmc=1 enables it; otherwise nothing is mapped or touched.
-+ * It checks the GCC SDCC1 AHB/APPS clock branches are running before any
-+ * SDHCI access (an unclocked access can hang the bus), checks the MSM core
-+ * is in SDHCI mode, and never changes clocks, bus width, timing, power or the
-+ * card's registers (it only ungates the SD card clock if ABL gated it). Only two commands can be issued: CMD13 SEND_STATUS and
-+ * CMD17 READ_SINGLE_BLOCK, by PIO through the buffer data port, with no DMA
-+ * and no interrupts (signal enables are cleared). river_emmc_cmd() refuses
-+ * every other command index, so no write, erase or card-configuration
-+ * command can reach the eMMC from this file.
++ * ABL hands over the host in legacy MCI mode (HC_MODE_EN clear, photo
++ * IMG_0326), so this driver initialises it as Linux's sdhci-msm does, in the
++ * simplest mode: SDHCI mode, software reset, the MSM power-control
++ * handshake acknowledged (regulators are already on from ABL and are not
++ * touched), GCC sdcc1_apps at 400 kHz from XO (the MSM host has no SDHCI
++ * divider), 1.8 V signalling, 1-bit bus, default timing, PIO, no DMA and no
++ * interrupts. It then enumerates the card with CMD0/1/2/3/7.
 + *
-+ * The probe reads the protective MBR, the primary and backup GPT headers
-+ * and the partition table, and checks that boot_b starts with ANDROID!.
-+ * Addresses come from the ADT node /river-emmc (tools/mkadt_river.py).
++ * Read-only by construction: river_emmc_cmd() accepts only CMD0 GO_IDLE,
++ * CMD1 SEND_OP_COND, CMD2 ALL_SEND_CID, CMD3 SET_RELATIVE_ADDR, CMD7
++ * SELECT_CARD, CMD13 SEND_STATUS and CMD17 READ_SINGLE_BLOCK, and panics on
++ * any other index. No write, erase, lock, switch (CMD6) or programming
++ * command can reach the eMMC from this file. The probe reads the protective
++ * MBR, both GPT headers and the partition table, and checks that boot_b
++ * starts with ANDROID!. Addresses come from the ADT node /river-emmc.
 + */
 +#if defined(ARM64_BOARD_CONFIG_SWEET) && defined(RIVER)
 +#include <sys/param.h>
@@ -45,6 +47,7 @@ index 0000000..4a09927
 +
 +/* osfmk/arm/machine_routines.h, not exported to the BSD layer */
 +extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
++extern void delay(int usec);
 +
 +/* SD Host Controller Simplified Spec 3.0 register offsets (32-bit access) */
 +#define SDHCI_BLOCK		0x04	/* block size | block count << 16 */
@@ -53,11 +56,12 @@ index 0000000..4a09927
 +#define SDHCI_RESP0		0x10
 +#define SDHCI_BUFFER		0x20
 +#define SDHCI_PRESENT		0x24
-+#define SDHCI_HOST_CTRL		0x28	/* host ctl1 | power | gap | wakeup */
++#define SDHCI_HOST_CTRL		0x28	/* host ctl1 | power << 8 | gap | wakeup */
 +#define SDHCI_CLOCK		0x2c	/* clock | timeout << 16 | reset << 24 */
 +#define SDHCI_INT_STATUS	0x30	/* normal | error << 16, write 1 to clear */
 +#define SDHCI_INT_ENABLE	0x34
 +#define SDHCI_SIGNAL_ENABLE	0x38
++#define SDHCI_HOST_CTRL2	0x3c	/* auto-cmd status | host ctl2 << 16 */
 +#define SDHCI_CAPS		0x40
 +#define SDHCI_VERSION		0xfc	/* slot int status | version << 16 */
 +
@@ -68,24 +72,59 @@ index 0000000..4a09927
 +#define INT_XFER_DONE		(1U << 1)
 +#define INT_READ_READY		(1U << 5)
 +#define INT_ERROR		(1U << 15)
++#define RESET_ALL		(1U << 24)
 +#define RESET_CMD		(1U << 25)
 +#define RESET_DAT		(1U << 26)
++#define CLOCK_INT_ENABLE	(1U << 0)
 +#define CLOCK_INT_STABLE	(1U << 1)
 +#define CLOCK_SD_ENABLE		(1U << 2)
++#define POWER_ON_3V0		((0x6U << 1 | 1U) << 8)	/* 3.0 V select + bus power */
++#define CTRL2_1V8		(1U << (16 + 3))
 +
-+/* command register: index << 8 | data present | index check | CRC check | R1 */
-+#define CMD_R1			0x1a
++/* command register flags: response type, CRC check, index check, data */
++#define RSP_NONE		0x00
++#define RSP_136			0x09	/* R2: 136 bit, CRC */
++#define RSP_R3			0x02	/* 48 bit, no checks */
++#define RSP_R1			0x1a	/* 48 bit, CRC + index */
++#define RSP_R1B			0x1b	/* 48 bit busy, CRC + index */
 +#define CMD_DATA		0x20
 +#define XFER_READ		0x10
 +
-+#define MSM_CORE_HC_MODE	0x78	/* sdhci-msm core_mem, HC_MODE_EN = bit 0 */
++/* sdhci-msm core_mem (MCI variant) */
++#define MSM_HC_MODE		0x78
++#define MSM_HC_MODE_EN		(1U << 0)
++#define MSM_FF_CLK_SW_RST_DIS	(1U << 13)
++#define MSM_MCI_VERSION		0x50
++#define MSM_PWRCTL_STATUS	0xdc
++#define MSM_PWRCTL_MASK		0xe0
++#define MSM_PWRCTL_CLEAR	0xe4
++#define MSM_PWRCTL_CTL		0xe8
++#define PWRCTL_BUS_OFF		(1U << 0)
++#define PWRCTL_BUS_ON		(1U << 1)
++#define PWRCTL_IO_LOW		(1U << 2)
++#define PWRCTL_IO_HIGH		(1U << 3)
++#define PWRCTL_BUS_SUCCESS	(1U << 0)
++#define PWRCTL_IO_SUCCESS	(1U << 2)
++
++/* GCC page 0x1842000: sdcc1_apps RCG2 and branches (gcc-msm8953.c) */
++#define GCC_RCG_CMD		0x004
++#define GCC_RCG_CFG		0x008
++#define GCC_RCG_M		0x00c
++#define GCC_RCG_N		0x010
++#define GCC_RCG_D		0x014
++#define GCC_APPS_CBCR		0x018
++#define GCC_AHB_CBCR		0x01c
 +#define CBCR_CLK_OFF		(1U << 31)
++#define RCG_UPDATE		(1U << 0)
++/* 400 kHz = XO 19.2 MHz / 12 * 1/4: div field 2*12-1, src XO (0), dual edge */
++#define RCG_CFG_400K		(23U | 0U << 8 | 2U << 12)
 +
 +#define TIMEOUT_NS		(200ULL * NSEC_PER_MSEC)
 +#define BLOCK			512
++#define RCA			1
 +
 +static vm_offset_t hc, core, gcc;
-+static uint32_t rca;
++static bool ready;
 +static uint32_t block[BLOCK / 4];
 +
 +static inline uint32_t
@@ -102,18 +141,50 @@ index 0000000..4a09927
 +}
 +
 +static uint64_t
-+deadline(void)
++deadline(uint64_t ns)
 +{
 +	uint64_t t;
-+	nanoseconds_to_absolutetime(TIMEOUT_NS, &t);
++	nanoseconds_to_absolutetime(ns, &t);
 +	return mach_absolute_time() + t;
++}
++
++/*
++ * Acknowledge MSM power-control requests raised by power/voltage/reset
++ * writes. The supplies stay as ABL left them, so every request succeeds.
++ * Polls up to `ms` for a request; returns the request bits seen.
++ */
++static uint32_t
++river_emmc_pwrctl(unsigned ms)
++{
++	uint64_t end = deadline((uint64_t)ms * NSEC_PER_MSEC);
++	uint32_t seen = 0;
++	do {
++		uint32_t st = rd(core, MSM_PWRCTL_STATUS) & 0xf;
++		if (st) {
++			wr(core, MSM_PWRCTL_CLEAR, st);
++			for (int i = 0; i < 10 && (rd(core, MSM_PWRCTL_STATUS) & st); i++) {
++				delay(10);
++				wr(core, MSM_PWRCTL_CLEAR, st);
++			}
++			uint32_t ack = 0;
++			if (st & (PWRCTL_BUS_ON | PWRCTL_BUS_OFF)) {
++				ack |= PWRCTL_BUS_SUCCESS;
++			}
++			if (st & (PWRCTL_IO_LOW | PWRCTL_IO_HIGH)) {
++				ack |= PWRCTL_IO_SUCCESS;
++			}
++			wr(core, MSM_PWRCTL_CTL, ack);
++			seen |= st;
++		}
++	} while (mach_absolute_time() < end);
++	return seen;
 +}
 +
 +/* Wait for any of `bits` in the normal status; 0, or EIO/ETIMEDOUT. */
 +static int
 +river_emmc_wait(uint32_t bits, uint32_t *status)
 +{
-+	uint64_t end = deadline();
++	uint64_t end = deadline(TIMEOUT_NS);
 +	for (;;) {
 +		uint32_t s = rd(hc, SDHCI_INT_STATUS);
 +		if (s & INT_ERROR) {
@@ -131,30 +202,39 @@ index 0000000..4a09927
 +	}
 +}
 +
-+static void
-+river_emmc_reset_lines(void)
++static int
++river_emmc_reset(uint32_t which)
 +{
 +	uint32_t c = rd(hc, SDHCI_CLOCK) & 0x00ffffff;
-+	wr(hc, SDHCI_CLOCK, c | RESET_CMD | RESET_DAT);
-+	uint64_t end = deadline();
-+	while ((rd(hc, SDHCI_CLOCK) & (RESET_CMD | RESET_DAT)) && mach_absolute_time() < end) {
++	wr(hc, SDHCI_CLOCK, c | which);
++	uint64_t end = deadline(TIMEOUT_NS);
++	while (rd(hc, SDHCI_CLOCK) & which) {
++		/* A full reset raises BUS_OFF on MSM and waits for the ack. */
++		river_emmc_pwrctl(0);
++		if (mach_absolute_time() > end) {
++			return ETIMEDOUT;
++		}
 +	}
 +	wr(hc, SDHCI_INT_STATUS, 0xffffffff);
++	return 0;
 +}
 +
 +/*
 + * The only way this file talks to the card. Read-only by construction:
-+ * CMD13 has no data, CMD17 reads one 512-byte block into `buf`.
++ * identification/selection, status, and single-block reads into `buf`.
 + */
 +static int
-+river_emmc_cmd(uint32_t index, uint32_t arg, uint32_t *resp, uint32_t *buf)
++river_emmc_cmd(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uint32_t *buf)
 +{
-+	if (index != 13 && index != 17) {
++	switch (index) {
++	case 0: case 1: case 2: case 3: case 7: case 13: case 17:
++		break;
++	default:
 +		panic("river eMMC: refusing CMD%u (read-only driver)", index);
 +	}
 +	bool data = index == 17;
-+	uint32_t inhibit = PRESENT_CMD_INHIBIT | (data ? PRESENT_DAT_INHIBIT : 0);
-+	uint64_t end = deadline();
++	uint32_t inhibit = PRESENT_CMD_INHIBIT | (data || rsp == RSP_R1B ? PRESENT_DAT_INHIBIT : 0);
++	uint64_t end = deadline(TIMEOUT_NS);
 +	while (rd(hc, SDHCI_PRESENT) & inhibit) {
 +		if (mach_absolute_time() > end) {
 +			return EBUSY;
@@ -165,7 +245,7 @@ index 0000000..4a09927
 +		wr(hc, SDHCI_BLOCK, (1U << 16) | BLOCK);
 +	}
 +	wr(hc, SDHCI_ARG, arg);
-+	uint32_t cmd = index << 8 | CMD_R1 | (data ? CMD_DATA : 0);
++	uint32_t cmd = index << 8 | rsp | (data ? CMD_DATA : 0);
 +	wr(hc, SDHCI_XFER_CMD, cmd << 16 | (data ? XFER_READ : 0));
 +
 +	uint32_t status;
@@ -173,11 +253,17 @@ index 0000000..4a09927
 +	if (error) {
 +		printf("RIVER eMMC: CMD%u arg 0x%x %s, status 0x%08x\n", index, arg,
 +		    error == EIO ? "error" : "timeout", status);
-+		river_emmc_reset_lines();
++		river_emmc_reset(RESET_CMD | RESET_DAT);
 +		return error;
 +	}
-+	*resp = rd(hc, SDHCI_RESP0);
++	for (int i = 0; resp && i < (rsp == RSP_136 ? 4 : 1); i++) {
++		resp[i] = rd(hc, SDHCI_RESP0 + 4 * i);
++	}
 +	wr(hc, SDHCI_INT_STATUS, INT_CMD_DONE);
++	if (rsp == RSP_R1B) {
++		(void)river_emmc_wait(INT_XFER_DONE, &status);	/* end of busy */
++		wr(hc, SDHCI_INT_STATUS, 0xffffffff);
++	}
 +	if (!data) {
 +		return 0;
 +	}
@@ -192,7 +278,7 @@ index 0000000..4a09927
 +	if (error) {
 +		printf("RIVER eMMC: CMD17 LBA 0x%x data %s, status 0x%08x\n", arg,
 +		    error == EIO ? "error" : "timeout", status);
-+		river_emmc_reset_lines();
++		river_emmc_reset(RESET_CMD | RESET_DAT);
 +		return error;
 +	}
 +	wr(hc, SDHCI_INT_STATUS, 0xffffffff);
@@ -205,16 +291,130 @@ index 0000000..4a09927
 +river_emmc_read_block(uint64_t lba, void *dst)
 +{
 +	uint32_t resp;
-+	if (!hc || lba >> 32) {
++	if (!ready || lba >> 32) {
 +		return ENXIO;
 +	}
-+	return river_emmc_cmd(17, (uint32_t)lba, &resp, (uint32_t *)dst);
++	return river_emmc_cmd(17, (uint32_t)lba, RSP_R1, &resp, (uint32_t *)dst);
++}
++
++/* GCC sdcc1_apps_clk_src to 400 kHz from XO; the branch stays enabled. */
++static int
++river_emmc_clock_400k(void)
++{
++	printf("RIVER eMMC: sdcc1_apps RCG was cmd 0x%x cfg 0x%x m 0x%x n 0x%x d 0x%x\n",
++	    rd(gcc, GCC_RCG_CMD), rd(gcc, GCC_RCG_CFG), rd(gcc, GCC_RCG_M),
++	    rd(gcc, GCC_RCG_N), rd(gcc, GCC_RCG_D));
++	wr(gcc, GCC_RCG_M, 1);
++	wr(gcc, GCC_RCG_N, ~(4U - 1U) & 0xff);
++	wr(gcc, GCC_RCG_D, ~4U & 0xff);
++	wr(gcc, GCC_RCG_CFG, RCG_CFG_400K);
++	wr(gcc, GCC_RCG_CMD, rd(gcc, GCC_RCG_CMD) | RCG_UPDATE);
++	uint64_t end = deadline(TIMEOUT_NS);
++	while (rd(gcc, GCC_RCG_CMD) & RCG_UPDATE) {
++		if (mach_absolute_time() > end) {
++			printf("RIVER eMMC: RCG update stuck, cmd 0x%x\n", rd(gcc, GCC_RCG_CMD));
++			return ETIMEDOUT;
++		}
++	}
++	return 0;
++}
++
++static int
++river_emmc_host_init(void)
++{
++	uint32_t mode = rd(core, MSM_HC_MODE);
++	printf("RIVER eMMC: MCI version 0x%08x, HC_MODE 0x%x -> SDHCI mode\n",
++	    rd(core, MSM_MCI_VERSION), mode);
++	wr(core, MSM_HC_MODE, MSM_HC_MODE_EN);
++	wr(core, MSM_HC_MODE, rd(core, MSM_HC_MODE) | MSM_FF_CLK_SW_RST_DIS);
++	wr(core, MSM_PWRCTL_MASK, 0xf);
++	printf("RIVER eMMC: SDHCI v%u caps 0x%08x present 0x%08x\n",
++	    (rd(hc, SDHCI_VERSION) >> 16) & 0xff, rd(hc, SDHCI_CAPS), rd(hc, SDHCI_PRESENT));
++
++	if (river_emmc_reset(RESET_ALL)) {
++		printf("RIVER eMMC: host reset timed out\n");
++		return ETIMEDOUT;
++	}
++	uint32_t p = river_emmc_pwrctl(5);
++	if (river_emmc_clock_400k()) {
++		return ETIMEDOUT;
++	}
++	/* 1.8 V signalling (eMMC VCCQ), then bus power; ack both requests,
++	 * then the clocks (power before clock, as the MMC core does). */
++	wr(hc, SDHCI_HOST_CTRL2, CTRL2_1V8);
++	p |= river_emmc_pwrctl(5);
++	wr(hc, SDHCI_HOST_CTRL, POWER_ON_3V0);	/* 1-bit, default speed, SDMA select 0 */
++	p |= river_emmc_pwrctl(10);
++	/* Internal clock on, wait stable, then the card clock (no divider on MSM). */
++	wr(hc, SDHCI_CLOCK, 0xe << 16 | CLOCK_INT_ENABLE);
++	uint64_t end = deadline(TIMEOUT_NS);
++	while (!(rd(hc, SDHCI_CLOCK) & CLOCK_INT_STABLE)) {
++		if (mach_absolute_time() > end) {
++			printf("RIVER eMMC: internal clock not stable\n");
++			return ETIMEDOUT;
++		}
++	}
++	wr(hc, SDHCI_CLOCK, 0xe << 16 | CLOCK_INT_ENABLE | CLOCK_SD_ENABLE);
++	wr(hc, SDHCI_SIGNAL_ENABLE, 0);
++	wr(hc, SDHCI_INT_ENABLE, 0x03ff00ff);
++	printf("RIVER eMMC: pwrctl requests 0x%x acked; host 0x%08x clock 0x%08x ctrl2 0x%08x\n",
++	    p, rd(hc, SDHCI_HOST_CTRL), rd(hc, SDHCI_CLOCK), rd(hc, SDHCI_HOST_CTRL2));
++	delay(2000);	/* >= 1 ms and 74 card clocks before CMD0 */
++	return 0;
++}
++
++static int
++river_emmc_card_init(void)
++{
++	uint32_t r[4] = { 0 };
++
++	(void)river_emmc_cmd(0, 0, RSP_NONE, NULL, NULL);
++	delay(1000);
++	/* CMD1 until ready: sector mode, 2.7-3.6 V and 1.70-1.95 V windows. */
++	uint64_t end = deadline(1000ULL * NSEC_PER_MSEC);
++	do {
++		if (river_emmc_cmd(1, 0x40ff8080, RSP_R3, r, NULL)) {
++			return EIO;
++		}
++		if (r[0] & (1U << 31)) {
++			break;
++		}
++		delay(1000);
++	} while (mach_absolute_time() < end);
++	printf("RIVER eMMC: OCR 0x%08x%s\n", r[0],
++	    (r[0] & (1U << 31)) ? ((r[0] & (1U << 30)) ? " ready, sector mode" : " ready, byte mode") : " NOT ready");
++	if (!(r[0] & (1U << 31)) || !(r[0] & (1U << 30))) {
++		return EIO;
++	}
++	if (river_emmc_cmd(2, 0, RSP_136, r, NULL)) {
++		return EIO;
++	}
++	/* R2 in RESP0-3 is CID[127:8]; product name is CID[103:56]. */
++	char pnm[7];
++	uint8_t const *c = (uint8_t const *)r;	/* little endian: byte i = CID bits 8i+8.. */
++	for (int i = 0; i < 6; i++) {
++		pnm[i] = (char)c[11 - i];
++	}
++	pnm[6] = 0;
++	for (int i = 0; i < 6; i++) {
++		if (pnm[i] < 0x20 || pnm[i] > 0x7e) {
++			pnm[i] = '?';
++		}
++	}
++	printf("RIVER eMMC: CID manufacturer 0x%02x product \"%s\"\n", c[14], pnm);
++	if (river_emmc_cmd(3, RCA << 16, RSP_R1, r, NULL) ||
++	    river_emmc_cmd(7, RCA << 16, RSP_R1B, r, NULL) ||
++	    river_emmc_cmd(13, RCA << 16, RSP_R1, r, NULL)) {
++		return EIO;
++	}
++	printf("RIVER eMMC: selected RCA %u, status 0x%08x (state %u, 4 = tran)\n",
++	    RCA, r[0], (r[0] >> 9) & 0xf);
++	return ((r[0] >> 9) & 0xf) == 4 ? 0 : EIO;
 +}
 +
 +static uint64_t
-+le64(const void *p)
++le64(const uint8_t *b)
 +{
-+	const uint8_t *b = p;
 +	uint64_t v = 0;
 +	for (int i = 7; i >= 0; i--) {
 +		v = v << 8 | b[i];
@@ -223,9 +423,8 @@ index 0000000..4a09927
 +}
 +
 +static uint32_t
-+le32(const void *p)
++le32(const uint8_t *b)
 +{
-+	const uint8_t *b = p;
 +	return (uint32_t)b[0] | (uint32_t)b[1] << 8 | (uint32_t)b[2] << 16 | (uint32_t)b[3] << 24;
 +}
 +
@@ -316,52 +515,24 @@ index 0000000..4a09927
 +		printf("RIVER eMMC: no /river-emmc node\n");
 +		return;
 +	}
-+	/* reg = <hc size> <core size> <gcc sdcc1 cbcr page, size> (absolute PAs) */
++	/* reg = <hc size> <core size> <gcc sdcc1 page, size> (absolute PAs) */
 +	gcc = ml_io_map(reg[4], reg[5]);
-+	uint32_t apps = rd(gcc, 0x18), ahb = rd(gcc, 0x1c);	/* 0x42018 / 0x4201c */
++	uint32_t apps = rd(gcc, GCC_APPS_CBCR), ahb = rd(gcc, GCC_AHB_CBCR);
 +	printf("RIVER eMMC: GCC SDCC1 apps CBCR 0x%08x, ahb CBCR 0x%08x\n", apps, ahb);
 +	if ((apps | ahb) & CBCR_CLK_OFF) {
 +		printf("RIVER eMMC: SDCC1 clocks are off; not touching the host\n");
 +		return;
 +	}
 +	core = ml_io_map(reg[2], reg[3]);
-+	uint32_t mode = rd(core, MSM_CORE_HC_MODE);
-+	if (!(mode & 1)) {
-+		printf("RIVER eMMC: MSM core HC_MODE 0x%x is not SDHCI mode; stopping\n", mode);
-+		return;
-+	}
 +	hc = ml_io_map(reg[0], reg[1]);
-+	uint32_t present = rd(hc, SDHCI_PRESENT), clock = rd(hc, SDHCI_CLOCK);
-+	printf("RIVER eMMC: SDHCI v%u caps 0x%08x present 0x%08x host 0x%08x clock 0x%08x\n",
-+	    (rd(hc, SDHCI_VERSION) >> 16) & 0xff, rd(hc, SDHCI_CAPS), present,
-+	    rd(hc, SDHCI_HOST_CTRL), clock);
-+	if (!(present & PRESENT_CARD) || !(clock & CLOCK_INT_STABLE)) {
-+		printf("RIVER eMMC: no card or internal clock not stable; stopping\n");
-+		hc = 0;
++	if (river_emmc_host_init() || river_emmc_card_init()) {
++		printf("RIVER eMMC: init failed; host left idle\n");
 +		return;
 +	}
-+	if (!(clock & CLOCK_SD_ENABLE)) {
-+		/* Same divider ABL chose; only ungate the card clock. */
-+		wr(hc, SDHCI_CLOCK, (clock & 0x00ffffff) | CLOCK_SD_ENABLE);
-+		printf("RIVER eMMC: SD clock was gated; enabled at ABL's divider\n");
-+	}
-+	/* Polled: latch every status, signal none (no GIC interrupt). */
-+	wr(hc, SDHCI_SIGNAL_ENABLE, 0);
-+	wr(hc, SDHCI_INT_ENABLE, 0x03ff00ff);
-+	river_emmc_reset_lines();
-+
-+	/* RCA: Linux and ABL assign a small constant; find the one that answers. */
-+	for (uint32_t r = 1; r <= 2 && !rca; r++) {
-+		uint32_t resp;
-+		if (!river_emmc_cmd(13, r << 16, &resp, NULL)) {
-+			printf("RIVER eMMC: CMD13 RCA %u: status 0x%08x (state %u)\n",
-+			    r, resp, (resp >> 9) & 0xf);
-+			rca = r;
-+		}
-+	}
++	ready = true;
 +	if (river_emmc_gpt()) {
-+		printf("RIVER eMMC: probe failed\n");
-+		hc = 0;
++		printf("RIVER eMMC: GPT read failed\n");
++		ready = false;
 +		return;
 +	}
 +	printf("RIVER eMMC: read-only probe done\n");
