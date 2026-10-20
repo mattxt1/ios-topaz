@@ -2,7 +2,7 @@
 
 Started 19 October 2026. This branch borrows the topaz XNU work as a starting
 point. River now runs iOS 16.7.16 services from userdata and displays the
-Apple logo; graphical startup remains incomplete. Device dumps, photos,
+iOS lock screen (photo IMG_0351); touch and unlocking remain unimplemented. Device dumps, photos,
 logs, Apple artifacts and boot images stay in the adjacent private handoff
 folders or ignored output directories.
 
@@ -555,6 +555,13 @@ The generated ADT was serialized and parsed back with its property checked.
 `f910397d971e7eec82cfb55f4f12c39d80c4369180bfbb56cc8154c7412f51f0`,
 was accepted by `fastboot boot` from recovery on 2026-10-20. Same focused
 sample/scan/stdout lists and userdata logging as the previous test. Screen
-result pending; retrieve the next log as `../logs-private/r11-identity.txt`.
+result verified by photo IMG_0351: **iOS lock screen**, with date, large
+clock and camera button. The Wi-Fi identity metadata change clears the
+previous Apple-logo stall. This does not verify touch, unlocking, apps,
+wallpaper correctness or clock accuracy (the photo shows Wednesday,
+December 31). Keep this boot available as a known graphical baseline.
+Retrieve its log as `../logs-private/r11-identity.txt` on the next recovery
+visit. Next: river-specific input hardware discovery and a touch/button
+driver; do not enable the topaz MMIO drivers.
 No protected partitions were flashed. The symbol source DMG is detached
 and restored to its original private path.

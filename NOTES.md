@@ -48,8 +48,11 @@ retrieved (188,635 bytes, flush #141). lsd and PosterBoard reach normal
 run loops; SpringBoard stalls in IconServices → MobileGestalt UniqueDeviceID
 → WiFiAddress waiting for absent IONetworkController. Added synthetic
 /chosen/mac-address-wifi0 identity metadata to the river ADT. Same-kernel
-r11-identity RAM boot accepted; screen result pending. Next: read its log
-after recovery to verify that this wait is gone. No proven GUI fix yet.
+r11-identity RAM boot accepted; photo IMG_0351 verifies **iOS lock screen**
+(date, clock, camera button), clearing the Apple-logo stall. Touch/unlock
+and correct time remain unverified/unimplemented. Preserve this baseline;
+next is river-specific input discovery. Pull r11-identity log at the next
+recovery visit.
 Details in RIVER.md.
 
 ## Agent handoff / active work (2026-10-15, latest)
