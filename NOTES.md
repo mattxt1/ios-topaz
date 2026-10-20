@@ -44,8 +44,13 @@ frames. SpringBoard spends samples 5–38 in LaunchServices initialization;
 lsd burns CPU and exceeds 32 threads. Later PosterBoard traps in first-time
 wallpaper setup (`!_stateLock_switcherConfiguration`). Same-kernel focused
 r11 image with lsd/PosterBoard sampling, heap scans and stdout tee is now
-awaiting recovery log retrieval. No proven fix for the logo yet. Details in
-RIVER.md.
+retrieved (188,635 bytes, flush #141). lsd and PosterBoard reach normal
+run loops; SpringBoard stalls in IconServices → MobileGestalt UniqueDeviceID
+→ WiFiAddress waiting for absent IONetworkController. Added synthetic
+/chosen/mac-address-wifi0 identity metadata to the river ADT. Same-kernel
+r11-identity RAM boot accepted; screen result pending. Next: read its log
+after recovery to verify that this wait is gone. No proven GUI fix yet.
+Details in RIVER.md.
 
 ## Agent handoff / active work (2026-10-15, latest)
 

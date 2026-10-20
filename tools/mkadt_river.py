@@ -72,6 +72,12 @@ def make_tree():
     chosen = child(root, 'chosen')
     set_prop(chosen, 'firmware-version', mkadt.cstr('river-shim'))
     set_prop(chosen, 'system-firmware-version', mkadt.cstr('river-shim'))
+    # MobileGestalt's WiFiAddress first reads this CFData from /chosen.
+    # Without it, UniqueDeviceID (IconServices startup) falls through to an
+    # IONetworkController notification wait, although river has no Wi-Fi
+    # driver yet. Stable locally administered identity, not the phone's MAC;
+    # this publishes no network controller and enables no radio hardware.
+    chosen.props.append(('mac-address-wifi0', 0, bytes.fromhex('025249564501')))
 
     cpus = child(root, 'cpus')
     for cpu in cpus.children:
@@ -111,6 +117,7 @@ def main():
     blob = adt.serialize(make_tree())
     parsed, end = adt.parse(blob)
     assert end == len(blob)
+    assert child(parsed, 'chosen').prop('mac-address-wifi0') == bytes.fromhex('025249564501')
     assert child(child(parsed, 'arm-io'), 'gic').prop('compatible') == b'arm,gic-v2\0'
     fbcon = child(parsed, 'sweet-fbcon')
     disp = child(child(parsed, 'arm-io'), 'disp0')

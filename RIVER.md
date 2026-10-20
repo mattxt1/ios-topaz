@@ -534,4 +534,27 @@ A same-kernel focused diagnostic image,
 was RAM-booted from recovery via `adb reboot bootloader`, with
 `sweetsample=SpringBoard,backboardd,lsd,PosterBoard`, and matching `sweetscan`
 and `sweetnull` lists to capture the missing exception text and database
-worker stacks. Focused log retrieval pending.
+worker stacks. Recovery readback retrieved 188,635 bytes, flush #141,
+with samples 0–11. LaunchServices reaches its normal run loop; PosterBoard
+is alive without a crash in this capture. SpringBoard samples 7–11 instead
+wait in MobileGestalt during `-[ISDefaults init]` in IconServices.
+
+## Identity wait test (same r11 kernel)
+
+Local shared-cache symbolication/disassembly identifies the blocked public
+query as `UniqueDeviceID`. Its nested WiFiAddress query first reads
+`IODeviceTree:/chosen` property `mac-address-wifi0`; after missing that and
+the sdio/wlan/marconi-wifi local-mac-address paths, it waits for an
+IONetworkController notification. River has no network controller driver.
+`tools/mkadt_river.py` now supplies a stable synthetic, locally administered
+six-byte `mac-address-wifi0` in /chosen. This provides identity metadata,
+not a Wi-Fi service or radio driver. The existing kernel is unchanged.
+The generated ADT was serialized and parsed back with its property checked.
+
+`river-r11-identity-boot.img`, SHA-256
+`f910397d971e7eec82cfb55f4f12c39d80c4369180bfbb56cc8154c7412f51f0`,
+was accepted by `fastboot boot` from recovery on 2026-10-20. Same focused
+sample/scan/stdout lists and userdata logging as the previous test. Screen
+result pending; retrieve the next log as `../logs-private/r11-identity.txt`.
+No protected partitions were flashed. The symbol source DMG is detached
+and restored to its original private path.
