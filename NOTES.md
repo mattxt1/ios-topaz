@@ -20,6 +20,18 @@ Android. First `board=river` CI build succeeded (fork mattxt1/ios-topaz, run
 wait**, GICv2 SGI and vtimer working. md0 RAM root (IMG_0323): **PID 1 runs on river**. cpus=4 (IMG_0324): **4/4 Gold CPUs, SGIs verified**. HFS+ RAM root (IMG_0325): **`hfs: mounted SweetRoot`, PID 1 on 4 CPUs**. eMMC probe 0128 (IMG_0326): clocks on but MSM core not in SDHCI mode (HC_MODE 0), probe stopped safely; full host init + enumeration then fixed by restoring vendor_spec POR (ABL left HS400 MCLK select): **eMMC reads work** (IMG_0329: Micron S0J9N8, 59640 MiB, GPT 64 entries, boot_b ANDROID!). Then 25 MHz + read-only /dev/emmc0[sN] (r7, IMG_0335): raw and block reads of boot_b from PID 1 work, write opens refused, 1389 KiB/s. **Root from eMMC** (IMG_0338): HFS test root flashed to inactive system_a (p62; userdata flash refused by bootloader), rd=emmc0s62 mounts it and PID 1 runs from eMMC. Details and
 commands in `RIVER.md`.
 
+2026-10-20 river update: macOS iOS root builder + recovery ADB writer committed
+(`ddedf19`); iOS 16.7.16 root placed on userdata p64, full 16 GiB readback
+matched. r9 (`e7ddb9b`, CI `39383612244`) adds CMD24 gated to userdata only.
+RAM boot passed the earlier read-only mount failure and started iOS services.
+After 42 minutes it remained in service restart loops. Private photos
+IMG_0343–0345 identify a concrete GUI blocker: SpringBoard aborts with
+NSInternalInconsistencyException because FBSDisplayConfiguration reports
+0x0 bounds/mode on wireless0. River still had AppleCLCD disabled. Phone was
+returned to fastboot by the user. Working next: patch 0130 publishes AppleCLCD
+using cached BGRA software composition copied to the measured 24bpp river
+splash; topaz MDP/DSI/modem paths stay excluded. Details in RIVER.md.
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<

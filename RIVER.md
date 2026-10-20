@@ -424,3 +424,39 @@ The user was advised to stop the run; persistent CMD24 writes could otherwise
 continue without useful progress. The next investigation should identify the
 first failing service and collect a bounded boot log, rather than leave it
 running indefinitely. The photo remains in the private handoff folder only.
+
+## River graphical framebuffer (r10 preparation)
+
+Private photos IMG_0343–0345 narrow the r9 loop: `CRASH SpringBoard[393]
+sig 6`, with `NSInternalInconsistencyException` and reason `We expect a valid
+bounds for configuration`. The configuration names `Wireless`/`wireless0`,
+with a 0x0 mode and `bounds = {{0, 0}, {0, 0}}`. This is a specific
+SpringBoard failure after the root mount, not evidence that a longer wait
+will finish booting. The user returned the phone to fastboot.
+
+Patch 0130 enables AppleCLCD's existing iOS IOMobileFramebuffer interface on
+river with a separate hardware path. It gets the measured splash geometry
+from the river board constants (1080x2270, 24bpp, stride 3240 at 0x90001000),
+allocates a cached BGRA IOSurface for CPU composition, and strips alpha when
+copying a completed frame to the existing splash scanout. It never maps or
+programs topaz MDP/DSI, invokes TopazModem, or enables its battery/input
+drivers. There is no scanout address change, panel command, clock or power
+programming. Colour byte order is still to be verified on river; early
+console testing used grayscale only.
+
+The device tree now advertises an iPhone X 1125x2436 canvas, matching the
+driver's default logical mode and this userland's UIKit layout data. The
+central 1080x2270 window is copied to the Moto panel (offset 20,83), so this
+first implementation crops the edges rather than scaling. Touch and buttons
+still need river drivers. Use `sweetfb_noconsole=1 sweetfb_stayon=1
+sweetfb_hz=5` for the first GUI test: show the GUI after its first swap and
+keep it awake while input is absent. A fallback `sweetfb_console=1` leaves
+the text console visible while publishing the display service.
+
+Local compilation passed for river and topaz for SweetFramebuffer.cpp,
+SweetSurface.cpp and KernelConfigTables.cpp. The C++ checker was corrected to
+combine recorded CXXFLAGS and CFLAGS, as XNU's build rule does; its previous
+CXXFLAGS-only invocation omitted target and board defines. The river
+framebuffer object references `ml_io_map_wcomb` and the buffered-surface
+allocator, with no TopazModem or scanout-geometry initializer reference.
+CI and phone test pending.

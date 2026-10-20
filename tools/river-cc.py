@@ -70,7 +70,12 @@ def main(argv):
         directory = os.path.join(cfg, comp, 'DEVELOPMENT')
         kind = '.CXXFLAGS' if arg.endswith('.cpp') else '.SFLAGS' if arg.endswith(('.s', '.S')) else '.CFLAGS'
         args = []
-        for t in tokens(open(os.path.join(directory, kind)).read().replace('\0', ' '))[1:]:
+        recorded = tokens(open(os.path.join(directory, kind)).read().replace('\0', ' '))[1:]
+        # XNU's P_RULE_1A invokes KC++ with both CXXFLAGS and CFLAGS. The
+        # recorded CXXFLAGS alone have no target, board or kernel defines.
+        if kind == '.CXXFLAGS':
+            recorded += tokens(open(os.path.join(directory, '.CFLAGS')).read().replace('\0', ' '))[1:]
+        for t in recorded:
             t = t.replace(CI + '/dxb/', bt + '/')
             if t.startswith('-I/Applications/Xcode') and t.endswith('PrivateHeaders/platform'):
                 t = '-I' + os.path.join(bt, 'sdk-kernel-platform/platform')

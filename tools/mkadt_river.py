@@ -85,7 +85,10 @@ def make_tree():
     set_prop(gic, 'reg', mkadt.u64(GICD - mkadt.SOC_BASE, 0x1000,
                                   GICC - mkadt.SOC_BASE, 0x1000))
     disp = child(arm_io, 'disp0')
-    set_prop(disp, 'canvas-height', mkadt.u32(2270))
+    # iOS has layout data for the iPhone X canvas. AppleCLCD presents that
+    # mode and copies its central 1080x2270 window to ABL's 24bpp splash.
+    set_prop(disp, 'canvas-width', mkadt.u32(1125))
+    set_prop(disp, 'canvas-height', mkadt.u32(2436))
 
     fbcon = child(root, 'sweet-fbcon')
     fbcon.props.append(('bytes-per-pixel', 0, mkadt.u32(FB_BPP)))
@@ -110,6 +113,9 @@ def main():
     assert end == len(blob)
     assert child(child(parsed, 'arm-io'), 'gic').prop('compatible') == b'arm,gic-v2\0'
     fbcon = child(parsed, 'sweet-fbcon')
+    disp = child(child(parsed, 'arm-io'), 'disp0')
+    assert struct.unpack('<I', disp.prop('canvas-width'))[0] == 1125
+    assert struct.unpack('<I', disp.prop('canvas-height'))[0] == 2436
     assert struct.unpack('<QQ', fbcon.prop('reg')) == (FB, FB_SIZE)
     assert struct.unpack('<I', fbcon.prop('stride'))[0] == FB_STRIDE
     assert struct.unpack('<I', fbcon.prop('bytes-per-pixel'))[0] == FB_BPP
