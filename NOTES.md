@@ -77,6 +77,14 @@ ec61397d2392a54512b383044795c92144654cb97a60cdc7d9ed58c6e405f466.
 Awaiting panic/lock-screen and swipe/volume result. Next recovery log
 r13-input.txt.
 
+2026-10-20 r13 hardware log confirms panic fix plus real touch and PON
+power/volume-down events reaching HID. User still sees Apple logo; latest
+SpringBoard sample waits in MediaRemote audio routing discovery. Fresh
+private log r13-input.txt (221,832 bytes, flush #142). Patch 0134 prepares
+riverusb=1 read-only state probe / =2 guarded DWC3 CDC-ECM live logger,
+river-specific addresses and QUSB2v1 checks. macOS receiver prepared;
+compile/gate tests passed, CI and USB hardware test pending. Phone recovery.
+
 ## Agent handoff / active work (2026-10-15, latest)
 
 ### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<

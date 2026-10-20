@@ -674,3 +674,48 @@ was verified to embed the matching payload, riverinput=1/riverlog=1 args,
 and sparse mapping code; fastboot accepted the RAM boot. User was asked
 to report panic/lock-screen result and test swipe-up plus short volume.
 Hardware verification pending. Next private log: `../logs-private/r13-input.txt`.
+
+## r13 input evidence and river USB preparation
+
+Recovery readback retrieved a fresh r13 ring (221,832 bytes, flush #142).
+The mapping fix is verified on hardware: all sparse pages map, PM8953
+SPMI v2 reports 0x20010000, PON observer offset 0x140000 reads successfully,
+and Novatek firmware 11/complement 244 validates at event page 0x21c00,
+1080x2270. Backboardd opens both HID services. Touch down/up and power /
+volume-down events reach the HID user client. The user still sees the
+Apple logo, so interactive unlocking is not verified. SpringBoard sample
+11 now waits synchronously in MediaRemote's audio routing discovery
+(`MRAVConcreteRoutingDiscoverySession availableOutputDevices`), a later
+startup dependency. No root-cause fix for that stall yet.
+
+Patch 0134 prepares USB logging using the existing polled DWC3 CDC-ECM
+implementation. River's live DT gives DWC3 0x07000000, QSCRATCH
+0x070f8800, QUSB2 revision 1 at 0x00079000, and USB GDSC 0x0183f078.
+Clock offsets are checked against matching downstream
+`msm-clocks-hwio-8953.h`: master/sleep/UTMI 0x3f000/4/8, PCNOC AXI
+0x3f038, PHY config AHB 0x3f080, reference enable 0x41030 (GCC base
+0x01800000). Matching dwc3-msm.c confirms HS VBUS bits 20/28; matching
+phy-msm-qusb.c confirms PLL lock bit 5 at 0x38 and powerdown at 0xb4.
+All register mappings use the general kernel map with I/O attributes.
+
+`riverusb=0` (default) is off; `=1` reads state only; `=2` attempts the
+existing high-speed gadget only after GDSC, all five clocks, reference
+clock, PHY PLL/power, DWC3 ID and device-mode checks pass. It does not power
+up gated blocks, reprogram PHY tuning, or access the SS PHY. The shared
+USB thread starts after root selection (network stack initialized). It
+uses synthetic identity and the existing 192.168.7.2 -> 192.168.7.1 UDP/5140
+log stream. Live logging is not yet tested on river.
+
+`tools/river-usbnet-macos.py PRIVATE.txt [--configure]` waits for the exact
+synthetic USB MAC, optionally assigns 192.168.7.1/24 to that interface,
+then receives only on the USB address and accepts only the phone's IP.
+It refuses log paths inside git and existing output files, and creates
+logs mode 0600. Configuring the host interface may require sudo. Logs stay
+on the Mac; no default route is added.
+
+Local river/topaz objects compile. A harness exercised the actual USB
+probe's opt-in, gated-power/clock/reference/PLL/powerdown/ID/device-mode
+rejections and verified read-only mode never starts the gadget. Host
+interface parser check selects the USB MAC without selecting the normal
+network interface. Patch reverse application passed. CI and USB hardware
+testing pending; phone is in recovery after the r13 log pull.
