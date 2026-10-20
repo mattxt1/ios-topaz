@@ -1,0 +1,305 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 65970f9..7d0b78d 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -1,3 +1,214 @@
++/* River SDM632: polled QUPv2 Novatek input and read-only PM8953 keys.
++ * Addresses from river's live DT; protocol checked against the matching
++ * LineageOS kernel. No PMIC config writes, touch flash or bootloader commands.
++ */
++#if defined(RIVER)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <kern/clock.h>
++#include <kern/thread.h>
++#include <kern/sched_prim.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++extern void sweet_hid_key(int, int);
++extern void sweet_hid_touch(int, int, int, int);
++void river_input_init(void);
++static vm_offset_t ri_qup, ri_gcc, ri_tlmm, ri_spmi, ri_obs;
++static uint32_t ri_pon_off;
++static bool ri_started, ri_pon_ok, ri_touch_ok;
++static int ri_chan;
++static uint32_t
++ri_rd(vm_offset_t base, unsigned off)
++{
++ uint32_t v = *(volatile uint32_t *)(base + off);
++ __asm__ volatile("dmb oshld" ::: "memory");
++ return v;
++}
++static void
++ri_wr(vm_offset_t base, unsigned off, uint32_t v)
++{
++ *(volatile uint32_t *)(base + off) = v;
++ __asm__ volatile("dsb osh" ::: "memory");
++}
++static void
++ri_wait(unsigned ms)
++{
++ uint64_t deadline;
++ clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
++ (void)assert_wait_deadline(&ri_chan, THREAD_UNINT, deadline);
++ thread_block(THREAD_CONTINUE_NULL);
++}
++static bool
++ri_state(unsigned state)
++{
++ for (unsigned i = 0; i < 1000; i++) {
++  if (ri_rd(ri_qup, 4) & 4) {
++   ri_wr(ri_qup, 4, state);
++   for (unsigned j = 0; j < 1000; j++) {
++    if ((ri_rd(ri_qup, 4) & 7) == (state | 4)) return true;
++    delay(1);
++   }
++   return false;
++  }
++  delay(1);
++ }
++ return false;
++}
++/* One bounded FIFO transfer, to the fitted controller only. Input includes
++ * the QUPv2 two-byte read tag, removed before handing data to the caller. */
++static bool
++ri_xfer(const uint8_t *tx, unsigned nt, uint8_t *rx, unsigned nr)
++{
++ uint8_t out[32], in[68];
++ unsigned no = 0, ni = 0, want = nr ? nr + 2 : 0;
++ if (nt == 0 || nt > 16 || nr > 65 || !ri_state(0)) return false;
++ ri_wr(ri_qup, 0, 0x207 | (nr ? 0 : 0x80));
++ ri_wr(ri_qup, 8, (ri_rd(ri_qup, 8) & ~0x1fc00u) | 0xc000);
++ ri_wr(ri_qup, 0x100, 0); ri_wr(ri_qup, 0x200, 0);
++ ri_wr(ri_qup, 0x208, want);
++ out[no++] = 0x81; out[no++] = 0xc4;
++ out[no++] = nr ? 0x82 : 0x83; out[no++] = (uint8_t)nt;
++ for (unsigned i = 0; i < nt; i++) out[no++] = tx[i];
++ if (nr) {
++  out[no++] = 0x81; out[no++] = 0xc5;
++  out[no++] = 0x87; out[no++] = (uint8_t)nr;
++ }
++ ri_wr(ri_qup, 0x150, no);
++ ri_wr(ri_qup, 0x1c, 0x3c); ri_wr(ri_qup, 0x18, 0x300);
++ if (!ri_state(1)) return false;
++ ri_wr(ri_qup, 0x400, (62u << 16) | 124u); /* XO 19.2 MHz, ~100 kHz */
++ if (!ri_state(3)) return false;
++ for (unsigned i = 0; i < no; i += 4) {
++  uint32_t word = 0;
++  for (unsigned j = 0; j < 4 && i + j < no; j++) word |= (uint32_t)out[i+j] << (8*j);
++  ri_wr(ri_qup, 0x110, word);
++ }
++ if (!ri_state(1)) return false;
++ bool ok = false;
++ for (unsigned i = 0; i < 2000; i++) {
++  uint32_t op = ri_rd(ri_qup, 0x18);
++  if ((ri_rd(ri_qup, 0x404) & 0x38000fcu) || (ri_rd(ri_qup, 0x1c) & 0x3c)) break;
++  if (nr && (op & 0x20)) {
++   uint32_t word = ri_rd(ri_qup, 0x218);
++   for (unsigned j = 0; j < 4 && ni < want; j++) in[ni++] = (uint8_t)(word >> (j*8));
++  }
++  if ((nr && ni == want && (op & 0x800)) || (!nr && (op & 0x500))) { ok = true; break; }
++  delay(10);
++ }
++ if (!ok) {
++  static unsigned errors;
++  if ((errors++ % 100) == 0) printf("RIVER INPUT: QUP transfer error status=%#x op=%#x err=%#x rx=%u/%u\n", ri_rd(ri_qup,0x404),ri_rd(ri_qup,0x18),ri_rd(ri_qup,0x1c),ni,want);
++ }
++ (void)ri_state(0);
++ if (ok && nr) for (unsigned i = 0; i < nr; i++) rx[i] = in[i+2];
++ return ok;
++}
++static bool
++ri_pon(uint8_t *v)
++{
++ if (!ri_pon_ok) return false;
++ ri_wr(ri_obs, ri_pon_off, (1u << 27) | 0x100); /* EXT_READL of SID0 0x810 */
++ for (unsigned i = 0; i < 1000; i++) {
++  unsigned s = ri_rd(ri_obs, ri_pon_off + 8);
++  if (s & 1) { if (s & 14) return false; *v = (uint8_t)ri_rd(ri_obs,ri_pon_off+0x18); return true; }
++  delay(1);
++ }
++ return false;
++}
++static void
++ri_probe(void)
++{
++ ri_tlmm = ml_io_map(0x01000000, 0x100000);
++ ri_spmi = ml_io_map(0x0200f000, 0x1000);
++ ri_obs = ml_io_map(0x02c00000, 0x800000);
++ if (ri_spmi && ri_obs) {
++  uint32_t ver = ri_rd(ri_spmi, 0);
++  printf("RIVER INPUT: SPMI version=%#x\n", ver);
++  if (ver >= 0x20010000 && ver < 0x50000000) {
++   for (unsigned i = 0; i < 256; i++) {
++    uint32_t map = ri_rd(ri_spmi, 0x800 + i*4);
++    if (map && ((map >> 8) & 0xfff) == 8) { ri_pon_off = i*0x8000; ri_pon_ok = true; break; }
++   }
++  }
++  uint8_t pon = 0; bool ok = ri_pon(&pon);
++  printf("RIVER INPUT: PON read=%d value=%#x observer=%#x\n", ok, pon,ri_pon_off);
++ }
++ if (!ri_tlmm) return;
++ printf("RIVER INPUT: GPIO10=%#x GPIO11=%#x reset64=%#x/%#x irq65=%#x/%#x vol85=%#x/%#x\n",ri_rd(ri_tlmm,0xa000),ri_rd(ri_tlmm,0xb000),ri_rd(ri_tlmm,0x40000),ri_rd(ri_tlmm,0x40004),ri_rd(ri_tlmm,0x41000),ri_rd(ri_tlmm,0x41004),ri_rd(ri_tlmm,0x55000),ri_rd(ri_tlmm,0x55004));
++ ri_gcc = ml_io_map(0x01800000, 0x80000);
++ if (!ri_gcc) return;
++ printf("RIVER INPUT: QUP3 clock=%#x AHB=%#x RCG=%#x\n",ri_rd(ri_gcc,0x4020),ri_rd(ri_gcc,0x1008),ri_rd(ri_gcc,0x4004));
++ /* Vote AHB, select XO / 1 for this QUP only, then enable its branch. */
++ ri_wr(ri_gcc,0x45004,ri_rd(ri_gcc,0x45004) | (1u<<10));
++ ri_wr(ri_gcc,0x4004,1); ri_wr(ri_gcc,0x4000,ri_rd(ri_gcc,0x4000)|1);
++ for (unsigned i=0;i<1000 && (ri_rd(ri_gcc,0x4000)&1);i++) delay(1);
++ if (ri_rd(ri_gcc,0x4000)&1) { printf("RIVER INPUT: QUP RCG update timeout\n"); return; }
++ ri_wr(ri_gcc,0x4020,ri_rd(ri_gcc,0x4020)|1);
++ for (unsigned i=0;i<1000 && ((ri_rd(ri_gcc,0x4020)|ri_rd(ri_gcc,0x1008))&0x80000000u);i++) delay(1);
++ if ((ri_rd(ri_gcc,0x4020)|ri_rd(ri_gcc,0x1008)) & 0x80000000u) { printf("RIVER INPUT: QUP clocks stopped\n"); return; }
++ /* gpio10/11 function2 = BLSP I2C3, input, 2 mA, no internal bias. */
++ ri_wr(ri_tlmm,0xa000,8); ri_wr(ri_tlmm,0xb000,8);
++ ri_qup = ml_io_map(0x078b7000,0x1000);
++ if (!ri_qup) return;
++ printf("RIVER INPUT: QUP hw=%#x state=%#x modes=%#x\n",ri_rd(ri_qup,0x30),ri_rd(ri_qup,4),ri_rd(ri_qup,8));
++ ri_wr(ri_qup,0xc,1); delay(100);
++ if (!ri_state(0)) { printf("RIVER INPUT: QUP reset timeout\n"); return; }
++ ri_wr(ri_qup,0,0x207); ri_wr(ri_qup,0x408,1);
++ ri_wr(ri_qup,0x20,0); ri_wr(ri_qup,0x28,0x300);
++ /* Probe known event pages by firmware/complement and exact panel bounds.
++  * Only volatile page selection is written; no reset/flash commands. */
++ const uint32_t pages[] = {0x11e00,0x11a00,0x21c00,0x25000};
++ for (unsigned i=0;i<sizeof(pages)/sizeof(pages[0]);i++) {
++  uint8_t page[3]={0xff,(uint8_t)(pages[i]>>16),(uint8_t)(pages[i]>>8)},reg=0x78,info[16];
++  if (!ri_xfer(page,3,NULL,0) || !ri_xfer(&reg,1,info,16)) continue;
++  unsigned w=(info[4]<<8)|info[5],h=(info[6]<<8)|info[7];
++  printf("RIVER INPUT: NVT page=%#x fw=%u/%u bounds=%ux%u\n",pages[i],info[0],info[1],w,h);
++  if (info[0]+info[1]==255 && w==1080 && h==2270) { ri_touch_ok=true; break; }
++ }
++ printf("RIVER INPUT: Novatek reports %s\n",ri_touch_ok?"enabled":"not validated; withheld");
++}
++static void
++ri_thread(void *arg, wait_result_t result)
++{
++ (void)arg; (void)result; ri_wait(3000); ri_probe();
++ int keys[3]={0,0,0}; bool down[10]={false}; unsigned failures=0;
++ bool vol_ok=ri_tlmm && !(ri_rd(ri_tlmm,0x55000)&0x23cu);
++ for (;;) {
++  uint8_t pon=0;
++  bool pok=ri_pon(&pon);
++  int now[3]={!!(pon&1),vol_ok ? !(ri_rd(ri_tlmm,0x55004)&1) : 0,!!(pon&2)};
++  for (int k=0;k<3;k++) if((k==1?vol_ok:pok) && now[k]!=keys[k]) {keys[k]=now[k];sweet_hid_key(k,now[k]);}
++  if (ri_touch_ok && !(ri_rd(ri_tlmm,0x41004)&1)) {
++   uint8_t reg=0,data[65]; bool seen[10]={false};
++   if (ri_xfer(&reg,1,data,65)) {
++    failures=0;
++    for (unsigned i=0;i<10;i++) {
++     unsigned p=6*i,id=data[p]>>3,state=data[p]&7;
++     if (id<1 || id>10 || (state!=1 && state!=2)) continue;
++     unsigned x=(data[p+1]<<4)|(data[p+3]>>4),y=(data[p+2]<<4)|(data[p+3]&15);
++     if (x>=1080 || y>=2270) continue;
++     seen[id-1]=true; sweet_hid_touch(id-1,1,x,y);
++    }
++    for(unsigned i=0;i<10;i++) {if(down[i]&&!seen[i]) sweet_hid_touch(i,0,0,0);down[i]=seen[i];}
++   } else if (++failures==5) {
++    for(unsigned i=0;i<10;i++) {if(down[i])sweet_hid_touch(i,0,0,0);down[i]=false;}
++   }
++  }
++  ri_wait(20);
++ }
++}
++void
++river_input_init(void)
++{
++ int enabled=0;
++ if(ri_started) return;
++ ri_started=true;
++ if(!PE_parse_boot_argn("riverinput",&enabled,sizeof(enabled)) || enabled!=1) return;
++ thread_t t;
++ if(kernel_thread_start(ri_thread,NULL,&t)==KERN_SUCCESS)thread_deallocate(t);
++}
++#else /* existing topaz implementation follows */
+ /*
+  * Minimal polled SWEET keys. Call once after the scheduler is running.
+  * See hw-report.md: volume-up is PM6150L SID 4, NOT PM6150 SID 0.
+@@ -181,3 +392,5 @@ sweet_keys_init(void)
+ 	}
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
++
++#endif /* RIVER */
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
+index d2f4fa1..97775c4 100644
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -356,6 +356,12 @@ OSDefineMetaClassAndStructors(SweetHIDButtons, IOHIDEventService);
+  * app-switcher gesture.
+  */
+ #define SWEET_TOUCH_EDGE_PX 48
++#if defined(RIVER)
++#define SWEET_TOUCH_HEIGHT 2270
++extern "C" void river_input_init(void);
++#else
++#define SWEET_TOUCH_HEIGHT 2400
++#endif
+ class SweetHIDTouch : public IOHIDEventService {
+ 	OSDeclareDefaultStructors(SweetHIDTouch);
+ public:
+@@ -435,9 +441,9 @@ SweetHIDTouch::start(IOService *provider)
+ 	int native = 0;
+ 	PE_parse_boot_argn("sweetfb_native", &native, sizeof(native));
+ 	fLogicalW = native ? 1080 : 1125;
+-	fLogicalH = native ? 2400 : 2436;
++	fLogicalH = native ? SWEET_TOUCH_HEIGHT : 2436;
+ 	fOffX = ((fLogicalW - 1080) / 2) & ~3;           /* as SweetFramebuffer.cpp */
+-	fOffY = (fLogicalH - 2400) / 2;
++	fOffY = (fLogicalH - SWEET_TOUCH_HEIGHT) / 2;
+ 	/* The digitizer covers the main display (backboardd maps it 1:1). */
+ 	setProperty("DisplayIntegrated", kOSBooleanTrue);
+ 	setProperty("SurfaceWidth", (unsigned long long)(68 << 16), 32);	/* mm, 16.16 */
+@@ -445,6 +451,9 @@ SweetHIDTouch::start(IOService *provider)
+ 	gSweetTouch = this;
+ 	registerService();
+ 	IOLog("SWEET HID: touch registered\n");
++#if defined(RIVER)
++	river_input_init();
++#endif
+ 	return true;
+ }
+ 
+@@ -459,7 +468,7 @@ SweetHIDTouch::touch(int finger, bool down, int x, int y)
+ 		return;
+ 	}
+ 	x = x < 0 ? 0 : (x > 1079 ? 1079 : x);
+-	y = y < 0 ? 0 : (y > 2399 ? 2399 : y);
++	y = y < 0 ? 0 : (y >= SWEET_TOUCH_HEIGHT ? SWEET_TOUCH_HEIGHT - 1 : y);
+ 
+ 	IOLockLock(fLock);
+ 	bool was = fDown[finger];
+@@ -473,7 +482,7 @@ SweetHIDTouch::touch(int finger, bool down, int x, int y)
+ 	}
+ 	if (!was && down) {
+ 		fEdge[finger] = x < SWEET_TOUCH_EDGE_PX || x > 1079 - SWEET_TOUCH_EDGE_PX ||
+-		    y < SWEET_TOUCH_EDGE_PX || y > 2399 - SWEET_TOUCH_EDGE_PX;
++		    y < SWEET_TOUCH_EDGE_PX || y > SWEET_TOUCH_HEIGHT - 1 - SWEET_TOUCH_EDGE_PX;
+ 	}
+ 
+ 	collection = IOHIDEvent::digitizerEvent(now, 0, kIOHIDDigitizerTransducerTypeHand, false, 0, 0, 0);
+diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
+index 25ff6b7..db584af 100644
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -67,9 +67,7 @@ const char * gIOKernelConfigTables =
+     "     'IOProviderClass' = IOPlatformDevice;"
+     "     'IONameMatch'     = 'sweet,display';"
+     "   },"
+-#if !defined(RIVER)
+-    /* River's AppleCLCD uses only the inherited splash RAM. These other
+-     * services still depend on topaz's touch, keys, power and bus drivers. */
++    /* HID event services are software; river uses its own input backend. */
+     "   {"
+     "     'IOClass'         = SweetHIDButtons;"
+     "     'IOProviderClass' = IOResources;"
+@@ -80,6 +78,7 @@ const char * gIOKernelConfigTables =
+     "     'IOProviderClass' = IOResources;"
+     "     'IOMatchCategory' = SweetHIDTouch;"
+     "   },"
++#if !defined(RIVER)
+     "   {"
+     "     'IOClass'         = SweetBattery;"
+     "     'IOProviderClass' = IOResources;"

@@ -51,8 +51,11 @@ run loops; SpringBoard stalls in IconServices → MobileGestalt UniqueDeviceID
 r11-identity RAM boot accepted; photo IMG_0351 verifies **iOS lock screen**
 (date, clock, camera button), clearing the Apple-logo stall. Touch/unlock
 and correct time remain unverified/unimplemented. Preserve this baseline;
-next is river-specific input discovery. Pull r11-identity log at the next
-recovery visit.
+recovery inventory confirms Novatek at QUP3 0x78b7000/0x62, GPIO65/64,
+volume-up GPIO85, PM8953 PON keys. r11-identity log pulled (359,962 bytes).
+Patch 0132 prepares polled QUPv2 touch + SPMI v2/v3 buttons, software HID
+and river coordinate height, opt-in riverinput=1. Build/test pending; phone
+is in recovery. Preserve r11-identity as the working GUI fallback.
 Details in RIVER.md.
 
 ## Agent handoff / active work (2026-10-15, latest)

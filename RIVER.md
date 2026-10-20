@@ -565,3 +565,32 @@ visit. Next: river-specific input hardware discovery and a touch/button
 driver; do not enable the topaz MMIO drivers.
 No protected partitions were flashed. The symbol source DMG is detached
 and restored to its original private path.
+
+## River input implementation (r12 preparation)
+
+Recovery inventory identifies `NVTCapacitiveTouchScreen` / `NVT-ts` on
+QUP I2C3 (0x078b7000), address 0x62, firmware 11, 1080x2270. GPIO10/11
+are BLSP I2C3 function 2; interrupt/reset are GPIO65/64. Volume-up is
+active-low TLMM GPIO85; power and volume-down use PM8953 PON SID0 0x810.
+SPMI core/observer are 0x0200f000 / 0x02c00000 (8 MiB observer region).
+The successful identity boot log was retrieved privately (359,962 bytes,
+flush #224); no new root image was written.
+
+Patch 0132 enables software HID personalities and adds a separate river
+branch in the already-built sweet_keys.c, opt-in `riverinput=1`. It votes
+BLSP1 AHB, sets QUP3's clock to XO / 1, enables its branch, and selects
+I2C3 on GPIO10/11. A bounded polled QUPv2 FIFO transfer only addresses 0x62;
+volatile event-page selection and firmware info reads must validate the
+firmware complement and exact panel bounds before events are accepted.
+No touch firmware flashing, bootloader commands, GPIO reset or PMIC config
+writes are present. Buttons read the older SPMI v2/v3 observer channels;
+volume-up is accepted only if its pin is already a GPIO input. Touch HID
+coordinates use river's 2270-pixel panel height and the displayed canvas crop.
+Touch reports and buttons are polled at 20 ms. Hardware behavior is unverified.
+
+References: matching [LineageOS river kernel](https://github.com/LineageOS/android_kernel_motorola_sdm632/tree/lineage-23.0)
+`drivers/i2c/busses/i2c-msm-v2.c`, `drivers/spmi/spmi-pmic-arb.c`,
+`drivers/input/touchscreen/nova_mmi/nt36xxx.c`, and upstream Qualcomm
+`gcc-msm8953.c` / `pinctrl-msm8953.c`. Local reference downloads and device
+inventory stay outside git. Local compilation encountered a blocked header
+read; CI compilation/link and a phone test remain required.
