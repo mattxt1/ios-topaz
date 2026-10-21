@@ -839,3 +839,28 @@ crashes are therefore not explained by eMMC multi-block data errors; next
 suspects are an SMP race (test: same kernel with cpus=1, payload rebuild
 only) or a rare userland issue. r16 (0 SpringBoard crashes) and r17 (2)
 used identical eMMC code.
+
+### r19 / r20: display power, touch-to-wake, RTC clock, eMMC recovery
+- **r19** (0141, CI build of cf2e0d9), booted 21:43: without `sweetfb_stayon`
+  the screen fades to black when iOS turns the display off; a touch while
+  off sends one Power press and is swallowed (`touch 0 wakes the display`
+  -> `display on` 0.4 s later). Backlight stays lit (no PMI632 WLED driver).
+  Clock still 1969: the RTC was set during IOKit start, then
+  `IOKitInitializeTime()` waited for an IORTC service that never appears
+  and `clock_initialize_calendar()` reset it to the platform's zero.
+- **r19 cpus=1** (same kernel, local payload): SpringBoard died with SIGBUS
+  code 10 (KERN_MEMORY_ERROR, failed page-in) after `CMD18 ... data timeout,
+  status 0`; the card was left mid-transfer, so CMD17 and two CMD24 then got
+  command timeouts (0x18000). Not an SMP race. Likely cause of the bogus
+  timeout: the poller preempted between status read and deadline check.
+- **r20** (0142, 721b835): wait loop re-reads status after the deadline;
+  CMD12 + CMD13 recovery after any data error; RTC applied after
+  `clock_initialize_calendar()` and the 30 s IORTC wait skipped on river.
+  Root mount / USB at +25 s (was +35 s). PM8953 RTC: enabled, raw 10629378,
+  counts from ~2026-06-20 (Android kept the offset on /data). Boot-arg
+  `riverrtcoff=<private offset>` (stored in device-private, refined to +-2 s
+  from launchd log time vs host receive time; iOS time zone is US Pacific).
+  **r20-rtc: correct date/time on the lock screen (user), SpringBoard exec
+  +20.6 s.** Two r20 boots: no eMMC errors, no SpringBoard crash.
+- Still unexplained: the two r17 SpringBoard heap-execution crashes (no eMMC
+  errors in that run).
