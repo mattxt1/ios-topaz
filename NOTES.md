@@ -20,6 +20,13 @@ is prepared at `shim-river/out/river-r49-gallium-diag4-boot.img` (SHA256
 d9724b240bb94ecc5855a814ae0495194681dd888eede2e53c8b6049cd59e4c6).
 Boot it RAM-only once the phone is back in fastboot. USB receiver is running.
 
+Further update: private logs `r49-gallium-live-6.txt` through `-9.txt` narrow
+the SIGSEGV to `nir_lower_uniforms_to_ubo` while converting Mesa's built-in
+fragment shader. An image with markers inside that NIR pass is ready at
+`shim-river/out/river-r49-gallium-diag8-boot.img` (SHA256
+17e897cfd1a880d380ec8350dbe8849c04d1ec8d3739d6350935b21991a8aa94).
+It has not been booted. Phone needs fastboot; receiver is running.
+
 ## River status (2026-10-21) — current
 
 River boots iOS 16.7.16 to an interactive home screen in ~70 s (r28; see

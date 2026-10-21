@@ -1488,3 +1488,19 @@ Diagnostic boots with the USB receiver running:
   `shim-river/out/river-r49-gallium-diag4-boot.img` (SHA256
   d9724b240bb94ecc5855a814ae0495194681dd888eede2e53c8b6049cd59e4c6).
   Waiting for the phone to return to fastboot; no fourth diagnostic boot yet.
+
+Further observations (all private USB logs):
+- `r49-gallium-live-6.txt`: `fd_prog_init` reaches `ir3_shader_state_create`
+  for the built-in fragment shader, then SIGSEGV.
+- `r49-gallium-live-7.txt`: TGSI parses and NIR builder completes; SIGSEGV
+  inside `ttn_finalize_nir`.
+- `r49-gallium-live-8.txt`: the first ten NIR lowering passes and
+  `nir_lower_tex` finish; SIGSEGV before the uniform-lowering completion.
+- `r49-gallium-live-9.txt`: clip-distance check completes, then
+  `nir_lower_uniforms_to_ubo` is called (option=1) and SIGSEGV occurs inside.
+  The exact operation in this function is still unknown.
+Next signed diagnostic RAM image has markers inside that pass:
+`shim-river/out/river-r49-gallium-diag8-boot.img` (SHA256
+17e897cfd1a880d380ec8350dbe8849c04d1ec8d3739d6350935b21991a8aa94).
+It is built but not yet booted; phone needs fastboot. Temporary `RIVER DIAG`
+markers in the Mesa tree must be removed after the fault is fixed.
