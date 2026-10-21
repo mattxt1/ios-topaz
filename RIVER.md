@@ -1214,3 +1214,27 @@ fixed with a context hunk (7c28640). Rebuilt r40: GPU alive as r39, then
 `firmware container at 0xa2590000+0xd930 incomplete (pm4 19652, pfp 17108)`:
 the ADT blob arrived intact; the 16 KiB PFP slot was too small. 0163: PM4 and
 PFP slots of 24 KiB (PFP at +0x6000).
+
+### r41 (0163; console-visible, sha256 1e32e8e3...): **Adreno 506 command processor runs** (r39-live-5.txt)
+```
+microcode pm4 19652 bytes [0x5ff066 0x12b0 0x88020003], pfp 17108 bytes [0x5ff11a 0x1034 0x113001]
+SMMU SMR 0x80010000 0x80000002 0x80000003 0 S2CR 0x30000000 0x30000001 0x30000003 0x10000
+SMMU CB0 SCTLR 0 TCR 0x80000000 FSR 0x200
+buffers at pa 0xa4f34000 (pm4 +0 pfp +0x6000 ring +0xc000 scratch +0xf000)
+hw_init done; RBBM_STATUS 0x1 CP_PFP_ME_CNTL 0x303 rptr 0
+CP_ME_INIT consumed (rptr 9), RBBM_STATUS 0x1
+CP wrote CP_SCRATCH_REG0 = 0x5060a5e (expect 0x5060a5e)
+CP_MEM_WRITE consumed; memory now 0x1c0ffee5 (expect 0x1c0ffee5, was 0xdeadbeef); SMMU CB0 FSR 0x200 GFSR 0
+```
+The CP runs the PM4/PFP microcode, fetches the ring from DRAM, executes
+CP_ME_INIT, writes a register (PKT4) and writes DRAM (CP_MEM_WRITE) at a
+physical address. GPU SMMU: stream matches 0/2/3 (valid SMRs) go to
+S2CR type 0 (translate) CB0/CB1/CB3; CB0 (gfx3d_user) has SCTLR.M = 0, so
+GPU addresses are physical; FSR 0x200 is only the FORMAT field (no fault),
+GFSR 0. The memory write succeeded without a zap shader, so secure mode does
+not block plain CP memory writes; the zap shader is still needed before
+shader execution (Linux's CP_SET_SECURE_MODE 0 path).
+Next: zap shader through TZ PIL (pas_init_image / mem_setup /
+auth_and_reset, PAS id 13, from the RiverGPUFW container), then
+CP_SET_SECURE_MODE 0; then a first 2D blit/clear into a framebuffer, and a
+userland path (freedreno/GLES or a Metal-shaped driver).
