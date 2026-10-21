@@ -1300,3 +1300,25 @@ Fixed physical layout in the unused span below the 0x84300000 carve-out:
 0x81800000 zap (0x2000), 0x82000000 SMMU secure ptbl (0x21000).
 Next: first rendering work (CP_BLIT / 2D clear into a scanout buffer the
 MDP shows), then decide the userland path (freedreno vs Metal-shaped).
+
+## GPU driver approach (2026-10-21): Metal front end on Mesa (option C)
+Decision with the user: QuartzCore on iOS 16 renders through Metal (or the
+CPU), so only a Metal driver accelerates SpringBoard/UIKit. Plan C keeps
+that goal but reuses Mesa for the hard GPU-specific parts: AIR (LLVM) ->
+SPIR-V -> NIR -> ir3 for shaders, Gallium freedreno for command streams and
+memory; we write the Metal API subset QuartzCore uses and the XNU kernel GPU
+service. Order: (1) kernel GPU service: GPU address space (SMMU CB0 page
+tables), GPU memory objects, submission + fences + GPU IRQ (SPI 33), a
+/dev/rivergpu interface for Mesa; (2) Mesa freedreno on it, proven by a GLES
+test drawing on the panel; (3) Metal front end until QuartzCore renders.
+Apple binaries and anything derived from them stay off git and off the
+machine; only interface facts go into notes.
+
+### 0167 (prepared): GPU SMMU translation with our own page tables
+Mainline qcom_iommu_init_domain + io-pgtable ARM_32_LPAE_S1 (CB0 FSR FORMAT
+01 = AArch32 long descriptor): 3-level 4 KiB tables from a 64 KiB pool,
+TCR 0x80802020, TCR2 0x38002, MAIR0 0xf404ff44, PTE 0xe43 (RO 0xec3), ASID
+0, SCTLR 0x1067 (mainline minus CFCFG: terminate faults, no stall). The
+64 KiB GPU buffer is mapped at GPU VA 0x01000000 (microcode read-only) and
+the CP gets GPU addresses only. Last test: CP_MEM_WRITE to unmapped
+0x02000000 should fault in CB0 (FSR.TF, FAR).
