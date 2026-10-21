@@ -8,6 +8,7 @@
  * exiting panics the kernel. Selectors: see iokit/Kernel/arm/RiverGPU.cpp.
  */
 #include <IOKit/IOKitLib.h>
+#include <stdarg.h>
 #include <mach/mach.h>
 #include <mach/mach_time.h>
 #include <fcntl.h>
@@ -16,10 +17,26 @@
 #include <string.h>
 #include <unistd.h>
 
-enum { GET_PARAM, BO_NEW, BO_FREE, SUBMIT, WAIT, CPU_PREP };
+enum { GET_PARAM, BO_NEW, BO_FREE, SUBMIT, WAIT, CPU_PREP, LOG };
 #define CP_MEM_WRITE	61
 
 static io_connect_t conn;
+
+/* Print to the console and, once connected, to the kernel log (USB live log). */
+static void
+say(const char *fmt, ...)
+{
+	char line[512];
+	va_list ap;
+	va_start(ap, fmt);
+	int n = vsnprintf(line, sizeof(line), fmt, ap);
+	va_end(ap);
+	printf("rivergpu-test: %s\n", line);
+	if (conn && n > 0) {
+		IOConnectCallMethod(conn, LOG, NULL, 0, line, (size_t)(n < (int)sizeof(line) ? n : (int)sizeof(line) - 1),
+		    NULL, NULL, NULL, NULL);
+	}
+}
 
 static uint32_t
 pm4_parity(uint32_t v)
@@ -97,7 +114,7 @@ main(void)
 		dup2(fd, 2);
 	}
 	setvbuf(stdout, NULL, _IONBF, 0);
-	printf("rivergpu-test: PID %d waiting for RiverGPU\n", getpid());
+	say("PID %d waiting for RiverGPU", getpid());
 
 	io_service_t svc = 0;
 	for (int i = 0; i < 60 && !svc; i++) {
@@ -106,7 +123,7 @@ main(void)
 	}
 	if (!svc) goto idle;
 	kern_return_t kr = IOServiceOpen(svc, mach_task_self(), 0, &conn);
-	printf("rivergpu-test: IOServiceOpen -> %#x\n", kr);
+	say("IOServiceOpen -> %#x", kr);
 	if (kr) goto idle;
 
 	static const char *names[] = { "chip-id", "gpu-id", "gmem-size", "gmem-base", "va-start", "va-size", "fence" };
@@ -114,12 +131,12 @@ main(void)
 		uint64_t in = p, out = 0;
 		uint32_t n = 1;
 		kr = IOConnectCallScalarMethod(conn, GET_PARAM, &in, 1, &out, &n);
-		printf("rivergpu-test: param %s = %#llx (%#x)\n", names[p], out, kr);
+		say("param %s = %#llx (%#x)", names[p], out, kr);
 	}
 
 	struct bo tgt, cmd;
 	kern_return_t k1 = bo_new(64 * 1024, &tgt), k2 = bo_new(16 * 1024, &cmd);
-	printf("rivergpu-test: BOs target %u gpu %#llx cpu %p (%#x), cmd %u gpu %#llx cpu %p (%#x)\n",
+	say("BOs target %u gpu %#llx cpu %p (%#x), cmd %u gpu %#llx cpu %p (%#x)",
 	    tgt.handle, tgt.gpuva, (void *)tgt.cpu, k1, cmd.handle, cmd.gpuva, (void *)cmd.cpu, k2);
 	if (k1 || k2 || !tgt.cpu || !cmd.cpu) goto idle;
 
@@ -145,7 +162,7 @@ main(void)
 	double ms = ms_since(t0);
 	unsigned good = 0;
 	for (uint32_t i = 0; i < N; i++) good += tgt.cpu[i] == (0x75000000u | i);
-	printf("rivergpu-test: submit %#x fence %u wait %#x prep %#x in %.3f ms: %u/%u words written by the GPU\n",
+	say("submit %#x fence %u wait %#x prep %#x in %.3f ms: %u/%u words written by the GPU",
 	    kr, fence, kw, kp, ms, good, N);
 
 	/* Round-trip latency: 500 x (submit one command buffer, wait). */
@@ -159,7 +176,7 @@ main(void)
 		if (!submit(&one, one_len, &fence) && !call2(WAIT, fence, 1000)) ok++;
 	}
 	ms = ms_since(t0);
-	printf("rivergpu-test: 500 submit+wait round trips: %u ok, %.1f us each\n", ok, ms * 1000 / 500);
+	say("500 submit+wait round trips: %u ok, %.1f us each", ok, ms * 1000 / 500);
 
 	/* The kernel must refuse bad requests. */
 	struct submit_req bad = one;
@@ -169,14 +186,14 @@ main(void)
 	bad.cmd[0].offset = (uint32_t)cmd.size;
 	kern_return_t kb2 = submit(&bad, one_len, &fence);
 	kern_return_t kb3 = call2(CPU_PREP, 12345, 10);
-	printf("rivergpu-test: refused bad handle %#x, out-of-range offset %#x, bad prep %#x (expect non-zero)\n",
+	say("refused bad handle %#x, out-of-range offset %#x, bad prep %#x (expect non-zero)",
 	    kb1, kb2, kb3);
 
 	uint64_t h = cmd.handle;
 	kern_return_t kf = IOConnectCallScalarMethod(conn, BO_FREE, &h, 1, NULL, NULL);
-	printf("rivergpu-test: BO_FREE %#x; closing\n", kf);
+	say("BO_FREE %#x; closing", kf);
 	IOServiceClose(conn);
-	printf("rivergpu-test: done\n");
+	say("done");
 idle:
 	for (;;) {
 		sleep(3600);

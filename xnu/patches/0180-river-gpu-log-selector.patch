@@ -1,0 +1,41 @@
+diff --git a/iokit/Kernel/arm/RiverGPU.cpp b/iokit/Kernel/arm/RiverGPU.cpp
+index 00cd2ab..f024d6a 100644
+--- a/iokit/Kernel/arm/RiverGPU.cpp
++++ b/iokit/Kernel/arm/RiverGPU.cpp
+@@ -14,6 +14,7 @@
+  *                              nbos x u32 handle }  out { fence }
+  *   4 WAIT        scalar in  { fence, timeout_ms }
+  *   5 CPU_PREP    scalar in  { handle, timeout_ms }
++ *   6 LOG         struct in  { text }  (to the kernel log, i.e. the USB live log)
+  *
+  * IOConnectMapMemory64(type = handle) maps a buffer into the caller, cached
+  * (SUBMIT cleans every named buffer; CPU_PREP waits and invalidates). This
+@@ -26,6 +27,7 @@
+ #include <IOKit/IOLib.h>
+ #include <IOKit/IOKitKeys.h>
+ #include <sys/errno.h>
++#include <sys/proc.h>
+ 
+ #if defined(RIVER)
+ extern "C" {
+@@ -174,6 +176,20 @@ RiverGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
+ 		}
+ 		args->scalarOutputCount = 0;
+ 		return river_gpu_ioreturn(river_gpu_cpu_prep(this, (uint32_t)in[0], (uint32_t)in[1]));
++	case 6: {	/* LOG */
++		const char *t = (const char *)args->structureInput;
++		uint32_t len = args->structureInputSize;
++		if (args->structureInputDescriptor != NULL || t == NULL || len == 0 || len > 512) {
++			return kIOReturnBadArgument;
++		}
++		char line[513];
++		memcpy(line, t, len);
++		line[len] = 0;
++		char name[32];
++		proc_selfname(name, sizeof(name));
++		IOLog("RIVER GPU [%s]: %s\n", name, line);
++		return kIOReturnSuccess;
++	}
+ 	default:
+ 		return kIOReturnUnsupported;
+ 	}

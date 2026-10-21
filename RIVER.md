@@ -1382,3 +1382,27 @@ BO list + fence, wait) so Mesa freedreno can run in an iOS process.
   RiverGPU, reads params, maps two BOs, one submit of 256 CP_MEM_WRITEs as two
   command buffers + wait + cpu_prep + check from the user mapping, 500
   submit+wait round trips, refused bad requests, free, close; never exits.
+
+### r47 (0169; riverinit test boot): service and dev loop work, user results only on screen
+Kernel: full GPU bring-up + self-test (200 submits in 790 us), then
+`RiverGPUReady published for user clients`, `RiverGPU service registered`.
+river_files.c installed /usr/local/bin/rivergpu-test (its log line fell
+before the receiver's replay) and `riverinit` ran it as PID 1: libignition
+"hello from rivergpu-test.1", the shared cache mapped as for launchd (the
+"not in trust cache" lines appear for launchd too), then a sandbox check
+from rivergpu-test. Its own printf output goes to the screen console only,
+not the USB log; 0180 adds a LOG selector (6) that the test now also uses.
+
+### Upstream MakrSas/ios-topaz (18 commits since 590f001) imported
+Upstream reports CoreAnimation's **OpenGL ES renderer** on Mesa freedreno
+drawing SpringBoard/Settings on its Adreno 610 (HackiOS patches, not
+public). Imported (renumbered; both forks used 0127-0139): 0170 = topaz
+0128 IOKit quiesce, 0171-0177 + 0179 = topaz 0131-0137, 0139 SweetSurface
+for the GL renderer, 0178 = topaz 0138 empty IOAcceleratorES (QuartzCore
+polled for it 300 x 100 ms at every backboardd start; Metal skips one
+without MetalPluginName/MetalPluginClassName). All apply in order on river
+and compile. Cherry-picked 3eacb48 (mkadt: artwork-display-gamut sRGB,
+blank Safari pages). Not taken: 0127 sweetbusy (diagnostic, conflicts),
+0129/0130 Wi-Fi and the wlan ADT node (different Wi-Fi chip on river).
+Plan update: GL first (freedreno behind CA's GLES renderer, as upstream),
+Metal later.
