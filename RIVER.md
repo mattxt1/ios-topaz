@@ -1413,3 +1413,6 @@ repeatedly: topaz 0138's registration landed inside AppleCLCD::start's
 `#if !defined(RIVER)` sweet MDP/DSI block, so river never published it (no
 "empty IOAcceleratorES published" line). 0181 moves the block above that
 #if. The file drop and GPU service ran normally in this boot.
+User report on r48: home screen reached; swiping into the App Library works
+better with no visual glitches, and the keyboard now works and draws fully:
+the imported SweetSurface fixes (0171-0177, 0179) help the CPU renderer too.
