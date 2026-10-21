@@ -1363,3 +1363,22 @@ error interrupts, BO free + GPU VA reuse. Unmapped-write check still faults
 (FAR 0xf0000000).
 Next: the userland interface (BO create/map into a task/free, submit with
 BO list + fence, wait) so Mesa freedreno can run in an iOS process.
+
+### 0169 (prepared): RiverGPU IOKit user client + development file drop
+- iokit/Kernel/arm/RiverGPU.cpp: `RiverGPU` (matches IOResources once
+  river_gpu.c publishes `RiverGPUReady` after its self-test) and
+  `RiverGPUUserClient`: 0 GET_PARAM, 1 BO_NEW, 2 BO_FREE, 3 SUBMIT (struct:
+  ncmd, nbos, {handle, offset, size_dw}[], handles[]), 4 WAIT, 5 CPU_PREP;
+  IOConnectMapMemory64(type = handle) maps a buffer (cached; SUBMIT cleans
+  named buffers, CPU_PREP waits + invalidates). msm DRM model for Mesa.
+  Bring-up limits: one GPU address space for all clients, no command parsing.
+- bsd/dev/river_files.c + bsd_init hook: files packed by tools/river-files.py
+  (`RIVER_FILES="SRC:DEST[:MODE] ..."` in kbuild-river.sh, DEST under
+  /usr/local/ only, parents created via a RIVER-only mkdir1at wrapper) are
+  written to the rootrw root just before PID 1.
+- kern_exec.c: boot-arg `riverinit=/path` runs that program as PID 1 instead
+  of launchd (launchd if it fails).
+- tools/rivergpu-test.c (+ build-rivergpu-test.sh, ad-hoc signed): waits for
+  RiverGPU, reads params, maps two BOs, one submit of 256 CP_MEM_WRITEs as two
+  command buffers + wait + cpu_prep + check from the user mapping, 500
+  submit+wait round trips, refused bad requests, free, close; never exits.

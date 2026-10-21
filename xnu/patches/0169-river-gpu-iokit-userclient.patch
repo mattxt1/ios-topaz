@@ -1,0 +1,628 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
+index c1098f0..2da8bc6 100644
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -107,6 +107,7 @@ bsd/dev/memdev.c			standard
+ bsd/dev/sweet_ufs.c			standard
+ bsd/dev/river_emmc.c			standard
+ bsd/dev/river_gpu.c			standard
++bsd/dev/river_files.c			standard
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
+diff --git a/bsd/dev/river_files.c b/bsd/dev/river_files.c
+new file mode 100644
+index 0000000..6dbab3b
+--- /dev/null
++++ b/bsd/dev/river_files.c
+@@ -0,0 +1,122 @@
++/*
++ * river development file drop: install files carried in the RAM-only boot
++ * image onto the (rootrw=1, read-write) root filesystem just before PID 1
++ * starts, so test programs can change without reflashing userdata.
++ *
++ * tools/river-files.py packs "RIVFILES", u32 count, then count x
++ * { char path[112]; u32 mode; u32 off; u32 size } (offsets from the start)
++ * and tools/mkpayload.py --blob RiverFiles=... names it in /chosen/memory-map.
++ * Only absolute paths under /usr/local/ are accepted; missing parent
++ * directories are created (0755); files get the given mode, owner root:wheel.
++ */
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/fcntl.h>
++#include <sys/proc.h>
++#include <sys/kauth.h>
++#include <sys/vnode.h>
++#include <sys/vnode_internal.h>
++#include <sys/uio.h>
++#include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
++#include <machine/machine_routines.h>
++#include <libkern/libkern.h>
++
++void river_files_install(void);
++
++#if defined(RIVER)
++static bool
++river_has_dotdot(const char *p)
++{
++	for (; *p; p++) {
++		if (p[0] == '.' && p[1] == '.') {
++			return true;
++		}
++	}
++	return false;
++}
++
++extern int river_mkdir_kernel(const char *path, int mode);
++
++/* Create each missing parent directory of path (0755). */
++static void
++river_make_parents(const char *path)
++{
++	char dir[113];
++	for (size_t i = 1; path[i] && i < sizeof(dir) - 1; i++) {
++		if (path[i] != '/') {
++			continue;
++		}
++		memcpy(dir, path, i);
++		dir[i] = 0;
++		int err = river_mkdir_kernel(dir, 0755);
++		if (err && err != EEXIST) {
++			printf("RIVER FILES: mkdir %s: %d\n", dir, err);
++		}
++	}
++}
++
++static int
++river_file_write(const char *path, uint32_t mode, const uint8_t *data, uint32_t size)
++{
++	vfs_context_t ctx = vfs_context_kernel();
++	river_make_parents(path);
++	vnode_t vp = NULLVP;
++	int err = vnode_open(path, O_CREAT | O_TRUNC | FWRITE, (int)(mode & 07777), 0, &vp, ctx);
++	if (err) {
++		return err;
++	}
++	int resid = 0;
++	err = vn_rdwr(UIO_WRITE, vp, (caddr_t)(uintptr_t)data, (int)size, 0, UIO_SYSSPACE,
++	    IO_NOAUTH | IO_UNIT, vfs_context_ucred(ctx), &resid, vfs_context_proc(ctx));
++	if (!err && resid) {
++		err = EIO;
++	}
++	if (!err) {
++		struct vnode_attr va;
++		VATTR_INIT(&va);
++		VATTR_SET(&va, va_mode, mode & 07777);
++		err = vnode_setattr(vp, &va, ctx);
++	}
++	(void)VNOP_FSYNC(vp, MNT_WAIT, ctx);
++	vnode_close(vp, FWRITE, ctx);
++	return err;
++}
++#endif
++
++void
++river_files_install(void)
++{
++#if defined(RIVER)
++	DTEntry mm;
++	void const *prop;
++	unsigned int psize;
++	if (SecureDTLookupEntry(NULL, "/chosen/memory-map", &mm) != kSuccess ||
++	    SecureDTGetProperty(mm, "RiverFiles", &prop, &psize) != kSuccess || psize != 16) {
++		return;
++	}
++	uint64_t pa = ((const uint64_t *)prop)[0], size = ((const uint64_t *)prop)[1];
++	const uint8_t *c = (const uint8_t *)ml_static_ptovirt((vm_offset_t)pa);
++	if (c == NULL || size < 12 || memcmp(c, "RIVFILES", 8) != 0) {
++		printf("RIVER FILES: bad container at %#llx+%#llx\n", pa, size);
++		return;
++	}
++	uint32_t n = *(const uint32_t *)(c + 8);
++	for (uint32_t i = 0; i < n && 12 + (uint64_t)(i + 1) * 128 <= size; i++) {
++		const uint8_t *e = c + 12 + i * 128;
++		char path[113];
++		memcpy(path, e, 112);
++		path[112] = 0;
++		uint32_t mode = *(const uint32_t *)(e + 112), off = *(const uint32_t *)(e + 116);
++		uint32_t len = *(const uint32_t *)(e + 120);
++		if (strncmp(path, "/usr/local/", 11) != 0 || river_has_dotdot(path) ||
++		    (uint64_t)off + len > size) {
++			printf("RIVER FILES: refused %s\n", path);
++			continue;
++		}
++		int err = river_file_write(path, mode, c + off, len);
++		printf("RIVER FILES: %s (%u bytes, mode %o): %s (%d)\n", path, len, mode,
++		    err ? "FAILED" : "installed", err);
++	}
++#endif
++}
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index b8867ee..6be5b82 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -538,6 +538,8 @@ struct rgpu_bo {
+ 	vm_size_t size;
+ 	uint64_t gpuva;
+ 	bool used;
++	void *owner;		/* RiverGPUUserClient, NULL for kernel buffers */
++	uint32_t fence;		/* last submission that used it, 0 = none */
+ };
+ static struct rgpu_bo rgpu_bos[RGPU_MAX_BO];
+ static lck_grp_t *rgpu_grp;
+@@ -547,6 +549,8 @@ static vm_offset_t rgpu_fence_cpu;
+ static uint32_t rgpu_seqno;
+ static volatile uint32_t rgpu_irqs, rgpu_irq_err, rgpu_irq_last;
+ static int rgpu_fence_event;
++static bool rgpu_up;			/* service usable by user clients */
++extern void river_gpu_publish(void);	/* RiverGPU.cpp: publishResource("RiverGPUReady") */
+ 
+ static void
+ rgpu_irq(__unused void *arg)
+@@ -736,6 +740,161 @@ rgpu_service_test(vm_offset_t buf, uint64_t pa, uint64_t gva)
+ 	printf("RIVER GPU: BOs freed; reallocation got GPU %#llx (heap reuse %s)\n",
+ 	    again >= 0 ? rgpu_bos[again].gpuva : 0ULL, again >= 0 && rgpu_bos[again].gpuva == RGPU_HEAP_BASE ? "ok" : "unexpected");
+ 	if (again >= 0) rgpu_bo_free(again);
++	if (done && good == N) {
++		rgpu_up = true;
++		river_gpu_publish();
++		printf("RIVER GPU: RiverGPUReady published for user clients\n");
++	}
++}
++
++/*
++ * Interface for the RiverGPU IOKit user client (iokit/Kernel/arm/RiverGPU.cpp).
++ * Buffers belong to the user client that created them; handles are slot + 1.
++ * Cache maintenance follows msm's cached BOs: every buffer named in a submit
++ * is cleaned before the GPU sees it, and cpu_prep waits for the buffer's last
++ * fence and invalidates before the CPU reads GPU output.
++ * Bring-up limits: one GPU address space shared by all clients (no
++ * per-process page tables yet) and command streams are not parsed.
++ */
++struct river_gpu_cmd {
++	uint32_t handle, offset, size_dw;
++};
++
++bool river_gpu_is_ready(void);
++bool
++river_gpu_is_ready(void)
++{
++	return rgpu_up;
++}
++
++uint64_t river_gpu_param(uint32_t param);
++uint64_t
++river_gpu_param(uint32_t param)
++{
++	switch (param) {
++	case 0: return 0x05000600;			/* chip id */
++	case 1: return 506;				/* GPU id */
++	case 2: return (128 + 8) * 1024;		/* GMEM size */
++	case 3: return 0x00100000;			/* GMEM base (UCHE range) */
++	case 4: return RGPU_HEAP_BASE;			/* GPU VA heap start */
++	case 5: return RGPU_HEAP_END - RGPU_HEAP_BASE;	/* GPU VA heap size */
++	case 6: return rgpu_fence_read();		/* last completed fence */
++	default: return ~0ULL;
++	}
++}
++
++static struct rgpu_bo *
++rgpu_bo_get(void *owner, uint32_t handle)
++{
++	if (handle == 0 || handle > RGPU_MAX_BO) return NULL;
++	struct rgpu_bo *b = &rgpu_bos[handle - 1];
++	return b->used && b->owner == owner ? b : NULL;
++}
++
++uint32_t river_gpu_bo_new(void *owner, uint64_t size, uint64_t *gpuva, uint64_t *rsize);
++uint32_t
++river_gpu_bo_new(void *owner, uint64_t size, uint64_t *gpuva, uint64_t *rsize)
++{
++	if (!rgpu_up || size == 0 || size > 256ULL * 1024 * 1024) return 0;
++	int slot = rgpu_bo_alloc((vm_size_t)size);
++	if (slot < 0) return 0;
++	rgpu_bos[slot].owner = owner;
++	*gpuva = rgpu_bos[slot].gpuva;
++	*rsize = rgpu_bos[slot].size;
++	return (uint32_t)slot + 1;
++}
++
++int river_gpu_bo_kva(void *owner, uint32_t handle, vm_offset_t *kva, uint64_t *size);
++int
++river_gpu_bo_kva(void *owner, uint32_t handle, vm_offset_t *kva, uint64_t *size)
++{
++	struct rgpu_bo *b = rgpu_bo_get(owner, handle);
++	if (!b) return EINVAL;
++	*kva = b->va;
++	*size = b->size;
++	return 0;
++}
++
++static bool
++rgpu_fence_done(uint32_t f)
++{
++	return f == 0 || (int32_t)(rgpu_fence_read() - f) >= 0;
++}
++
++int river_gpu_bo_free(void *owner, uint32_t handle);
++int
++river_gpu_bo_free(void *owner, uint32_t handle)
++{
++	struct rgpu_bo *b = rgpu_bo_get(owner, handle);
++	if (!b) return EINVAL;
++	if (!rgpu_fence_done(b->fence) && !rgpu_wait(b->fence, 2000)) return EBUSY;
++	rgpu_bo_free((int)(handle - 1));
++	return 0;
++}
++
++int river_gpu_submit(void *owner, const struct river_gpu_cmd *cmd, uint32_t ncmd,
++    const uint32_t *bos, uint32_t nbos, uint32_t *fence);
++int
++river_gpu_submit(void *owner, const struct river_gpu_cmd *cmd, uint32_t ncmd,
++    const uint32_t *bos, uint32_t nbos, uint32_t *fence)
++{
++	enum { MAXCMD = 64 };
++	uint64_t ib[MAXCMD];
++	uint32_t dw[MAXCMD];
++	if (!rgpu_up || ncmd == 0 || ncmd > MAXCMD || nbos > RGPU_MAX_BO) return EINVAL;
++	for (uint32_t i = 0; i < ncmd; i++) {
++		struct rgpu_bo *b = rgpu_bo_get(owner, cmd[i].handle);
++		if (!b || (cmd[i].offset & 3) || cmd[i].size_dw == 0 || cmd[i].size_dw > 0xfffff ||
++		    (uint64_t)cmd[i].offset + cmd[i].size_dw * 4ULL > b->size)
++			return EINVAL;
++		ib[i] = b->gpuva + cmd[i].offset;
++		dw[i] = cmd[i].size_dw;
++	}
++	for (uint32_t i = 0; i < nbos; i++)
++		if (!rgpu_bo_get(owner, bos[i])) return EINVAL;
++	for (uint32_t i = 0; i < ncmd; i++) {
++		struct rgpu_bo *b = rgpu_bo_get(owner, cmd[i].handle);
++		flush_dcache64((addr64_t)b->va, (unsigned)b->size, FALSE);
++	}
++	for (uint32_t i = 0; i < nbos; i++) {
++		struct rgpu_bo *b = rgpu_bo_get(owner, bos[i]);
++		flush_dcache64((addr64_t)b->va, (unsigned)b->size, FALSE);
++	}
++	uint32_t seq = rgpu_submit(ib, dw, ncmd);
++	for (uint32_t i = 0; i < ncmd; i++) rgpu_bo_get(owner, cmd[i].handle)->fence = seq;
++	for (uint32_t i = 0; i < nbos; i++) rgpu_bo_get(owner, bos[i])->fence = seq;
++	*fence = seq;
++	return 0;
++}
++
++int river_gpu_wait(uint32_t fence, uint32_t ms);
++int
++river_gpu_wait(uint32_t fence, uint32_t ms)
++{
++	return rgpu_wait(fence, ms) ? 0 : ETIMEDOUT;
++}
++
++int river_gpu_cpu_prep(void *owner, uint32_t handle, uint32_t ms);
++int
++river_gpu_cpu_prep(void *owner, uint32_t handle, uint32_t ms)
++{
++	struct rgpu_bo *b = rgpu_bo_get(owner, handle);
++	if (!b) return EINVAL;
++	if (!rgpu_fence_done(b->fence) && !rgpu_wait(b->fence, ms)) return ETIMEDOUT;
++	flush_dcache64((addr64_t)b->va, (unsigned)b->size, FALSE);
++	return 0;
++}
++
++/* The client went away: wait for its work, then free its buffers. */
++void river_gpu_owner_release(void *owner);
++void
++river_gpu_owner_release(void *owner)
++{
++	for (int i = 0; i < RGPU_MAX_BO; i++) {
++		if (!rgpu_bos[i].used || rgpu_bos[i].owner != owner) continue;
++		if (!rgpu_fence_done(rgpu_bos[i].fence)) (void)rgpu_wait(rgpu_bos[i].fence, 2000);
++		rgpu_bo_free(i);
++	}
+ }
+ 
+ void river_gpu_cp_start(void);
+diff --git a/bsd/kern/bsd_init.c b/bsd/kern/bsd_init.c
+index 6eaccfe..15be531 100644
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1104,6 +1104,11 @@ bsdinit_task(void)
+ 
+ 	bsd_init_kprintf("bsd_do_post - done");
+ 
++#if defined(RIVER)
++	/* Development files carried in the RAM-only boot image (river_files.c). */
++	extern void river_files_install(void);
++	river_files_install();
++#endif
+ 	load_init_program(p);
+ 	lock_trace = 1;
+ }
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index 68612db..a2dbeec 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -6884,6 +6884,21 @@ load_init_program(proc_t p)
+ 	(void) memorystatus_init_at_boot_snapshot();
+ #endif /* CONFIG_MEMORYSTATUS */
+ 
++#if defined(RIVER)
++	/*
++	 * riverinit=/path runs a development program as PID 1 instead of launchd
++	 * (e.g. a GPU test installed by river_files.c); launchd if it fails.
++	 */
++	char river_init[128];
++	if (PE_parse_boot_argn("riverinit", river_init, sizeof(river_init)) && river_init[0] == '/') {
++		printf("load_init_program: attempting to load %s\n", river_init);
++		error = load_init_program_at_path(p, (user_addr_t)scratch_addr, river_init);
++		if (!error) {
++			return;
++		}
++		printf("load_init_program: failed loading %s: errno %d\n", river_init, error);
++	}
++#endif
+ #if DEBUG || DEVELOPMENT
+ 	/* Check for boot-arg suffix first */
+ 	char launchd_suffix[64];
+diff --git a/bsd/vfs/vfs_syscalls.c b/bsd/vfs/vfs_syscalls.c
+index 90e68bb..41cb079 100644
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -9846,6 +9846,19 @@ out:
+  *                !0                      Not success
+  *
+  */
++#if defined(RIVER)
++/* river_files.c: create a directory from the kernel (path in kernel space). */
++int river_mkdir_kernel(const char *path, int mode);
++int
++river_mkdir_kernel(const char *path, int mode)
++{
++	struct vnode_attr va;
++	VATTR_INIT(&va);
++	VATTR_SET(&va, va_mode, mode & ACCESSPERMS);
++	return mkdir1at(vfs_context_kernel(), CAST_USER_ADDR_T(path), &va, AT_FDCWD, UIO_SYSSPACE);
++}
++#endif
++
+ int
+ mkdir_extended(proc_t p, struct mkdir_extended_args *uap, __unused int32_t *retval)
+ {
+diff --git a/iokit/Kernel/arm/RiverGPU.cpp b/iokit/Kernel/arm/RiverGPU.cpp
+new file mode 100644
+index 0000000..00cd2ab
+--- /dev/null
++++ b/iokit/Kernel/arm/RiverGPU.cpp
+@@ -0,0 +1,200 @@
++/*
++ * RiverGPU: user-space interface to the river (Moto G7, SDM632) Adreno 506
++ * kernel GPU service in bsd/dev/river_gpu.c.
++ *
++ * The class matches IOResources once river_gpu.c publishes the
++ * "RiverGPUReady" resource (GPU powered, zap shader loaded, CP running, its
++ * self-test passed). Clients open it with IOServiceOpen(type 0) and use:
++ *
++ *   0 GET_PARAM   scalar in  { param }               out { value }
++ *   1 BO_NEW      scalar in  { size }                out { handle, gpuva, size }
++ *   2 BO_FREE     scalar in  { handle }
++ *   3 SUBMIT      struct in  { u32 ncmd, u32 nbos,
++ *                              ncmd x { u32 handle, u32 offset, u32 size_dw },
++ *                              nbos x u32 handle }  out { fence }
++ *   4 WAIT        scalar in  { fence, timeout_ms }
++ *   5 CPU_PREP    scalar in  { handle, timeout_ms }
++ *
++ * IOConnectMapMemory64(type = handle) maps a buffer into the caller, cached
++ * (SUBMIT cleans every named buffer; CPU_PREP waits and invalidates). This
++ * is the msm DRM model (GEM_NEW / GEM_INFO / GEM_SUBMIT / WAIT_FENCE /
++ * GEM_CPU_PREP) that Mesa's freedreno expects, behind an IOKit connection.
++ */
++#include <IOKit/IOService.h>
++#include <IOKit/IOUserClient.h>
++#include <IOKit/IOMemoryDescriptor.h>
++#include <IOKit/IOLib.h>
++#include <IOKit/IOKitKeys.h>
++#include <sys/errno.h>
++
++#if defined(RIVER)
++extern "C" {
++struct river_gpu_cmd {
++	uint32_t handle, offset, size_dw;
++};
++bool river_gpu_is_ready(void);
++uint64_t river_gpu_param(uint32_t param);
++uint32_t river_gpu_bo_new(void *owner, uint64_t size, uint64_t *gpuva, uint64_t *rsize);
++int river_gpu_bo_kva(void *owner, uint32_t handle, vm_offset_t *kva, uint64_t *size);
++int river_gpu_bo_free(void *owner, uint32_t handle);
++int river_gpu_submit(void *owner, const struct river_gpu_cmd *cmd, uint32_t ncmd,
++    const uint32_t *bos, uint32_t nbos, uint32_t *fence);
++int river_gpu_wait(uint32_t fence, uint32_t ms);
++int river_gpu_cpu_prep(void *owner, uint32_t handle, uint32_t ms);
++void river_gpu_owner_release(void *owner);
++void river_gpu_publish(void);
++}
++
++void
++river_gpu_publish(void)
++{
++	IOService::publishResource("RiverGPUReady");
++}
++
++class RiverGPU : public IOService {
++	OSDeclareDefaultStructors(RiverGPU);
++public:
++	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
++};
++
++OSDefineMetaClassAndStructors(RiverGPU, IOService);
++
++bool
++RiverGPU::start(IOService *provider)
++{
++	if (!river_gpu_is_ready() || !IOService::start(provider)) {
++		return false;
++	}
++	setProperty(kIOUserClientClassKey, "RiverGPUUserClient");
++	setProperty("chip-id", river_gpu_param(0), 32);
++	setProperty("gpu-id", river_gpu_param(1), 32);
++	registerService();
++	IOLog("RIVER GPU: RiverGPU service registered\n");
++	return true;
++}
++
++class RiverGPUUserClient : public IOUserClient {
++	OSDeclareDefaultStructors(RiverGPUUserClient);
++public:
++	IOReturn clientClose(void) APPLE_KEXT_OVERRIDE;
++	IOReturn externalMethod(uint32_t selector, IOExternalMethodArguments *args,
++	    IOExternalMethodDispatch *dispatch, OSObject *target,
++	    void *reference) APPLE_KEXT_OVERRIDE;
++	IOReturn clientMemoryForType(UInt32 type, IOOptionBits *options,
++	    IOMemoryDescriptor **memory) APPLE_KEXT_OVERRIDE;
++};
++
++OSDefineMetaClassAndStructors(RiverGPUUserClient, IOUserClient);
++
++IOReturn
++RiverGPUUserClient::clientClose(void)
++{
++	river_gpu_owner_release(this);
++	terminate();
++	return kIOReturnSuccess;
++}
++
++static IOReturn
++river_gpu_ioreturn(int err)
++{
++	switch (err) {
++	case 0: return kIOReturnSuccess;
++	case ETIMEDOUT: return kIOReturnTimeout;
++	case EBUSY: return kIOReturnBusy;
++	case ENOMEM: return kIOReturnNoMemory;
++	default: return kIOReturnBadArgument;
++	}
++}
++
++IOReturn
++RiverGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments *args,
++    __unused IOExternalMethodDispatch *dispatch, __unused OSObject *target,
++    __unused void *reference)
++{
++	const uint64_t *in = args->scalarInput;
++	uint32_t nin = args->scalarInputCount, nout = args->scalarOutputCount;
++
++	switch (selector) {
++	case 0:		/* GET_PARAM */
++		if (nin != 1 || nout < 1) {
++			return kIOReturnBadArgument;
++		}
++		args->scalarOutput[0] = river_gpu_param((uint32_t)in[0]);
++		args->scalarOutputCount = 1;
++		return kIOReturnSuccess;
++	case 1: {	/* BO_NEW */
++		if (nin != 1 || nout < 3) {
++			return kIOReturnBadArgument;
++		}
++		uint64_t gpuva = 0, size = 0;
++		uint32_t h = river_gpu_bo_new(this, in[0], &gpuva, &size);
++		if (h == 0) {
++			return kIOReturnNoMemory;
++		}
++		args->scalarOutput[0] = h;
++		args->scalarOutput[1] = gpuva;
++		args->scalarOutput[2] = size;
++		args->scalarOutputCount = 3;
++		return kIOReturnSuccess;
++	}
++	case 2:		/* BO_FREE */
++		if (nin != 1) {
++			return kIOReturnBadArgument;
++		}
++		args->scalarOutputCount = 0;
++		return river_gpu_ioreturn(river_gpu_bo_free(this, (uint32_t)in[0]));
++	case 3: {	/* SUBMIT */
++		const void *buf = args->structureInput;
++		uint32_t len = args->structureInputSize;
++		if (args->structureInputDescriptor != NULL || buf == NULL || len < 8 || nout < 1) {
++			return kIOReturnBadArgument;
++		}
++		const uint32_t *w = (const uint32_t *)buf;
++		uint64_t need = 8 + (uint64_t)w[0] * sizeof(struct river_gpu_cmd) + (uint64_t)w[1] * 4;
++		if (need != len) {
++			return kIOReturnBadArgument;
++		}
++		const struct river_gpu_cmd *cmd = (const struct river_gpu_cmd *)(w + 2);
++		const uint32_t *bos = (const uint32_t *)(cmd + w[0]);
++		uint32_t fence = 0;
++		IOReturn r = river_gpu_ioreturn(river_gpu_submit(this, cmd, w[0], bos, w[1], &fence));
++		args->scalarOutput[0] = fence;
++		args->scalarOutputCount = 1;
++		return r;
++	}
++	case 4:		/* WAIT */
++		if (nin != 2) {
++			return kIOReturnBadArgument;
++		}
++		args->scalarOutputCount = 0;
++		return river_gpu_ioreturn(river_gpu_wait((uint32_t)in[0], (uint32_t)in[1]));
++	case 5:		/* CPU_PREP */
++		if (nin != 2) {
++			return kIOReturnBadArgument;
++		}
++		args->scalarOutputCount = 0;
++		return river_gpu_ioreturn(river_gpu_cpu_prep(this, (uint32_t)in[0], (uint32_t)in[1]));
++	default:
++		return kIOReturnUnsupported;
++	}
++}
++
++IOReturn
++RiverGPUUserClient::clientMemoryForType(UInt32 type, IOOptionBits *options,
++    IOMemoryDescriptor **memory)
++{
++	vm_offset_t kva = 0;
++	uint64_t size = 0;
++	if (river_gpu_bo_kva(this, type, &kva, &size) != 0) {
++		return kIOReturnBadArgument;
++	}
++	IOMemoryDescriptor *md = IOMemoryDescriptor::withAddressRange((mach_vm_address_t)kva,
++	    size, kIODirectionInOut, kernel_task);
++	if (md == NULL) {
++		return kIOReturnNoMemory;
++	}
++	*options = 0;
++	*memory = md;
++	return kIOReturnSuccess;
++}
++#endif /* RIVER */
+diff --git a/iokit/KernelConfigTables.cpp b/iokit/KernelConfigTables.cpp
+index db584af..2d94495 100644
+--- a/iokit/KernelConfigTables.cpp
++++ b/iokit/KernelConfigTables.cpp
+@@ -78,6 +78,15 @@ const char * gIOKernelConfigTables =
+     "     'IOProviderClass' = IOResources;"
+     "     'IOMatchCategory' = SweetHIDTouch;"
+     "   },"
++#if defined(RIVER)
++    /* bsd/dev/river_gpu.c publishes RiverGPUReady once the Adreno runs. */
++    "   {"
++    "     'IOClass'         = RiverGPU;"
++    "     'IOProviderClass' = IOResources;"
++    "     'IOResourceMatch' = RiverGPUReady;"
++    "     'IOMatchCategory' = RiverGPU;"
++    "   },"
++#endif /* RIVER */
+ #if !defined(RIVER)
+     "   {"
+     "     'IOClass'         = SweetBattery;"
+diff --git a/iokit/conf/files.arm64 b/iokit/conf/files.arm64
+index 8b2b868..62f2df9 100644
+--- a/iokit/conf/files.arm64
++++ b/iokit/conf/files.arm64
+@@ -13,6 +13,7 @@ iokit/Kernel/arm/SweetCPU.cpp                                    optional iokitc
+ iokit/Kernel/arm/TopazModem.cpp                                  optional iokitcpp
+ iokit/Kernel/arm/SweetEntitlements.cpp                           optional iokitcpp
+ iokit/Kernel/arm/SweetKeyStore.cpp                               optional iokitcpp
++iokit/Kernel/arm/RiverGPU.cpp                                    optional iokitcpp
+ iokit/Kernel/arm/SweetWatchdog.cpp                               optional iokitcpp
+ iokit/Kernel/arm/SweetSurface.cpp                                optional iokitcpp
+ iokit/Kernel/arm/SweetFramebuffer.cpp                            optional iokitcpp
