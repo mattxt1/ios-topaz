@@ -915,3 +915,10 @@ stride 4352. **User: home screen shown correctly.** Display off -> splash
 fade and touch wake -> flip buffers both work (+140.9 / +142.3 / +142.8 s).
 The 24bpp conversion no longer runs per frame. eMMC (ADMA2) bench in the
 live log: 1 MiB multi-block **39495 KiB/s** (PIO was 11569).
+
+### r25 (0147 DCS backlight, riverbl=1; CI build of 50c7902): works
+DSI0 CTRL 0x1f3 (video mode, 4 lanes), TRIG 0x4, CMD DMA ctrl 0x14000000.
+`panel level 0: done` at display off (+86.5 s); user: backlight turns off
+and back on with the display (lock screen, wake). The off/on blink between
+the two Apple logos during boot is iOS's own display power sequence, now
+visible because the backlight follows it.
