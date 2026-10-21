@@ -1,0 +1,50 @@
+diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
+index 92845cb..07b1d1f 100644
+--- a/bsd/dev/river_emmc.c
++++ b/bsd/dev/river_emmc.c
+@@ -160,6 +160,9 @@ extern bool river_irq_register(uint32_t intid, bool edge, void (*fn)(void *), vo
+ static vm_offset_t hc, core, gcc;
+ static bool ready;
+ static bool write_enabled;
++static bool write_verify; /* boot-arg rivermmcwriteverify=1: CMD17 after every CMD24 */
++static uint64_t write_verify_count, write_verify_bad;
++static uint32_t write_verify_block[BLOCK / 4];
+ static int userdata_minor;
+ static uint32_t block[BLOCK / 4];
+ static uint32_t mblock[MULTI_MAX * BLOCK / 4];	/* multi-block read bounce */
+@@ -564,6 +567,22 @@ river_emmc_write_block(uint64_t lba, const void *src)
+ 			return EIO;
+ 		}
+ 		if ((status & (1U << 8)) && ((status >> 9) & 0xf) == 4) {
++			if (!write_verify) {
++				return 0;
++			}
++			error = river_emmc_read_block(lba, write_verify_block);
++			write_verify_count++;
++			if (error || memcmp(src, write_verify_block, BLOCK) != 0) {
++				write_verify_bad++;
++				printf("RIVER eMMC: WRITE VERIFY LBA %llu %s (%d), %llu/%llu bad\n",
++				    lba, error ? "read failed" : "mismatch", error,
++				    write_verify_bad, write_verify_count);
++				return error ? error : EIO;
++			}
++			if ((write_verify_count % 2048) == 0) {
++				printf("RIVER eMMC: write verify %llu blocks, %llu bad\n",
++				    write_verify_count, write_verify_bad);
++			}
+ 			return 0;
+ 		}
+ 		delay(100);
+@@ -1475,6 +1494,12 @@ river_emmc_probe(void)
+ 	} else if (rw) {
+ 		printf("RIVER eMMC: rivermmcrw requested but userdata geometry did not match; read-only\n");
+ 	}
++	uint32_t wverify = 0;
++	write_verify = write_enabled && PE_parse_boot_argn("rivermmcwriteverify", &wverify,
++	    sizeof(wverify)) && wverify == 1;
++	if (write_verify) {
++		printf("RIVER eMMC: read back every CMD24 block\n");
++	}
+ 	if (river_emmc_speed_up()) {
+ 		river_emmc_fast_bus();
+ 		river_emmc_dma_init();

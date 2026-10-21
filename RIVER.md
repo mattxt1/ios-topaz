@@ -993,3 +993,11 @@ Patch 0151 extends the existing SWEET crash line only for SIGBUS with
 `pc == far`: ESR, instruction at LR-4, x0-x28, and 64 bytes at x0/x8/x16
 when readable. It compiled locally for river and topaz; a CI kernel build
 and phone test remain. Crash memory stays only in private local logs.
+
+Patch 0152 (prepared, not yet phone-tested) adds `rivermmcwriteverify=1`:
+after each successful userdata CMD24 reaches transfer state, issue CMD17
+for the same LBA and compare all 512 bytes, returning EIO on mismatch. It
+also counts verified and bad blocks. The switch defaults off and remains
+under the existing userdata-only write guard and eMMC mutex. A local river
+object compile passed. This is a separate storage experiment after the
+CPU-count and no-swap boots.
