@@ -1406,3 +1406,10 @@ blank Safari pages). Not taken: 0127 sweetbusy (diagnostic, conflicts),
 0129/0130 Wi-Fi and the wlan ADT node (different Wi-Fi chip on river).
 Plan update: GL first (freedreno behind CA's GLES renderer, as upstream),
 Metal later.
+
+### r48 (0170-0180 imports, GUI boot): IOAcceleratorES still missing on river
+backboardd logged `IOK backboardd: matching IOAcceleratorES -> 0 found`
+repeatedly: topaz 0138's registration landed inside AppleCLCD::start's
+`#if !defined(RIVER)` sweet MDP/DSI block, so river never published it (no
+"empty IOAcceleratorES published" line). 0181 moves the block above that
+#if. The file drop and GPU service ran normally in this boot.
