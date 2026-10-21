@@ -1,0 +1,68 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 6428d40..dd23ac8 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -462,7 +462,11 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
+ 		 * topaz: fade in cached memory and flip whole frames to the MDP.
+ 		 * Fading the uncached boot framebuffer in place crawled down the panel.
+ 		 */
++#if defined(RIVER)
++		if (false) {
++#else
+ 		if (fb->fDsi != NULL) {
++#endif
+ 			/* the panel is dark (DCS 0x51 0); keep the last frame */
+ 			IOLockUnlock(fb->fLock);
+ 			sender->setTimeoutUS(SWEET_FB_VSYNC_US);
+@@ -1164,6 +1168,31 @@ AppleCLCD::riverMdpSetup(void)
+ 			ctl = r;
+ 		}
+ 	}
++	/*
++	 * Backlight (river DT: tianma_n panel, bl_ctrl_dcs, 2-byte DCS 0x51, levels
++	 * 1..0xfff): with riverbl=1 the topaz DSI command-DMA sender drives DSI0
++	 * (0x1a94000; same 6G offsets in Linux mdss_dsi_host.c) to set the level to
++	 * 0 when iOS turns the display off and back to 0x999 when it turns it on.
++	 */
++	int bl = 0;
++	PE_parse_boot_argn("riverbl", &bl, sizeof(bl));
++	if (bl) {
++		fDsi = (volatile uint8_t *)river_mdp_map(0x1a94000ULL);
++		fDsiBuf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
++		    kIODirectionInOut | kIOMemoryPhysicallyContiguous, page_size, 0x00000000fffff000ull);
++		fDsiBufPhys = fDsiBuf ? fDsiBuf->getPhysicalSegment(0, NULL, kIOMemoryMapperNone) : 0;
++		fBlLock = IOLockAlloc();
++		fBlLevel = 0x999;
++		fBlSent = ~0u;
++		fBlCall = thread_call_allocate(&AppleCLCD::blWork, this);
++		if (fDsi == NULL || fDsiBuf == NULL || !fDsiBufPhys || fBlLock == NULL) {
++			fDsi = NULL;
++		}
++		size_t l = strlen(river_mdp_note);
++		snprintf(river_mdp_note + l, sizeof(river_mdp_note) - l, "; DSI0 ctrl %#x trig %#x dma %#x -> DCS backlight %s",
++		    fDsi ? *(volatile uint32_t *)(fDsi + 0x004) : 0, fDsi ? *(volatile uint32_t *)(fDsi + 0x084) : 0,
++		    fDsi ? *(volatile uint32_t *)(fDsi + 0x03c) : 0, fDsi ? "on" : "unavailable");
++	}
+ 	int on = 0;
+ 	PE_parse_boot_argn("riverscan", &on, sizeof(on));
+ 	if (!on || pipe == NULL || ctl == NULL || pipe[0x24 / 4] != SWEET_EARLY_FB_STRIDE) {
+@@ -1411,6 +1440,11 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
+ 			uint32_t level = fFB->fBlLevel;
+ 			IOLockUnlock(fFB->fLock);
+ 			if (changed && fFB->fDsi != NULL) {
++#if defined(RIVER)
++				/* river (bl_ctrl_dcs): backlight to 0 / back, panel stays in video mode */
++				fFB->fBlSent = off ? 0 : level;
++				fFB->setPanelLevel(off ? 0 : level);
++#else
+ 				if (off) {
+ 					fFB->setPanelOn(false);
+ 				} else {
+@@ -1418,6 +1452,7 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
+ 					fFB->fBlSent = level;
+ 					fFB->setPanelLevel(level);
+ 				}
++#endif
+ 			}
+ 			IOLog("SWEET FB: display %s\n", off ? "off" : "on");
+ 		}
