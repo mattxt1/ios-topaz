@@ -1084,3 +1084,9 @@ gfx3d branch enabled (0x80004f01). Boot continued normally. GX's
 core_root_clk is clk_gfx3d_clk_src (dt-bindings 0x917f76ef), which Linux
 force-enables (rcg_set_force_enable: CMD_RCGR ROOT_EN bit 1) before the
 GDSC; 0155 does the same.
+
+### r33 (0155; CI build of c64a597): root clock on, GX still off
+`GFX3D root forced on, cmd 0x2` (ROOT_EN, ROOT_OFF clear). gdsc_oxili_gx
+still 0x8282800, GFX LDO status 0 (no BHS_EN_REST_ACK). 0156 powers the
+head switch under software control as switch_mode_to_bhs() does and logs
+whether BHS_EN_REST_ACK arrives, before enabling the GX GDSC.

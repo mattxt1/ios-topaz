@@ -1,0 +1,43 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 2c2f26c..75fb029 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -188,14 +188,31 @@ river_gpu_power_on(vm_offset_t g, vm_offset_t ldo)
+  ri_wr(ldo, 0x08, 0x00000000);
+  ri_wr(ldo, 0x0c, 0x0000c3fc);
+  ri_wr(ldo, 0x14, 0x004b1102);
+- ctl = ri_rd(ldo, 0x1c);			/* enable_bhs_mode */
+- ctl |= (1u << 4); ri_wr(ldo, 0x1c, ctl);		/* LDO_UNDER_SW_CTRL */
++ /*
++  * r33: with the head switch (BHS) handed to the GDSC (enable_bhs_mode) GX
++  * never powered and PWRSWITCH_STATUS stayed 0. Power the BHS under software
++  * control instead, as msm_gfx_ldo.c switch_mode_to_bhs() does: ack override,
++  * BHS as source, LDO out of power-down, SW control, BHS_EN_FEW then
++  * BHS_EN_REST, wait for BHS_EN_REST_ACK, then LDO bypass + pull-down. The
++  * BHS stays under software control (not exposed to the GDSC) for this test.
++  */
++ ctl = ri_rd(ldo, 0x1c);
++ ctl |= (1u << 0); ri_wr(ldo, 0x1c, ctl);	/* BHS_UNDER_SW_CTL */
++ ctl |= (1u << 8); ri_wr(ldo, 0x1c, ctl);	/* ACK_SW_OVR: fake ack to gdsc */
+  ctl &= ~(1u << 9); ri_wr(ldo, 0x1c, ctl);	/* power source: BHS */
+- ctl &= ~(1u << 30); ri_wr(ldo, 0x1c, ctl);	/* CPR_BYPASS_IN_LDO_MODE */
+- ctl &= ~(1u << 1); ri_wr(ldo, 0x1c, ctl);	/* BHS_EN_FEW */
+- ctl &= ~(1u << 2); ri_wr(ldo, 0x1c, ctl);	/* BHS_EN_REST */
+- ctl &= ~(1u << 0); ri_wr(ldo, 0x1c, ctl);	/* BHS under GDSC control */
+- printf("RIVER GPU: LDO BHS mode, ctrl %#x\n", ri_rd(ldo, 0x1c));
++ ctl &= ~(1u << 5); ri_wr(ldo, 0x1c, ctl);	/* LDO stays on */
++ ctl |= (1u << 4); ri_wr(ldo, 0x1c, ctl);	/* LDO_UNDER_SW_CTRL */
++ ctl |= (1u << 1); ri_wr(ldo, 0x1c, ctl);	/* BHS_EN_FEW */
++ ctl |= (1u << 2); ri_wr(ldo, 0x1c, ctl);	/* BHS_EN_REST */
++ unsigned t = 0;
++ for (; t < 50 && !(ri_rd(ldo, 0x28) & (1u << 1)); t++) delay(10);
++ uint32_t st = ri_rd(ldo, 0x28);
++ ctl |= (1u << 6); ri_wr(ldo, 0x1c, ctl);	/* LDO_BYPASS */
++ ctl |= (1u << 5); ri_wr(ldo, 0x1c, ctl);	/* pull-down LDO */
++ ctl &= ~(1u << 8); ri_wr(ldo, 0x1c, ctl);	/* drop the fake ack */
++ ctl &= ~(1u << 30); ri_wr(ldo, 0x1c, ctl);	/* CPR in BHS mode */
++ printf("RIVER GPU: BHS under SW control, status %#x after %u x 10 us (%s), ctrl %#x\n",
++     st, t, (st & 2) ? "BHS_EN_REST_ACK" : "NO ACK", ri_rd(ldo, 0x1c));
+  ri_wr(g, 0x04, (5u << 8) | 5u);		/* GFX3D CFG: src 5, div 3 */
+  ri_wr(g, 0x00, ri_rd(g, 0x00) | 1u);		/* update */
+  for (unsigned i = 0; i < 1000 && (ri_rd(g, 0x00) & 1u); i++) delay(1);
