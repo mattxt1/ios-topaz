@@ -1,5 +1,13 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River status (2026-10-21) — current
+
+River boots iOS 16.7.16 to an interactive home screen in ~70 s (r28; see
+RIVER.md from "r14 live USB, Gold clock fix" onward and the handoff folder's
+HANDOFF.md "START HERE"). Next work: (1) intermittent user-memory corruption
+crash (processes branch into their own malloc heap), (2) Adreno 506 GPU
+groundwork. Live log: tools/river-receiver.sh; boot args in RIVER.md.
+
 ## River side port handoff (2026-10-19)
 
 This `river-bringup` branch is the Moto G7 river port. The handoff folder's
