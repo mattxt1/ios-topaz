@@ -1,0 +1,72 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 543772a..0128ffd 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -1057,22 +1057,58 @@ AppleCLCD::present(const uint8_t *rec)
+ }
+ 
+ #if defined(RIVER)
+-/* Strip alpha from the composed BGRA frame into the existing 3-byte scanout.
++/*
++ * Strip alpha from the composed BGRA frame into the existing 3-byte scanout.
+  * Bounds are fixed to the measured ABL geometry; the last store is below
+- * 0x90001000 + 3240 * 2270, inside the reserved splash region. */
++ * 0x90001000 + 3240 * 2270, inside the reserved splash region.
++ *
++ * Eight pixels become three 64-bit stores (rows are 8-byte aligned: 3240 =
++ * 8 * 405, 1080 = 8 * 135) instead of 24 byte stores into write-combining
++ * memory, and a row is written only when its hash changed since the last
++ * flush. Every 256 flushes the average time and rows written are logged.
++ */
++static uint64_t river_row_hash[SWEET_EARLY_FB_HEIGHT];
++static bool river_rows_valid;
++static uint64_t river_flush_ns, river_flush_rows, river_flushes;
++
+ void
+ AppleCLCD::riverFlush(void)
+ {
+-	for (uint32_t y = 0; y < fHeight; y++) {
+-		const uint8_t *src = (const uint8_t *)(fPixels + (uint64_t)y * fRowBytes);
+-		volatile uint8_t *dst = fRiverScanout + (uint64_t)y * SWEET_EARLY_FB_STRIDE;
+-		for (uint32_t x = 0; x < fWidth; x++) {
+-			dst[3 * x] = src[4 * x];
+-			dst[3 * x + 1] = src[4 * x + 1];
+-			dst[3 * x + 2] = src[4 * x + 2];
++	uint64_t t0 = mach_absolute_time();
++	uint32_t rows = 0;
++	for (uint32_t y = 0; y < fHeight && y < SWEET_EARLY_FB_HEIGHT; y++) {
++		const uint32_t *src = (const uint32_t *)(fPixels + (uint64_t)y * fRowBytes);
++		const uint64_t *src64 = (const uint64_t *)src;
++		uint64_t h = 0xcbf29ce484222325ULL;
++		for (uint32_t i = 0; i < fWidth / 2; i++) {
++			h = (h ^ src64[i]) * 0x100000001b3ULL;
++		}
++		if (river_rows_valid && river_row_hash[y] == h) {
++			continue;
++		}
++		river_row_hash[y] = h;
++		rows++;
++		uint64_t *dst = (uint64_t *)(uintptr_t)(fRiverScanout + (uint64_t)y * SWEET_EARLY_FB_STRIDE);
++		for (uint32_t x = 0; x + 8 <= fWidth; x += 8, src += 8, dst += 3) {
++			uint64_t p0 = src[0] & 0xffffff, p1 = src[1] & 0xffffff, p2 = src[2] & 0xffffff;
++			uint64_t p3 = src[3] & 0xffffff, p4 = src[4] & 0xffffff, p5 = src[5] & 0xffffff;
++			uint64_t p6 = src[6] & 0xffffff, p7 = src[7] & 0xffffff;
++			dst[0] = p0 | p1 << 24 | (p2 & 0xffff) << 48;
++			dst[1] = p2 >> 16 | p3 << 8 | p4 << 32 | (p5 & 0xff) << 56;
++			dst[2] = p5 >> 8 | p6 << 16 | p7 << 40;
+ 		}
+ 	}
++	river_rows_valid = true;
+ 	__asm__ volatile("dsb sy" ::: "memory");
++	uint64_t ns;
++	absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
++	river_flush_ns += ns;
++	river_flush_rows += rows;
++	if ((++river_flushes % 256) == 0) {
++		IOLog("RIVER FB: %llu flushes, last 256 avg %llu us, %llu rows written\n", river_flushes,
++		    river_flush_ns / 256 / 1000, river_flush_rows / 256);
++		river_flush_ns = river_flush_rows = 0;
++	}
+ }
+ #endif
+ 
