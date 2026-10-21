@@ -1,0 +1,190 @@
+diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
+index 5b4c1de..3520508 100644
+--- a/bsd/dev/river_emmc.c
++++ b/bsd/dev/river_emmc.c
+@@ -37,11 +37,15 @@
+ #include <pexpert/pexpert.h>
+ #include <pexpert/device_tree.h>
+ #include <libkern/libkern.h>
++#include <arm/caches_internal.h>
++#include <vm/pmap.h>
++#include <vm/vm_kern.h>
+ 
+ /* osfmk/arm/machine_routines.h, not exported to the BSD layer */
+ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+ extern void delay(int usec);
+ extern void river_log_start(void);
++extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
+ 
+ /* SD Host Controller Simplified Spec 3.0 register offsets (32-bit access) */
+ #define SDHCI_BLOCK		0x04	/* block size | block count << 16 */
+@@ -57,6 +61,8 @@ extern void river_log_start(void);
+ #define SDHCI_SIGNAL_ENABLE	0x38
+ #define SDHCI_HOST_CTRL2	0x3c	/* auto-cmd status | host ctl2 << 16 */
+ #define SDHCI_CAPS		0x40
++#define SDHCI_ADMA_ADDR		0x58	/* ADMA system address, low 32 bits */
++#define SDHCI_ADMA_ADDR_HI	0x5c
+ #define SDHCI_VERSION		0xfc	/* slot int status | version << 16 */
+ 
+ #define PRESENT_CMD_INHIBIT	(1U << 0)
+@@ -83,11 +89,16 @@ extern void river_log_start(void);
+ #define RSP_R1			0x1a	/* 48 bit, CRC + index */
+ #define RSP_R1B			0x1b	/* 48 bit busy, CRC + index */
+ #define CMD_DATA		0x20
++#define XFER_DMA_EN		0x01
+ #define XFER_BLK_CNT_EN		0x02
+ #define XFER_READ		0x10
+ #define XFER_MULTI		0x20
+ #define CTRL_HISPD		(1U << 2)	/* host control 1: high-speed timing */
+ #define CTRL_8BIT		(1U << 5)	/* host control 1: 8-bit data bus */
++#define CTRL_ADMA2_32		(2U << 3)	/* host control 1: DMA select = 32-bit ADMA2 */
++#define ADMA_TRAN_VALID		0x21		/* descriptor attr: act=tran, valid */
++#define ADMA_END		0x02
++#define ADMA_CHUNK		32768U		/* < 65536: no 0-means-64K length encoding */
+ #define MULTI_MAX		128		/* blocks per CMD23/CMD18 read (64 KiB) */
+ 
+ /* EXT_CSD bytes: CMD6 may write only BUS_WIDTH and HS_TIMING (volatile). */
+@@ -155,6 +166,15 @@ static uint32_t multi_verify;	/* boot-arg rivermmcverify=1: re-read every multi
+ static uint64_t verify_reads, verify_bad;
+ static uint32_t vblock[BLOCK / 4];
+ static uint32_t host_ctrl;	/* SDHCI host control 1 (power + width/timing bits) */
++/*
++ * ADMA2 (32-bit) for CMD18: one physically contiguous region, the 64 KiB data
++ * buffer then the descriptor table. sdhc_1 has no IOMMU in river's DT and all
++ * of RAM is below 4 GiB. The buffer is cleaned/invalidated around transfers.
++ */
++static vm_offset_t adma_va;
++static uint64_t adma_pa;
++static bool adma_ok;
++#define ADMA_DATA		(MULTI_MAX * BLOCK)
+ 
+ /* minor 0 = whole user area, minor N = GPT entry N (1-based); count 0 = none */
+ #define MAX_PARTS		129
+@@ -289,7 +309,7 @@ static void river_emmc_recover(void);
+  */
+ static int
+ river_emmc_cmd_n(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uint32_t *buf,
+-    uint32_t count)
++    uint32_t count, bool dma)
+ {
+ 	switch (index) {
+ 	case 0: case 1: case 2: case 3: case 7: case 8: case 12: case 13: case 17:
+@@ -342,7 +362,9 @@ river_emmc_cmd_n(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uin
+ 	}
+ 	wr(hc, SDHCI_ARG, arg);
+ 	uint32_t cmd = index << 8 | rsp | (data ? CMD_DATA : 0);
+-	uint32_t mode = (reading ? XFER_READ : 0) | (count > 1 ? XFER_MULTI | XFER_BLK_CNT_EN : 0);
++	dma = dma && index == 18;
++	uint32_t mode = (reading ? XFER_READ : 0) | (count > 1 ? XFER_MULTI | XFER_BLK_CNT_EN : 0) |
++	    (dma ? XFER_DMA_EN : 0);
+ 	wr(hc, SDHCI_XFER_CMD, cmd << 16 | mode);
+ 
+ 	uint32_t status;
+@@ -364,7 +386,7 @@ river_emmc_cmd_n(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uin
+ 	if (!data) {
+ 		return 0;
+ 	}
+-	for (uint32_t b = 0; b < count && !error; b++) {
++	for (uint32_t b = 0; b < count && !error && !dma; b++) {
+ 		error = river_emmc_wait_ns(writing ? INT_WRITE_READY : INT_READ_READY,
+ 		    &status, writing ? WRITE_TIMEOUT_NS : TIMEOUT_NS);
+ 		if (!error) {
+@@ -397,7 +419,7 @@ river_emmc_cmd_n(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uin
+ static int
+ river_emmc_cmd(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uint32_t *buf)
+ {
+-	return river_emmc_cmd_n(index, arg, rsp, resp, buf, 1);
++	return river_emmc_cmd_n(index, arg, rsp, resp, buf, 1, false);
+ }
+ 
+ /*
+@@ -434,9 +456,31 @@ river_emmc_read_multi(uint64_t lba, uint32_t n, void *dst)
+ 	if (!ready || !multi_ok || (lba + n) >> 32) {
+ 		return ENXIO;
+ 	}
++	bool dma = adma_ok;
++	if (dma) {
++		/* Descriptors for n * 512 bytes in 32 KiB pieces, then flush both. */
++		uint32_t *d = (uint32_t *)(adma_va + ADMA_DATA), len = n * BLOCK, off = 0, i = 0;
++		while (off < len) {
++			uint32_t piece = MIN(len - off, ADMA_CHUNK);
++			d[2 * i] = (piece << 16) | ADMA_TRAN_VALID | (off + piece == len ? ADMA_END : 0);
++			d[2 * i + 1] = (uint32_t)(adma_pa + off);
++			off += piece;
++			i++;
++		}
++		flush_dcache64((addr64_t)adma_pa, ADMA_DATA + PAGE_SIZE, TRUE);
++		wr(hc, SDHCI_ADMA_ADDR, (uint32_t)(adma_pa + ADMA_DATA));
++		wr(hc, SDHCI_ADMA_ADDR_HI, 0);
++	}
+ 	int error = river_emmc_cmd(23, n, RSP_R1, &resp, NULL);
+ 	if (!error) {
+-		error = river_emmc_cmd_n(18, (uint32_t)lba, RSP_R1, &resp, (uint32_t *)dst, n);
++		error = river_emmc_cmd_n(18, (uint32_t)lba, RSP_R1, &resp, (uint32_t *)dst, n, dma);
++	}
++	if (dma && !error) {
++		flush_dcache64((addr64_t)adma_pa, n * BLOCK, TRUE);	/* drop stale lines */
++		memcpy(dst, (const void *)adma_va, n * BLOCK);
++	} else if (dma && error) {
++		printf("RIVER eMMC: ADMA2 read LBA %llu x%u failed (%d); PIO from now\n", lba, n, error);
++		adma_ok = false;
+ 	}
+ 	if (!error && (resp & R1_ERRORS)) {
+ 		printf("RIVER eMMC: CMD18 LBA %llu x%u R1 0x%x\n", lba, n, resp);
+@@ -655,6 +699,48 @@ river_emmc_fast_bus(void)
+ 	    fast ? "50" : "25", multi_ok ? "on" : "off");
+ }
+ 
++/*
++ * ADMA2 for multi-block reads (boot-arg rivermmcdma=0 disables). Requires the
++ * capability bit, a contiguous buffer below 4 GiB, and 64 blocks of boot_b
++ * read by DMA matching single-block PIO reads.
++ */
++static void
++river_emmc_dma_init(void)
++{
++	uint32_t on = 1;
++	PE_parse_boot_argn("rivermmcdma", &on, sizeof(on));
++	uint32_t caps = rd(hc, SDHCI_CAPS);
++	if (!on || !multi_ok || !(caps & (1U << 19)) || !parts[42].count) {
++		printf("RIVER eMMC: ADMA2 not used (arg %u, multi %d, caps 0x%08x)\n", on, multi_ok, caps);
++		return;
++	}
++	if (kmem_alloc_contig(kernel_map, &adma_va, ADMA_DATA + PAGE_SIZE, PAGE_MASK, 0, 0,
++	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++		printf("RIVER eMMC: no ADMA2 memory\n");
++		return;
++	}
++	ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)adma_va);
++	adma_pa = pn ? ptoa_64(pn) : 0;
++	if (!adma_pa || adma_pa + ADMA_DATA + PAGE_SIZE > (1ULL << 32)) {
++		printf("RIVER eMMC: ADMA2 buffer at 0x%llx unusable\n", adma_pa);
++		return;
++	}
++	host_ctrl |= CTRL_ADMA2_32;
++	wr(hc, SDHCI_HOST_CTRL, host_ctrl);
++	adma_ok = true;
++	bool same = !river_emmc_read_multi(parts[42].first, 64, mblock);
++	for (uint32_t i = 0; same && i < 64; i++) {
++		same = !river_emmc_read_block(parts[42].first + i, block) &&
++		    !memcmp(block, mblock + i * (BLOCK / 4), BLOCK);
++	}
++	if (!same) {
++		adma_ok = false;
++		host_ctrl &= ~CTRL_ADMA2_32;
++		wr(hc, SDHCI_HOST_CTRL, host_ctrl);
++	}
++	printf("RIVER eMMC: ADMA2 %s (buffer 0x%llx)\n", same ? "on, verified" : "verify FAILED; PIO", adma_pa);
++}
++
+ static int
+ river_emmc_host_init(void)
+ {
+@@ -1352,6 +1438,7 @@ river_emmc_probe(void)
+ 	}
+ 	if (river_emmc_speed_up()) {
+ 		river_emmc_fast_bus();
++		river_emmc_dma_init();
+ 		river_emmc_bench();
+ 	}
+ 	uint32_t multi_arg = 1;
