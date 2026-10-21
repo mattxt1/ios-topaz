@@ -1,0 +1,70 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index b2626f1..a5825a9 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -179,49 +179,31 @@ river_cbcr_on(vm_offset_t g, unsigned off, const char *name)
+ static void
+ river_gpu_power_on(vm_offset_t g, vm_offset_t ldo)
+ {
+- uint32_t ctl = ri_rd(ldo, 0x1c);
+- ctl &= ~(1u << 31);				/* LDO_CLAMP_IO */
+- ctl |= (1u << 29);				/* EN_LDOAP_CTRL_CPR */
+- ri_wr(ldo, 0x1c, ctl);
+- ri_wr(ldo, 0x00, 0x00000203);			/* msm8953_ldo_config */
+- ri_wr(ldo, 0x04, 0x05008600);
+- ri_wr(ldo, 0x08, 0x00000000);
+- ri_wr(ldo, 0x0c, 0x0000c3fc);
+- ri_wr(ldo, 0x14, 0x004b1102);
+  /*
+-  * enable_bhs_mode (msm_gfx_ldo.c): river's DT ldo-enable-corner-map is all
+-  * zero, so Linux always runs GX through the head switch handed to the GDSC.
+-  * (r34: driving the BHS under software control gave LDO_READY but no
+-  * BHS_EN_REST_ACK.)
++  * Mainline gcc-msm8953.c order (r35 panicked with an SError right after
++  * releasing the GX clamp while GX was unpowered, the GFX LDO had been
++  * reprogrammed and the gfx3d root/branch clocks were already running):
++  * leave the GFX LDO as the bootloader left it, GFX3D RCG at 133.33 MHz
++  * without forcing the root, gdsc_oxili_cx on, then release the GX clamp
++  * (GCC+0x5b00c bit 0) immediately before gdsc_oxili_gx and re-assert it if
++  * GX does not power on. Clocks only after both domains are on.
+   */
+- ctl = ri_rd(ldo, 0x1c);
+- ctl |= (1u << 4); ri_wr(ldo, 0x1c, ctl);		/* LDO_UNDER_SW_CTRL */
+- ctl &= ~(1u << 9); ri_wr(ldo, 0x1c, ctl);	/* power source: BHS */
+- ctl &= ~(1u << 30); ri_wr(ldo, 0x1c, ctl);	/* CPR_BYPASS_IN_LDO_MODE */
+- ctl &= ~(1u << 1); ri_wr(ldo, 0x1c, ctl);	/* BHS_EN_FEW */
+- ctl &= ~(1u << 2); ri_wr(ldo, 0x1c, ctl);	/* BHS_EN_REST */
+- ctl &= ~(1u << 0); ri_wr(ldo, 0x1c, ctl);	/* BHS under GDSC control */
+- printf("RIVER GPU: LDO BHS mode, ctrl %#x\n", ri_rd(ldo, 0x1c));
++ (void)ldo;
+  ri_wr(g, 0x04, (5u << 8) | 5u);		/* GFX3D CFG: src 5, div 3 */
+  ri_wr(g, 0x00, ri_rd(g, 0x00) | 1u);		/* update */
+  for (unsigned i = 0; i < 1000 && (ri_rd(g, 0x00) & 1u); i++) delay(1);
+  if (!river_gdsc_on(g, 0x4c, "oxili_cx")) return;
+- /* gdsc_oxili_gx's core_root_clk is gfx3d_clk_src itself: Linux's
+-  * rcg_set_force_enable() sets CMD_RCGR ROOT_EN (bit 1) and waits for
+-  * ROOT_OFF (bit 31) to clear before the GDSC powers up (r32: without it the
+-  * root stayed off and GX never reported PWR_ON). */
+- ri_wr(g, 0x00, ri_rd(g, 0x00) | (1u << 1));
+- for (unsigned i = 0; i < 1000 && (ri_rd(g, 0x00) & (1u << 31)); i++) delay(1);
+- printf("RIVER GPU: GFX3D root forced on, cmd %#x\n", ri_rd(g, 0x00));
+- ri_wr(g, 0x20, ri_rd(g, 0x20) | 1u);		/* gfx3d branch */
+- /* Mainline gcc-msm8953.c: oxili_gx_gdsc has CLAMP_IO, clamp_io_ctrl
+-  * GCC+0x5b00c; gdsc_enable() deasserts the clamp (bit 0) before power-on. */
+  uint32_t clamp = ri_rd(g, 0x200c);
+  ri_wr(g, 0x200c, clamp & ~1u);
+- printf("RIVER GPU: GX clamp_io %#x -> %#x\n", clamp, ri_rd(g, 0x200c));
+- if (!river_gdsc_on(g, 0x1c, "oxili_gx")) return;
+- (void)river_cbcr_on(g, 0x20, "gfx3d");
++ bool gx_ok = river_gdsc_on(g, 0x1c, "oxili_gx");
++ if (!gx_ok) {
++  ri_wr(g, 0x200c, ri_rd(g, 0x200c) | 1u);	/* clamp again */
++  printf("RIVER GPU: GX clamp re-asserted (%#x)\n", ri_rd(g, 0x200c));
++  return;
++ }
++ printf("RIVER GPU: GX powered, clamp_io %#x -> %#x\n", clamp, ri_rd(g, 0x200c));
+  (void)river_cbcr_on(g, 0x28, "oxili_ahb");
++ (void)river_cbcr_on(g, 0x20, "gfx3d");
+  (void)river_cbcr_on(g, 0x34, "bimc_gfx");
+  (void)river_cbcr_on(g, 0x30, "bimc_gpu");
+  (void)river_cbcr_on(g, 0x40, "oxili_timer");

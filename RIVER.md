@@ -1099,3 +1099,13 @@ all zero, so Linux always uses BHS (handed to the GDSC). Mainline
 gcc-msm8953.c: oxili_gx_gdsc has CLAMP_IO with clamp_io_ctrl GCC+0x5b00c,
 deasserted (bit 0) before power-on. 0157 returns to enable_bhs_mode and
 releases that clamp before enabling GX.
+
+### r35 (0157; CI build of dcf434e): SError panic at the GX clamp (photo IMG_0361)
+`GFX3D root forced on, cmd 0x2`, `GX clamp_io 0x1101 -> 0x1100`, then
+`panic(cpu 2 ...): Unhandled implementation specific error` (SError) before
+the GX GDSC result. Releasing the GX IO clamp while GX was unpowered, with
+the GFX LDO reprogrammed and gfx3d root/branch clocks running, produced an
+asynchronous bus error. The clamp does sit on the GPU domain's interfaces.
+0158 follows mainline order: no GFX LDO writes, RCG configured without
+forcing the root, CX on, clamp released immediately before GX, clamp
+re-asserted if GX does not power on, branch clocks only after both GDSCs.
