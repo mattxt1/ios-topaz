@@ -947,3 +947,19 @@ backlight off with the display; MDP flip scanout; eMMC 8-bit 50 MHz ADMA2
 heap-execution crash (not seen since), PosterBoard/driverkitd crash each
 boot, CPU above 1.4 GHz (needs S5/CPR control), GPU (Adreno 506), USB
 still polled, Wi-Fi/audio/battery/sensors absent, zero-copy directPresent.
+
+### r28 / r28-zc (0150; CI build of 5da592f)
+Present (display thread wall time, includes preemption by CA rendering):
+avg 17.5 / 13.6 ms with row-skip, 1266 / 733 of 2270 rows copied;
+riverzc=1: 15.6 / 17.7 ms and **0 direct** presents: the scanout pool
+never supplied a contiguous surface (cause not established: contiguous
+11 MiB allocation failure or another create path). User: no tearing,
+looks normal, **still slow**. Conclusion: the remaining kernel copy is not
+what limits smoothness; CoreAnimation's CPU software renderer is. Zero-copy
+deprioritised (riverzc stays an off-by-default experiment).
+**Crash pattern:** appleaccountd SIGBUS at +102 s in r28 with the r17
+SpringBoard signature (pc == far in its malloc heap, "Data/Stack execution
+not permitted", tag 35). Three such crashes in two processes, from r17 on
+(before ADMA2/interrupts): likely user-memory corruption from a kernel
+path (suspects: VM compressor/swap, page zeroing/COW, cache maintenance).
+Also r28: PosterBoard SIGTRAP/SIGABRT, Preferences SIGTRAP at +538 s.
