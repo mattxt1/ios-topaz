@@ -991,8 +991,29 @@ Local r28-kernel payload variants prepared (not new kernel builds):
 
 Patch 0151 extends the existing SWEET crash line only for SIGBUS with
 `pc == far`: ESR, instruction at LR-4, x0-x28, and 64 bytes at x0/x8/x16
-when readable. It compiled locally for river and topaz; a CI kernel build
-and phone test remain. Crash memory stays only in private local logs.
+when readable. It compiled locally for river and topaz. A phone test remains;
+crash memory stays only in private local logs.
+
+0151 CI `39545871141` passed at source `e2a9997`. The packaged diagnostic
+image with the normal four-core root args is `river-r29-diag-4c-boot.img`
+(SHA-256 `71a10fafb9bef5c8c158d793347b53b3f67545e6d81595e482efe171d6e008da`);
+the same kernel plus `vm_compressor=2` is `river-r29-diag-noswap-boot.img`
+(SHA-256 `8230247d849336a551bfd4b9f8b13a4d3fc4028f0b92d8d44cf362c48c3aa34e`).
+The first single-core r28 boot used the still-running receiver's
+`logs-private/r19-live-15.txt` (despite its old prefix): `1/1 CPUs
+initialized`; lock screen, unlock, Settings, Phone and Safari launches,
+active touch for about eight minutes per the user. No heap-execution crash
+or eMMC error; Preferences had a separate SIGABRT and driverkitd repeated
+its known exit. The user returned to fastboot. This is one clean heap-crash
+observation, not evidence of a fix. The four-core `r29-diag-noswap` image
+then returned `fastboot boot` OKAY; its phone result is pending.
+Its live log is `logs-private/r19-live-16.txt`: `"vm_compressor_mode" is 2`
+and `4/4 CPUs initialized`. The generic `VM Swap Subsystem is ON` line
+still appears, but `vm_config_init()` leaves `swap_is_active` false in mode
+2, and `vm_compaction_swapper_do_init()` skips opening the swap file.
+The user unlocked and used apps for about twelve minutes with no freeze or
+SpringBoard restart; 193 touch log lines, no heap-execution crash or eMMC
+error in the final local log. This is one no-swap boot, so no causal claim.
 
 Patch 0152 (prepared, not yet phone-tested) adds `rivermmcwriteverify=1`:
 after each successful userdata CMD24 reaches transfer state, issue CMD17
@@ -1001,3 +1022,16 @@ also counts verified and bad blocks. The switch defaults off and remains
 under the existing userdata-only write guard and eMMC mutex. A local river
 object compile passed. This is a separate storage experiment after the
 CPU-count and no-swap boots.
+0152 CI `39546394860` passed at source `7db6aa2`. The first artifact
+download timed out; retry succeeded. Local normal-args image with
+`rivermmcwriteverify=1`: `river-r30-writeverify-boot.img` SHA-256
+`ddb63ff1b6846771719908964357db5fc3b1f222affe930d92dcd847b5f4bb02`.
+The kernel string check found both readback diagnostics. `fastboot boot`
+returned OKAY. Its live log is `logs-private/r19-live-17.txt`: the user
+reached the home screen and used apps, with no freeze or SpringBoard restart
+reported. At least **212,992 CMD24 blocks (104 MiB) read back with 0 bad**;
+no eMMC errors or heap-execution crash in the final log. This argues against
+immediate PIO write/read corruption in this run, but not a wrong source
+buffer or rare later failure. The user returned to fastboot. Next, the
+normal four-core `r29-diag-4c` image (0151 crash context, no write verifier)
+was accepted by `fastboot boot`; result pending.
