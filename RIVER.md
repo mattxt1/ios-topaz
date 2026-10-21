@@ -898,3 +898,9 @@ compose memcpy before it is not timed). Timeline: SpringBoard exec +20.7 s,
 **lock screen (first display on/swap) +123 s** (r16 at 800 MHz ~+300 s).
 User: "definitely a bit smoother". Hottest TSENS 40.5 C. No eMMC errors;
 driverkitd only crash.
+
+### r23 (0145 eMMC ADMA2; CI build of 56a624f): lock screen at +70 s
+SpringBoard exec +13.5 s (r22 +20.7 s), **lock screen +70 s** (r22 +123 s).
+No ADMA2 failure messages, no eMMC errors, driverkitd only crash. The probe
+lines fell outside the 64 KiB USB replay (boot is faster now), so 0146
+repeats the eMMC and MDP summaries in the input probe.
