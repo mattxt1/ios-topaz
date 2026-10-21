@@ -864,3 +864,17 @@ used identical eMMC code.
   +20.6 s.** Two r20 boots: no eMMC errors, no SpringBoard crash.
 - Still unexplained: the two r17 SpringBoard heap-execution crashes (no eMMC
   errors in that run).
+
+### r21 performance survey (0143, riverperf=1; CI build of 0099dde)
+- spin 798 MHz on Gold cpu 0 (shim GPLL0 switch confirmed).
+- DRAM: copy 2764 MB/s, write 5718 MB/s, read 3731 MB/s; 64 KiB cached copy
+  4762 MB/s. Memory is not starved; RPM/DDR votes are not the bottleneck.
+- RCG: Gold 0x401 and **Silver 0x401** (both GPLL0 800 MHz), CCI 0x403
+  (GPLL0 /2 = 400 MHz, CCI corner c2). All three APCS PLLs off (MODE 0).
+- Shared APC rail PM8953 S5: FTS2.5 (subtype 9), range 0, VSET 0x9e = 870 mV.
+- TSENS 32-37 C.
+- DT Gold (c1) corners: 633/902/1094/1401.6/1555/1804/2016 MHz -> c1..c7,
+  CPR ceilings 720/790/865/865/920/990/1065 mV. **870 mV covers the c4
+  ceiling: Gold 1401.6 MHz needs no voltage change** (APCS C1 PLL L=73 from
+  XO, mux src 5). Above that needs CPR/S5 voltage control (+ APM threshold
+  875 mV and mem-acc levels).
