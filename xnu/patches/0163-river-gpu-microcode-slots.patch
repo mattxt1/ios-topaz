@@ -1,0 +1,13 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index dc41276..1a94442 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -104,7 +104,7 @@ static const uint32_t addr_mode_cntl[] = {
+ /* Buffer layout in one contiguous 64 KiB allocation. */
+ #define BUF_SIZE	0x10000
+ #define OFF_PM4		0x0000
+-#define OFF_PFP		0x8000
++#define OFF_PFP		0x6000		/* PM4 and PFP 24 KiB each (a530_pfp.fw is 17 KiB) */
+ #define OFF_RING	0xc000
+ #define RING_SIZE	0x1000		/* CP_RB_CNTL BUFSZ = log2(4096 / 8) = 9 */
+ #define OFF_SCRATCH	0xf000

@@ -1206,3 +1206,11 @@ Microcode reaches the kernel only through the local RAM-only boot image:
 tools/river-gpufw.py packs ../device-private/gpu-firmware, mkpayload.py
 --blob RiverGPUFW=... appends it and names it in /chosen/memory-map
 (RIVER_GPUFW=1 tools/kbuild-river.sh). Nothing Qualcomm enters git or CI.
+
+### r40 (0162; second CI build, first skipped 0162): microcode reaches the kernel
+The first r40 build lacked 0162: the patch re-created bsd/conf/files as a new
+file (it was untracked in the scratch tree) and dxb skipped it with a warning;
+fixed with a context hunk (7c28640). Rebuilt r40: GPU alive as r39, then
+`firmware container at 0xa2590000+0xd930 incomplete (pm4 19652, pfp 17108)`:
+the ADT blob arrived intact; the 16 KiB PFP slot was too small. 0163: PM4 and
+PFP slots of 24 KiB (PFP at +0x6000).
