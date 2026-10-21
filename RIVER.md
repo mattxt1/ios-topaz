@@ -1281,3 +1281,22 @@ did; TZ needs it to map the zap into the secure context bank, matching
 tmpfs unmounted, partitions unmounted.
 0166: IOMMU_SECURE_PTBL_SIZE / _INIT (SVC_MP 3/4) with the pool at
 0x82000000 (unused low span, zeroed via a Device mapping) before the PAS calls.
+
+### r44 (0166; console-visible): **zap shader loaded, GPU out of secure mode** (r39-live-8.txt)
+```
+iommu secure ptbl size status 0 size 0x21000 result 0
+iommu secure ptbl init at 0x82000000 size 0x21000 status 0 result 0
+zap: PAS 13 supported status 0 result 1; metadata 0x1a1c bytes, segment 0x1454 bytes at 0x81800000 (TZ range 0x2000)
+zap: pas_init_image status 0 result 0
+zap: pas_mem_setup status 0 result 0
+zap: auth_and_reset status 0 result 0
+out of secure mode; CP_MEM_WRITE consumed, memory 0x2a506a5e (expect 0x2a506a5e); RBBM_STATUS 0x1 INT_0 0
+```
+The missing piece was the GPU SMMU secure page-table pool (132 KiB, now at
+0x82000000); no crypto bus vote was needed. The full mainline a5xx_hw_init
+sequence now runs under XNU: power, TZ restore_sec_cfg, hw_init, microcode,
+CP_ME_INIT, zap shader, CP_SET_SECURE_MODE 0, CP still executing.
+Fixed physical layout in the unused span below the 0x84300000 carve-out:
+0x81800000 zap (0x2000), 0x82000000 SMMU secure ptbl (0x21000).
+Next: first rendering work (CP_BLIT / 2D clear into a scanout buffer the
+MDP shows), then decide the userland path (freedreno vs Metal-shaped).
