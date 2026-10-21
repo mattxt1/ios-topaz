@@ -27,8 +27,6 @@ cd ../mesa && meson setup build-ios --cross-file ../river-xnu/mesa/ios-arm64.cro
   -Dexpat=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dbuildtype=release
 ninja -C build-ios src/gallium/drivers/freedreno/river_gallium_test
 ```
-Status 2026-10-21: libfreedreno_drm (river), libfreedreno_ir3 and the
-gallium libfreedreno.a build for iOS arm64. The `river_gallium_test` link
-was in progress after fixing u_sync_provider (meson setup must be redone
-after the meson.build edits; check `../mesa-build3.log`). Not yet run on
-the phone.
+Status 2026-10-21: everything builds for iOS arm64, including
+`build-ios/src/gallium/drivers/freedreno/river_gallium_test` (12.7 MB, linked
+after the u_sync_provider fix). Not yet signed or run on the phone.
