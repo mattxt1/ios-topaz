@@ -1,0 +1,103 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index be2ccba..aaff80e 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -140,6 +140,76 @@ ri_pon(uint8_t *v)
+  * GPU registers are read only when both GDSCs report power on and the AHB
+  * and core clocks are running (otherwise the access can hang the bus).
+  */
++/* GDSC enable as Linux gdsc.c: wait timings, clear SW_COLLAPSE, poll PWR_ON. */
++static bool
++river_gdsc_on(vm_offset_t g, unsigned off, const char *name)
++{
++ uint32_t v = ri_rd(g, off);
++ v &= ~((0xfu << 20) | (0xfu << 16) | (0xfu << 12));
++ v |= (0x2u << 20) | (0x8u << 16) | (0x2u << 12);
++ ri_wr(g, off, v & ~1u);
++ for (unsigned i = 0; i < 1000; i++) {
++  if (ri_rd(g, off) & (1u << 31)) return true;
++  delay(1);
++ }
++ printf("RIVER GPU: %s GDSC did not power on (%#x)\n", name, ri_rd(g, off));
++ return false;
++}
++/* Branch enable; CLK_OFF (bit 31) must clear. */
++static bool
++river_cbcr_on(vm_offset_t g, unsigned off, const char *name)
++{
++ ri_wr(g, off, ri_rd(g, off) | 1u);
++ for (unsigned i = 0; i < 1000; i++) {
++  if (!(ri_rd(g, off) & (1u << 31))) return true;
++  delay(1);
++ }
++ printf("RIVER GPU: %s clock stays off (%#x)\n", name, ri_rd(g, off));
++ return false;
++}
++/*
++ * rivergpu=2: power the Adreno up at its lowest real level, in Linux order:
++ * msm_gfx_ldo.c probe init + enable_bhs_mode (GX from VDD_CX through the
++ * head switch, as for corners outside qcom,ldo-enable-corner-map), GFX3D RCG
++ * at 133.33 MHz (gpll0_main_div2_mm src 5 / 3), gdsc_oxili_cx, the gfx3d
++ * root clock (qcom,force-enable-root-clk) then gdsc_oxili_gx, then the
++ * ahb/bimc_gfx/bimc_gpu/timer/aon branches. No RPM vote: VDD_CX is assumed
++ * to sit at or above low SVS already (DDR and the display run).
++ */
++static void
++river_gpu_power_on(vm_offset_t g, vm_offset_t ldo)
++{
++ uint32_t ctl = ri_rd(ldo, 0x1c);
++ ctl &= ~(1u << 31);				/* LDO_CLAMP_IO */
++ ctl |= (1u << 29);				/* EN_LDOAP_CTRL_CPR */
++ ri_wr(ldo, 0x1c, ctl);
++ ri_wr(ldo, 0x00, 0x00000203);			/* msm8953_ldo_config */
++ ri_wr(ldo, 0x04, 0x05008600);
++ ri_wr(ldo, 0x08, 0x00000000);
++ ri_wr(ldo, 0x0c, 0x0000c3fc);
++ ri_wr(ldo, 0x14, 0x004b1102);
++ ctl = ri_rd(ldo, 0x1c);			/* enable_bhs_mode */
++ ctl |= (1u << 4); ri_wr(ldo, 0x1c, ctl);		/* LDO_UNDER_SW_CTRL */
++ ctl &= ~(1u << 9); ri_wr(ldo, 0x1c, ctl);	/* power source: BHS */
++ ctl &= ~(1u << 30); ri_wr(ldo, 0x1c, ctl);	/* CPR_BYPASS_IN_LDO_MODE */
++ ctl &= ~(1u << 1); ri_wr(ldo, 0x1c, ctl);	/* BHS_EN_FEW */
++ ctl &= ~(1u << 2); ri_wr(ldo, 0x1c, ctl);	/* BHS_EN_REST */
++ ctl &= ~(1u << 0); ri_wr(ldo, 0x1c, ctl);	/* BHS under GDSC control */
++ printf("RIVER GPU: LDO BHS mode, ctrl %#x\n", ri_rd(ldo, 0x1c));
++ ri_wr(g, 0x04, (5u << 8) | 5u);		/* GFX3D CFG: src 5, div 3 */
++ ri_wr(g, 0x00, ri_rd(g, 0x00) | 1u);		/* update */
++ for (unsigned i = 0; i < 1000 && (ri_rd(g, 0x00) & 1u); i++) delay(1);
++ if (!river_gdsc_on(g, 0x4c, "oxili_cx")) return;
++ ri_wr(g, 0x20, ri_rd(g, 0x20) | 1u);		/* gfx3d root clock before GX */
++ if (!river_gdsc_on(g, 0x1c, "oxili_gx")) return;
++ (void)river_cbcr_on(g, 0x20, "gfx3d");
++ (void)river_cbcr_on(g, 0x28, "oxili_ahb");
++ (void)river_cbcr_on(g, 0x34, "bimc_gfx");
++ (void)river_cbcr_on(g, 0x30, "bimc_gpu");
++ (void)river_cbcr_on(g, 0x40, "oxili_timer");
++ (void)river_cbcr_on(g, 0x44, "oxili_aon");
++}
++
+ static void
+ river_gpu_probe(void)
+ {
+@@ -153,12 +223,21 @@ river_gpu_probe(void)
+      gx, cx, ri_rd(g, 0x00), ri_rd(g, 0x04), gfx, ahb, bimc, tmr, aon);
+  printf("RIVER GPU: GFX LDO ctrl %#x status %#x vref %#x ld_data %#x\n",
+      ri_rd(ldo, 0x1c), ri_rd(ldo, 0x28), ri_rd(ldo, 0x18), ri_rd(ldo, 0x10));
++ if (on >= 2 && !(gx & (1u << 31))) {
++  river_gpu_power_on(g, ldo);
++  gx = ri_rd(g, 0x1c); cx = ri_rd(g, 0x4c); gfx = ri_rd(g, 0x20); ahb = ri_rd(g, 0x28);
++  printf("RIVER GPU: after power-on GDSC gx %#x cx %#x; RCG cmd %#x cfg %#x; CBCR gfx3d %#x ahb %#x bimc_gfx %#x bimc_gpu %#x timer %#x aon %#x; LDO ctrl %#x status %#x\n",
++      gx, cx, ri_rd(g, 0x00), ri_rd(g, 0x04), gfx, ahb, ri_rd(g, 0x34), ri_rd(g, 0x30), ri_rd(g, 0x40), ri_rd(g, 0x44),
++      ri_rd(ldo, 0x1c), ri_rd(ldo, 0x28));
++ }
+  bool powered = (gx & (1u << 31)) && (cx & (1u << 31)) && !(ahb & (1u << 31)) && !(gfx & (1u << 31));
+  if (!powered) { printf("RIVER GPU: not powered/clocked; GPU registers not read\n"); return; }
+  vm_offset_t r = ri_map(0x01c00000);
+  if (!r) return;
+  printf("RIVER GPU: RBBM_STATUS %#x STATUS3 %#x INT_0_STATUS %#x CP_RB_BASE %#x\n",
+      ri_rd(r, 0x4f5 * 4), ri_rd(r, 0x530 * 4), ri_rd(r, 0x4e1 * 4), ri_rd(r, 0x800 * 4));
++ uint32_t c0 = ri_rd(r, 0x4d2 * 4); delay(1000); uint32_t c1 = ri_rd(r, 0x4d2 * 4);
++ printf("RIVER GPU: ALWAYSON_COUNTER %#x -> %#x after 1 ms (%s)\n", c0, c1, c1 != c0 ? "GPU alive" : "not counting");
+ }
+ 
+ static void

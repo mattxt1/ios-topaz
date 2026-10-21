@@ -1060,3 +1060,18 @@ Next: dump the bucket at x13 (and x10 buckets / class cache_t) on the next
 occurrence; check objc4 (iOS 16) cache formats (preoptimized vs dynamic,
 CACHE_IMP_ENCODING, bucket write ordering) against anything in our kernel
 that could make another core see a stale bucket (or a stale page).
+
+### r31 GPU survey (0153, rivergpu=1): all off, as expected
+GDSC gx 0x08225801 / cx 0x00222801 (collapsed, PWR_ON clear); GFX3D RCG
+cmd 0x80000000 cfg 0; CBCR gfx3d/ahb/bimc_gfx/timer/aon all CLK_OFF; GFX LDO
+ctrl 0x80000038 (clamped, PDN, SW ctrl) status 0. GPU registers not read.
+A506 needs a530_pm4.fw, a530_pfp.fw, a506_zap (adreno-gpulist.h).
+
+### 0154 (prepared, NOT built or phone-tested): rivergpu=2 power-on
+LDO init (clamp off, CPR auto-bypass, msm8953_ldo_config) + enable_bhs_mode,
+GFX3D 133.33 MHz (CFG 0x505), gdsc_oxili_cx, gfx3d root clock, gdsc_oxili_gx,
+branches ahb/bimc_gfx/bimc_gpu(0x59030)/timer/aon; then RBBM status and
+ALWAYSON_COUNTER (0x4d2) read twice as proof of life. No RPM CX vote
+(assumes CX >= low SVS). Next: build r32 with rivergpu=2, boot, read
+"RIVER GPU:" lines; then pull firmware (recovery, vendor partition,
+private) and start the CP.
