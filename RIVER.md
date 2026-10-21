@@ -931,3 +931,19 @@ r23-r25). User: touch and swipes unchanged. But "12288 touch reads in
 12288 polls": the INT-low trigger is always true (INT idles low on this
 panel), so the latch saved nothing. 0149 drops that trigger (latch,
 finger down, or every 10th poll) and counts reads per reason.
+
+### r27 (0149; CI build of d38f17a): touch latch confirmed
+"2048 touch reads in 15814 polls (latch 517, finger 4, idle 1527; INT low
+in 15814 polls)": Novatek I2C reads down to 13 % of polls (r26: 100 %),
+the GPIO65 rising-edge latch catches the frame pulses, and INT is low on
+every poll (idles low). User: touch and swipes unchanged.
+
+### State at end of 2026-10-20 Claude session
+Default image: `river-r27-boot.img` (shim Gold 1401.6 MHz; kernel 0135-0149;
+args riverperf=1 riverscan=1 riverbl=1 riverrtcoff=<private> sweetfb_hz=30).
+Lock screen ~70-76 s after fastboot boot; correct date/time; tap/Power wake;
+backlight off with the display; MDP flip scanout; eMMC 8-bit 50 MHz ADMA2
+~39 MB/s with hc_irq; touch via GPIO65 edge latch. Open: r17 SpringBoard
+heap-execution crash (not seen since), PosterBoard/driverkitd crash each
+boot, CPU above 1.4 GHz (needs S5/CPR control), GPU (Adreno 506), USB
+still polled, Wi-Fi/audio/battery/sensors absent, zero-copy directPresent.
