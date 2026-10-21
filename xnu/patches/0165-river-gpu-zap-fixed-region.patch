@@ -1,0 +1,40 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index 299962f..7611977 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -287,17 +287,29 @@ zap_load(const uint8_t *fw, uint64_t fw_size)
+ 	printf("RIVER GPU: crypto clocks: rcg cmd %#x cfg %#x vote %#x cbcr core %#x axi %#x ahb %#x\n",
+ 	    rcg[0], rcg[1], *vote, cb[0], cb[1], cb[2]);
+ 
+-	uint64_t mpa = 0, zpa = 0, r = 0;
++	/*
++	 * r42: pas_mem_setup refused a region in kernel RAM (0xa5000000) with
++	 * -2 (EINVAL_ARG). Mainline msm8953.dtsi gives the zap shader a fixed
++	 * no-map region, zap@81800000 size 0x2000, inside qcom,kgsl-hyp's
++	 * gpu_region alloc range (0x80000000-0x90000000). On river that range
++	 * holds only dynamic pools (first fixed carve-out 0x84300000) and XNU's
++	 * RAM starts above the 0x90000000 splash, so use the same address. It
++	 * is written through a Device mapping (never speculatively read once TZ
++	 * locks it) with aligned word stores.
++	 */
++	uint64_t mpa = 0, zpa = 0x81800000ULL, r = 0;
+ 	vm_offset_t meta = contig(PAGE_SIZE, 0, &mpa);
+-	vm_offset_t zap = contig(PAGE_SIZE, (ppnum_t)((0x100000 / PAGE_SIZE) - 1), &zpa);
+-	if (!meta || !zap || (zpa & 0xfffff)) {
+-		printf("RIVER GPU: zap memory allocation failed (meta %#llx zap %#llx)\n", mpa, zpa);
++	vm_offset_t zap = ml_io_map_unmappable((vm_offset_t)zpa, PAGE_SIZE, VM_WIMG_IO);
++	if (!meta || !zap || (seg_size & 3) || ((uintptr_t)seg & 3)) {
++		printf("RIVER GPU: zap memory setup failed (meta %#llx zap map %#lx)\n", mpa, (unsigned long)zap);
+ 		return false;
+ 	}
+ 	memcpy((void *)meta, mdt, mdt_size);
+-	memcpy((void *)zap, seg, seg_size);	/* offset p_paddr - lo = 0; memsz == filesz */
+ 	flush_dcache64((addr64_t)mpa, PAGE_SIZE, TRUE);
+-	flush_dcache64((addr64_t)zpa, PAGE_SIZE, TRUE);
++	/* offset p_paddr - lo = 0; memsz == filesz; zero the rest of TZ's range */
++	for (uint32_t o = 0; o < hi - lo; o += 4)
++		*(volatile uint32_t *)(zap + o) = o < seg_size ? *(const uint32_t *)(seg + o) : 0;
++	__asm__ volatile("dsb sy" ::: "memory");
+ 	(void)memsz;
+ 
+ 	int64_t st = gpu_scm(0x02, 0x07, 1, GPU_PAS_ID, 0, 0, &r);

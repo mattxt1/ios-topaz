@@ -1250,3 +1250,13 @@ physically contiguous memory (segment 1 MiB aligned), then SCM PAS calls
 for id 13: is_supported (2/7), init_image (2/1, ARGS(2,VAL,RW)), mem_setup
 (2/2), auth_and_reset (2/5); on success CP_SET_SECURE_MODE 0 and another
 CP_MEM_WRITE to confirm the CP still runs.
+
+### r42 (0164; sha256 2909690a...): TZ accepts the zap metadata, refuses the region (r39-live-6.txt)
+`crypto clocks: rcg cmd 0 cfg 0x113 vote 0x1e407 cbcr core 0x4ff0 axi 0 ahb
+0x20008000`; `PAS 13 supported status 0 result 1`; `pas_init_image status 0
+result 0` (signature/hash accepted); `pas_mem_setup status -2 result
+0xfffffffffffffff0` for 0xa5000000+0x2000 (kernel RAM). Mainline
+msm8953.dtsi uses a fixed no-map zap@81800000 (0x2000), inside kgsl-hyp's
+gpu_region alloc range 0x80000000-0x90000000; on river that span has only
+dynamic pools below the first carve-out at 0x84300000 and is outside XNU's
+RAM. 0165: load the segment at 0x81800000 through a Device mapping.
