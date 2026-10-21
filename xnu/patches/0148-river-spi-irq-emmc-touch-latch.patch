@@ -1,0 +1,201 @@
+diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
+index 3be3bd4..92845cb 100644
+--- a/bsd/dev/river_emmc.c
++++ b/bsd/dev/river_emmc.c
+@@ -40,12 +40,14 @@
+ #include <arm/caches_internal.h>
+ #include <vm/pmap.h>
+ #include <vm/vm_kern.h>
++#include <kern/sched_prim.h>
+ 
+ /* osfmk/arm/machine_routines.h, not exported to the BSD layer */
+ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+ extern void delay(int usec);
+ extern void river_log_start(void);
+ extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
++extern bool river_irq_register(uint32_t intid, bool edge, void (*fn)(void *), void *arg);
+ 
+ /* SD Host Controller Simplified Spec 3.0 register offsets (32-bit access) */
+ #define SDHCI_BLOCK		0x04	/* block size | block count << 16 */
+@@ -302,6 +304,27 @@ river_emmc_reset(uint32_t which)
+ static uint32_t cmd_gap_us = 50;
+ static void river_emmc_recover(void);
+ 
++/*
++ * sdhc_1 hc_irq (river DT: SPI 0x7b, INTID 155, level). After the probe,
++ * a DMA read sleeps until the controller signals XFER_DONE or an error
++ * instead of spinning; the handler masks the signal so the line drops.
++ * The status is still checked afterwards, so a lost interrupt only costs
++ * the 200 ms timeout. Boot-arg rivermmcirq=0 keeps spinning.
++ */
++#define SDHC1_HC_IRQ		(32 + 0x7b)
++static bool emmc_irq_ready;
++static int emmc_irq_event;
++static uint64_t emmc_irq_waits, emmc_irq_fired;
++
++static void
++river_emmc_irq(__unused void *arg)
++{
++	*(volatile uint32_t *)(hc + SDHCI_SIGNAL_ENABLE) = 0;
++	__asm__ volatile ("dsb sy" ::: "memory");
++	emmc_irq_fired++;
++	thread_wakeup((event_t)&emmc_irq_event);
++}
++
+ /*
+  * The only way this file talks to the card. CMD24 is separately gated to
+  * userdata here, below the BSD block/character-device checks. CMD6 may only
+@@ -403,6 +426,16 @@ river_emmc_cmd_n(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uin
+ 			}
+ 		}
+ 	}
++	if (!error && dma && emmc_irq_ready) {
++		(void)assert_wait_timeout((event_t)&emmc_irq_event, THREAD_UNINT, 200, NSEC_PER_MSEC);
++		wr(hc, SDHCI_SIGNAL_ENABLE, INT_XFER_DONE | 0x03ff0000U);	/* done + error bits */
++		(void)thread_block(THREAD_CONTINUE_NULL);
++		wr(hc, SDHCI_SIGNAL_ENABLE, 0);
++		if ((++emmc_irq_waits % 4096) == 0) {
++			printf("RIVER eMMC: %llu DMA reads slept on hc_irq, %llu interrupts\n",
++			    emmc_irq_waits, emmc_irq_fired);
++		}
++	}
+ 	if (!error) {
+ 		error = river_emmc_wait_ns(INT_XFER_DONE, &status,
+ 		    writing ? WRITE_TIMEOUT_NS : TIMEOUT_NS);
+@@ -1455,6 +1488,13 @@ river_emmc_probe(void)
+ 	if (PE_parse_boot_argn("rivermmcverify", &multi_verify, sizeof(multi_verify)) && multi_verify) {
+ 		printf("RIVER eMMC: verifying every multi-block read against single-block reads\n");
+ 	}
++	uint32_t irq_on = 1;
++	PE_parse_boot_argn("rivermmcirq", &irq_on, sizeof(irq_on));
++	if (adma_ok && irq_on && river_irq_register(SDHC1_HC_IRQ, false, river_emmc_irq, NULL)) {
++		emmc_irq_ready = true;
++	}
++	size_t nl = strlen(river_emmc_note);
++	snprintf(river_emmc_note + nl, sizeof(river_emmc_note) - nl, ", hc_irq %s", emmc_irq_ready ? "on" : "off");
+ 	river_emmc_devices();
+ 	river_emmc_log_init();
+ 	printf("RIVER eMMC: probe done\n");
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 87326b5..2015cd3 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -201,6 +201,18 @@ ri_thread(void *arg, wait_result_t result)
+  (void)arg; (void)result; ri_wait(3000); ri_probe();
+  int keys[3]={0,0,0}; bool down[10]={false}; unsigned failures=0;
+  bool vol_ok=ri_key && !(ri_rd(ri_key,0x1000)&0x23cu);
++ /* GPIO65 (ri_touch + 0x1000) INTR_CFG: raw status on (bit 4), rising edge
++  * (detection bits 3:2 = 1, polarity bit 1), not routed to the GIC (bit 0
++  * clear), as Linux pinctrl-msm configures nt36xxx's IRQ_TYPE_EDGE_RISING.
++  * INTR_STATUS bit 0 then latches each frame pulse between polls. Boot-arg
++  * rivertouchlatch=0 keeps reading every poll. */
++ uint32_t latch_on = 1; uint64_t polls = 0, reads = 0;
++ PE_parse_boot_argn("rivertouchlatch", &latch_on, sizeof(latch_on));
++ if (ri_touch_ok && latch_on) {
++  ri_wr(ri_touch, 0x1008, (ri_rd(ri_touch, 0x1008) & ~0x1fu) | (1u << 4) | (1u << 2) | (1u << 1));
++  ri_wr(ri_touch, 0x100c, 0);
++  printf("RIVER INPUT: GPIO65 edge latch on, INTR_CFG %#x\n", ri_rd(ri_touch, 0x1008));
++ }
+  for (;;) {
+   uint8_t pon=0;
+   bool pok=ri_pon(&pon);
+@@ -210,7 +222,17 @@ ri_thread(void *arg, wait_result_t result)
+    * level check at poll time misses most frames, including every move of a
+    * swipe. Read the report buffer each poll; a lifted finger reads back as
+    * released (state 3), so stale buffers do not hold touches down. */
+-  if (ri_touch_ok) {
++  bool latched = false, held = false;
++  if (ri_touch_ok && latch_on) {
++   latched = (ri_rd(ri_touch, 0x100c) & 1) != 0;
++   if (latched) ri_wr(ri_touch, 0x100c, 0);
++   for (unsigned i=0;i<10;i++) held |= down[i];
++  }
++  bool line_low = ri_touch_ok && !(ri_rd(ri_touch,0x1004)&1);
++  polls++;
++  if (ri_touch_ok && (!latch_on || latched || held || line_low)) {
++   reads++;
++   if ((reads % 4096) == 0) printf("RIVER INPUT: %llu touch reads in %llu polls\n", reads, polls);
+    uint8_t reg=0,data[65]; bool seen[10]={false};
+    if (ri_xfer(&reg,1,data,65)) {
+     failures=0;
+diff --git a/osfmk/arm64/sleh.c b/osfmk/arm64/sleh.c
+--- a/osfmk/arm64/sleh.c
++++ b/osfmk/arm64/sleh.c
+@@ -1928,6 +1928,7 @@
+ #if defined(RIVER)
+ extern vm_offset_t river_gicc_base;
+ extern void river_gic_mask_intid(uint32_t intid);
++extern bool river_irq_dispatch(uint32_t intid);
+ #endif
+ 
+ void
+@@ -1955,7 +1956,9 @@
+ 		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_IPI);
+ 	} else {
+ 		sleh_interrupt_handler_prologue(state, DBG_INTR_TYPE_OTHER);
+-		if (cdp->interrupt_handler) {
++		if (river_irq_dispatch(intid)) {
++			/* handled by a river driver */
++		} else if (cdp->interrupt_handler) {
+ 			cdp->interrupt_handler(cdp->interrupt_target,
+ 			    cdp->interrupt_refCon, cdp->interrupt_nub, intid);
+ 		} else {
+diff --git a/pexpert/arm/pe_fiq.c b/pexpert/arm/pe_fiq.c
+--- a/pexpert/arm/pe_fiq.c
++++ b/pexpert/arm/pe_fiq.c
+@@ -49,6 +49,55 @@
+ 	}
+ }
+ 
++/*
++ * Minimal SPI routing for river drivers (no IOKit interrupt controller):
++ * river_irq_register() sets the SPI's trigger (GICD_ICFGR), Group 1,
++ * priority 0xa0 and target (Gold CPU0's interface), then enables it.
++ * sleh_irq calls river_irq_dispatch() for every SPI; the handler runs in
++ * interrupt context and must quiet its device before returning.
++ */
++#define RIVER_IRQ_MAX	288
++#define GICD_V2_ICFGR	0xc00
++typedef void (*river_irq_fn_t)(void *arg);
++static river_irq_fn_t river_irq_fn[RIVER_IRQ_MAX];
++static void *river_irq_arg[RIVER_IRQ_MAX];
++bool river_irq_register(uint32_t intid, bool edge, river_irq_fn_t fn, void *arg);
++bool river_irq_dispatch(uint32_t intid);
++
++bool
++river_irq_register(uint32_t intid, bool edge, river_irq_fn_t fn, void *arg)
++{
++	if (intid < 32 || intid >= RIVER_IRQ_MAX || !river_gicd_base || !river_gic_iface[0] || !fn) {
++		return false;
++	}
++	vm_offset_t d = river_gicd_base;
++	river_gic_mask_intid(intid);
++	river_irq_arg[intid] = arg;
++	__asm__ volatile("dmb ish" ::: "memory");
++	river_irq_fn[intid] = fn;
++	vm_offset_t cfg = d + GICD_V2_ICFGR + 4 * (intid / 16);
++	uint32_t bit = 2U << (2 * (intid % 16));
++	river_gic_write32(cfg, edge ? (river_gic_read32(cfg) | bit) : (river_gic_read32(cfg) & ~bit));
++	vm_offset_t grp = d + GICD_V2_IGROUPR0 + 4 * (intid / 32);
++	river_gic_write32(grp, river_gic_read32(grp) | (1U << (intid % 32)));
++	*(volatile uint8_t *)(d + GICD_V2_IPRIORITYR + intid) = 0xa0;
++	*(volatile uint8_t *)(d + GICD_V2_ITARGETSR0 + intid) = river_gic_iface[0];
++	__asm__ volatile("dsb sy" ::: "memory");
++	river_gic_write32(d + GICD_V2_ISENABLER0 + 4 * (intid / 32), 1U << (intid % 32));
++	kprintf("RIVER GIC: SPI INTID %u %s -> iface %#x\n", intid, edge ? "edge" : "level", river_gic_iface[0]);
++	return true;
++}
++
++bool
++river_irq_dispatch(uint32_t intid)
++{
++	if (intid >= RIVER_IRQ_MAX || river_irq_fn[intid] == NULL) {
++		return false;
++	}
++	river_irq_fn[intid](river_irq_arg[intid]);
++	return true;
++}
++
+ /* Raise SWEET_IPI_SGI on the Gold core with this MPIDR (SweetCPU::signalCPU). */
+ void
+ river_gic_send_sgi(uint64_t mpidr)
