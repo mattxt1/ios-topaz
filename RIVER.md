@@ -1182,3 +1182,14 @@ SMC64 SIP std call 0x42000c02). XNU never calls it; MDSS works because ABL
 never collapses it.
 0161: issue that SCM call (with an IS_CALL_AVAIL query logged) after power-on
 and before any GPU access; skip the reads if TZ returns an error.
+
+### r39 (0161; console-visible, sha256 3a819859...): **Adreno 506 alive** (r39-live-2.txt)
+`TZ restore_sec_cfg available 0/1; restore(18,0) status 0 result 0`, then
+`SMMU sCR0 0x200436`, `IDR0 0x78014404 IDR1 0x20008004`, `RBBM_STATUS 0x1`
+(only the AHB-busy bit of our own access), STATUS3 0, INT_0_STATUS 0,
+CP_RB_BASE 0, `ALWAYSON_COUNTER 0x47b5b -> 0x4d28e after 1 ms (GPU alive)`
+(~22k ticks: 19.2 MHz XO plus delay() slack). The missing step was the TZ
+secure-config restore after OXILI_CX_GDSC leaves collapse. Boot continued to
+SpringBoard with the GPU left powered. Next: CP bring-up (a5xx_start
+register setup, PM4/PFP microcode load, then the zap shader or
+RBBM_SECVID_TRUST_CNTL to leave secure mode, a minimal ring).
