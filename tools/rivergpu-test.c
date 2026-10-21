@@ -80,12 +80,22 @@ struct submit_req {
 	uint32_t bos[1];
 };
 
+/* Pack as the kernel expects: ncmd, nbos, ncmd commands, then nbos handles. */
 static kern_return_t
-submit(const struct submit_req *r, size_t len, uint32_t *fence)
+submit(const struct submit_req *r, uint32_t *fence)
 {
+	uint32_t buf[2 + 2 * 3 + 1], *w = buf;
+	*w++ = r->ncmd;
+	*w++ = r->nbos;
+	for (uint32_t i = 0; i < r->ncmd; i++) {
+		*w++ = r->cmd[i].handle;
+		*w++ = r->cmd[i].offset;
+		*w++ = r->cmd[i].size_dw;
+	}
+	for (uint32_t i = 0; i < r->nbos; i++) *w++ = r->bos[i];
 	uint64_t out = 0;
 	uint32_t n = 1;
-	kern_return_t kr = IOConnectCallMethod(conn, SUBMIT, NULL, 0, r, len, &out, &n, NULL, NULL);
+	kern_return_t kr = IOConnectCallMethod(conn, SUBMIT, NULL, 0, buf, (size_t)(w - buf) * 4, &out, &n, NULL, NULL);
 	*fence = (uint32_t)out;
 	return kr;
 }
@@ -156,7 +166,7 @@ main(void)
 	r.bos[0] = tgt.handle;
 	uint32_t fence = 0;
 	uint64_t t0 = mach_absolute_time();
-	kr = submit(&r, sizeof(r), &fence);
+	kr = submit(&r, &fence);
 	kern_return_t kw = kr ? kr : call2(WAIT, fence, 1000);
 	kern_return_t kp = call2(CPU_PREP, tgt.handle, 1000);
 	double ms = ms_since(t0);
@@ -169,11 +179,10 @@ main(void)
 	struct submit_req one = { .ncmd = 1, .nbos = 1 };
 	one.cmd[0].handle = cmd.handle; one.cmd[0].offset = 0; one.cmd[0].size_dw = 4;
 	one.bos[0] = tgt.handle;
-	size_t one_len = 8 + 12 + 4;
 	unsigned ok = 0;
 	t0 = mach_absolute_time();
 	for (int i = 0; i < 500; i++) {
-		if (!submit(&one, one_len, &fence) && !call2(WAIT, fence, 1000)) ok++;
+		if (!submit(&one, &fence) && !call2(WAIT, fence, 1000)) ok++;
 	}
 	ms = ms_since(t0);
 	say("500 submit+wait round trips: %u ok, %.1f us each", ok, ms * 1000 / 500);
@@ -181,19 +190,18 @@ main(void)
 	/* The kernel must refuse bad requests. */
 	struct submit_req bad = one;
 	bad.cmd[0].handle = 999;
-	kern_return_t kb1 = submit(&bad, one_len, &fence);
+	kern_return_t kb1 = submit(&bad, &fence);
 	bad = one;
 	bad.cmd[0].offset = (uint32_t)cmd.size;
-	kern_return_t kb2 = submit(&bad, one_len, &fence);
+	kern_return_t kb2 = submit(&bad, &fence);
 	kern_return_t kb3 = call2(CPU_PREP, 12345, 10);
 	say("refused bad handle %#x, out-of-range offset %#x, bad prep %#x (expect non-zero)",
 	    kb1, kb2, kb3);
 
 	uint64_t h = cmd.handle;
 	kern_return_t kf = IOConnectCallScalarMethod(conn, BO_FREE, &h, 1, NULL, NULL);
-	say("BO_FREE %#x; closing", kf);
+	say("BO_FREE %#x; done, closing", kf);
 	IOServiceClose(conn);
-	say("done");
 idle:
 	for (;;) {
 		sleep(3600);

@@ -1423,3 +1423,21 @@ log line): r39-r48 boots 118-142 s (typ. ~135 s), each with 302
 `IOAcceleratorES -> 0 found` polls; r49 97 s with none (backboardd finds it
 at once, then looks it up again per CA context: 293 quick `matching1`
 lookups). User stopwatch, first boot line to lock screen: 1:49.
+
+### r49t (r49 kernel + riverinit, packed locally): **user space drives the GPU** (r39-live-14.txt)
+```
+RIVER FILES: /usr/local/bin/rivergpu-test (51024 bytes, mode 755): installed (0)
+load_init_program: attempting to load /usr/local/bin/rivergpu-test
+RIVER GPU [rivergpu-test]: IOServiceOpen -> 0
+RIVER GPU [rivergpu-test]: param chip-id = 0x5000600, gpu-id = 0x1fa (506), gmem-size = 0x22000, va-start = 0x1100000
+RIVER GPU [rivergpu-test]: BOs target 1 gpu 0x1100000 cpu 0x100a04000 (0), cmd 2 gpu 0x1110000 cpu 0x100a14000 (0)
+RIVER GPU [rivergpu-test]: submit 0 fence 201 wait 0 prep 0 in 0.195 ms: 256/256 words written by the GPU
+```
+A normal process opened RiverGPU, mapped two GPU buffers into itself, wrote
+a 256-command stream from user space, submitted it as two command buffers,
+waited on the fence and read all 256 GPU-written words through its own
+mapping (0.195 ms). The 500 round-trip and bad-request checks were invalid:
+the test sent its fixed two-command struct with a 24-byte length, so the
+kernel read the empty second command slot as the buffer handle and refused
+every one-command submit. Test fixed (packs ncmd/nbos/commands/handles);
+rerun pending.
