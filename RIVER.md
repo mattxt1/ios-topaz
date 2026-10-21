@@ -904,3 +904,14 @@ SpringBoard exec +13.5 s (r22 +20.7 s), **lock screen +70 s** (r22 +123 s).
 No ADMA2 failure messages, no eMMC errors, driverkitd only crash. The probe
 lines fell outside the 64 KiB USB replay (boot is faster now), so 0146
 repeats the eMMC and MDP summaries in the input probe.
+
+### r24 (0146 MDP flip scanout, riverscan=1; CI build of 0e894bc): works
+ABL state (read-only dump): splash on **RGB0** (src 0x90001000, size/out
+0x8de0438 = 1080x2270, ystride 3240, SRC_FORMAT 0x2243f, UNPACK 0x20001 =
+B,G,R, OP 0x80000000); CTL0 LAYER0 0x200 (RGB0 on LM0), TOP 0x1f20;
+VIG0/RGB1/DMA0 unused. Scanout via RGB0, CTL_FLUSH 0x20008, two contiguous
+BGRA flip buffers (0xa3be8000, 0xa4554000), BGRX 0x236ff/0x03020001,
+stride 4352. **User: home screen shown correctly.** Display off -> splash
+fade and touch wake -> flip buffers both work (+140.9 / +142.3 / +142.8 s).
+The 24bpp conversion no longer runs per frame. eMMC (ADMA2) bench in the
+live log: 1 MiB multi-block **39495 KiB/s** (PIO was 11569).
