@@ -8,6 +8,15 @@ HANDOFF.md "START HERE"). Next work: (1) intermittent user-memory corruption
 crash (processes branch into their own malloc heap), (2) Adreno 506 GPU
 groundwork. Live log: tools/river-receiver.sh; boot args in RIVER.md.
 
+Crash tests on 2026-10-21: one r28 `cpus=1` boot, one four-core
+`vm_compressor=2` boot, and one four-core `rivermmcwriteverify=1` boot
+(212,992 CMD24 blocks read back, 0 mismatches) had no heap-execution
+crash during active use. Three negative boots do not explain the rare
+failure. Patch 0151's expanded SIGBUS `pc==far` logger passed CI
+39545871141; patch 0152's optional write verifier passed CI 39546394860.
+Current normal four-core diagnostic boot is `river-r29-diag-4c-boot.img`,
+live log `logs-private/r19-live-18.txt`; user testing. See RIVER.md r29.
+
 ## River side port handoff (2026-10-19)
 
 This `river-bringup` branch is the Moto G7 river port. The handoff folder's
