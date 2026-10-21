@@ -1169,3 +1169,16 @@ cannot be read there.
 0160: after power-on, barrier + 10 ms and DAIF in the log, then read the
 CX-side GPU SMMU (0x1c40000 sCR0/IDR0/IDR1), then RBBM_STATUS, with a log
 line before each access, to localise the fault.
+
+### r38 (0160; console-visible, sha256 32ad130d...): whole GPU block faults (photo IMG_0364)
+Power-on as r37, then `power-on writes settled (DAIF 0x200)` (SError
+unmasked, nothing pending from the GCC/LDO writes), `reading GPU SMMU sCR0`
+-> `panic(cpu 2): Unhandled implementation specific error`. The CX-side GPU
+SMMU faults as well, so the whole 0x1c00000 block is closed, not just GX.
+Mainline qcom_iommu.c restores the block's TZ secure configuration whenever
+OXILI_CX_GDSC comes back (runtime resume and first attach):
+qcom_scm_restore_sec_cfg(qcom,iommu-secure-id 18, 0) (SVC_MP 0x0c, cmd 0x02,
+SMC64 SIP std call 0x42000c02). XNU never calls it; MDSS works because ABL
+never collapses it.
+0161: issue that SCM call (with an IS_CALL_AVAIL query logged) after power-on
+and before any GPU access; skip the reads if TZ returns an error.

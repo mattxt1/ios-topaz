@@ -1,0 +1,56 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 3a3884f..5183a39 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -234,6 +234,30 @@ river_gpu_power_on(vm_offset_t g, vm_offset_t ldo)
+  (void)river_cbcr_on(g, 0x44, "oxili_aon");
+ }
+ 
++/*
++ * Qualcomm SCM call, ARM SMCCC SMC64 standard call with SIP owner, as
++ * qcom_scm-smc.c: x0 = fn id, x1 = arginfo, x2.. = args; TZ returns status
++ * in x0 (1 = interrupted, call again with x0 = 1) and results in x1..x3.
++ */
++static int64_t
++river_scm(uint32_t svc, uint32_t cmd, uint64_t arginfo, uint64_t a0, uint64_t a1, uint64_t *r1)
++{
++ register uint64_t x0 __asm__("x0") = 0x42000000ULL | ((svc & 0xff) << 8) | (cmd & 0xff);
++ register uint64_t x1 __asm__("x1") = arginfo;
++ register uint64_t x2 __asm__("x2") = a0;
++ register uint64_t x3 __asm__("x3") = a1;
++ register uint64_t x4 __asm__("x4") = 0;
++ register uint64_t x5 __asm__("x5") = 0;
++ do {
++  __asm__ volatile("smc #0"
++      : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5)
++      :
++      : "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
++ } while (x0 == 1);
++ if (r1) *r1 = x1;
++ return (int64_t)x0;
++}
++
+ static void
+ river_gpu_probe(void)
+ {
+@@ -268,6 +292,20 @@ river_gpu_probe(void)
+  __asm__ volatile("dsb sy; isb" ::: "memory");
+  delay(10000);
+  printf("RIVER GPU: power-on writes settled (DAIF %#llx)\n", daif);
++ /*
++  * r38: the CX-side GPU SMMU read SErrored too, so the whole GPU block is
++  * closed after its domains come out of collapse. Mainline qcom_iommu.c
++  * (runtime resume, after OXILI_CX_GDSC and the ahb/bimc_gfx clocks) asks TZ
++  * to restore the block's secure configuration: qcom_scm_restore_sec_cfg(
++  * qcom,iommu-secure-id 18 for msm8953 gpu_iommu, 0). Query availability
++  * (SVC_INFO 0x06 / IS_CALL_AVAIL 0x01) first, for the log.
++  */
++ uint64_t avail = 0, res = 0;
++ int64_t st0 = river_scm(0x06, 0x01, 1, 0x02000c02ULL, 0, &avail);
++ int64_t st1 = river_scm(0x0c, 0x02, 2, 18, 0, &res);
++ printf("RIVER GPU: TZ restore_sec_cfg available %lld/%llu; restore(18,0) status %lld result %#llx\n",
++     st0, avail, st1, res);
++ if (st1 != 0 || res != 0) { printf("RIVER GPU: TZ restore failed; GPU registers not read\n"); return; }
+  vm_offset_t s = ri_map(0x01c40000);
+  if (!s) return;
+  printf("RIVER GPU: reading GPU SMMU sCR0\n");
