@@ -1,0 +1,452 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index c5a2f14..b8867ee 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -25,10 +25,14 @@
+ #include <vm/pmap.h>
+ #include <vm/vm_kern.h>
+ #include <vm/memory_types.h>
++#include <kern/locks.h>
++#include <kern/sched_prim.h>
++#include <mach/mach_time.h>
+ 
+ extern vm_offset_t ml_io_map_unmappable(vm_offset_t, vm_size_t, uint32_t);
+ extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
+ extern void delay(int usec);
++extern bool river_irq_register(uint32_t intid, bool edge, void (*fn)(void *), void *arg);
+ 
+ #define GPU_PA		0x01c00000
+ #define GPU_SIZE	0x40000
+@@ -101,6 +105,15 @@ static const uint32_t addr_mode_cntl[] = {
+ #define CP_ME_INIT	72
+ #define CP_MEM_WRITE	61
+ #define CP_SET_SECURE_MODE	102
++#define CP_INDIRECT_BUFFER_PFE	63
++#define CP_EVENT_WRITE	70
++#define CACHE_FLUSH_TS	4
++#define CP_EVENT_WRITE_0_IRQ	0x80000000u
++#define RBBM_INT_CLEAR_CMD	0x0037
++#define INT_CP_HW_ERROR		0x00000200u
++#define INT_CP_CACHE_FLUSH_TS	0x00100000u
++#define INT_UCHE_OOB_ACCESS	0x01000000u
++#define GPU_INTID		(32 + 33)	/* kgsl-3d0 GIC_SPI 33, level */
+ 
+ /* Buffer layout in one contiguous 64 KiB allocation. */
+ #define BUF_SIZE	0x10000
+@@ -113,6 +126,8 @@ static const uint32_t addr_mode_cntl[] = {
+ static vm_offset_t gr;		/* GPU registers */
+ static uint32_t *ring;
+ static unsigned wptr;
++#define RING_DW		(RING_SIZE / 4)
++#define OUT(v)		do { ring[wptr] = (v); wptr = (wptr + 1) & (RING_DW - 1); } while (0)
+ 
+ static uint32_t
+ g_rd(uint32_t reg)
+@@ -385,7 +400,7 @@ zap_load(const uint8_t *fw, uint64_t fw_size)
+ #define PTE_TABLE	0x3ULL
+ #define PTE_RW		((1ULL << 11) | (1ULL << 10) | (2ULL << 8) | (1ULL << 6))	/* 0xe40 */
+ #define PTE_RO		(PTE_RW | (2ULL << 6))
+-#define GMMU_POOL	0x10000		/* 16 tables of 4 KiB */
++#define GMMU_POOL	0x100000	/* 256 tables of 4 KiB: L1, L2s, L3s (~500 MiB mapped) */
+ #define GPU_VA_BASE	0x01000000ULL	/* above UCHE's GMEM window at 0x00100000 */
+ 
+ static struct {
+@@ -395,6 +410,12 @@ static struct {
+ 	unsigned used;			/* 4 KiB tables handed out; table 0 is L1 */
+ } gm;
+ 
++static uint8_t gm_dirty[GMMU_POOL / 0x1000];
++static void
++gmmu_touch(const uint64_t *entry)
++{
++	gm_dirty[((vm_offset_t)entry - (vm_offset_t)gm.pool) / 0x1000] = 1;
++}
+ static uint64_t *
+ gmmu_table(uint64_t *pa)
+ {
+@@ -411,13 +432,17 @@ gmmu_next(uint64_t *tbl, unsigned idx)
+ 	}
+ 	uint64_t npa;
+ 	uint64_t *n = gmmu_table(&npa);
+-	if (n) tbl[idx] = npa | PTE_TABLE;
++	if (n) { tbl[idx] = npa | PTE_TABLE; gmmu_touch(&tbl[idx]); gmmu_touch(n); }
+ 	return n;
+ }
+ static void
+ gmmu_sync(void)
+ {
+-	flush_dcache64((addr64_t)gm.pool_pa, GMMU_POOL, TRUE);
++	for (unsigned t = 0; t < GMMU_POOL / 0x1000; t++) {
++		if (!gm_dirty[t]) continue;
++		gm_dirty[t] = 0;
++		flush_dcache64((addr64_t)(gm.pool_pa + t * 0x1000ULL), 0x1000, TRUE);
++	}
+ 	volatile uint32_t *cb = (volatile uint32_t *)(gm.smmu + CB0);
+ 	cb[CB_TLBIASID / 4] = 0;
+ 	cb[CB_TLBSYNC / 4] = 0;
+@@ -434,10 +459,25 @@ gmmu_map(uint64_t va, uint64_t pa, uint64_t size, bool ro)
+ 		uint64_t *l3 = l2 ? gmmu_next(l2, (unsigned)(v >> 21) & 511) : NULL;
+ 		if (!l3) return false;
+ 		l3[(v >> 12) & 511] = (pa + o) | (ro ? PTE_RO : PTE_RW) | PTE_PAGE;
++		gmmu_touch(&l3[(v >> 12) & 511]);
+ 	}
+-	gmmu_sync();
+ 	return true;
+ }
++static void
++gmmu_unmap(uint64_t va, uint64_t size)
++{
++	for (uint64_t o = 0; o < size; o += 0x1000) {
++		uint64_t v = va + o, *l1 = gm.pool;
++		uint64_t e1 = l1[(v >> 30) & 3];
++		if (!(e1 & 1)) continue;
++		uint64_t *l2 = gm.pool + (((e1 & 0x000000fffffff000ULL) - gm.pool_pa) / 8);
++		uint64_t e2 = l2[(v >> 21) & 511];
++		if (!(e2 & 1)) continue;
++		uint64_t *l3 = gm.pool + (((e2 & 0x000000fffffff000ULL) - gm.pool_pa) / 8);
++		l3[(v >> 12) & 511] = 0;
++		gmmu_touch(&l3[(v >> 12) & 511]);
++	}
++}
+ static bool
+ gmmu_init(vm_offset_t smmu)
+ {
+@@ -452,6 +492,7 @@ gmmu_init(vm_offset_t smmu)
+ 	gm.pool_pa = ptoa_64(pn);
+ 	uint64_t l1pa;
+ 	(void)gmmu_table(&l1pa);			/* table 0: L1 */
++	memset(gm_dirty, 0, sizeof(gm_dirty));
+ 	flush_dcache64((addr64_t)gm.pool_pa, GMMU_POOL, TRUE);
+ 	volatile uint32_t *cb = (volatile uint32_t *)(smmu + CB0);
+ 	cb[CB_SCTLR / 4] = 0;
+@@ -472,6 +513,231 @@ gmmu_init(vm_offset_t smmu)
+ 	return true;
+ }
+ 
++/*
++ * Kernel GPU service, first layer (what Mesa's freedreno later sits on, via
++ * /dev/rivergpu): GPU memory objects and submission with fences.
++ *
++ * Buffer objects are wired kernel pages (not physically contiguous), mapped
++ * 16 KiB page by page into the GPU address space at a first-fit GPU VA in
++ * [RGPU_HEAP_BASE, RGPU_HEAP_END). The GPU is not cache coherent: the CPU
++ * cleans before the GPU reads and invalidates before it reads GPU output.
++ *
++ * Submission follows mainline a5xx_submit without preemption: one
++ * CP_INDIRECT_BUFFER_PFE per command buffer, the seqno to CP_SCRATCH_REG(2),
++ * then CP_EVENT_WRITE CACHE_FLUSH_TS | IRQ writing the seqno to the fence
++ * word once prior work is flushed and raising RBBM_INT_0 CP_CACHE_FLUSH_TS on
++ * GIC SPI 33. Waiters sleep on that interrupt. The 4 KiB ring wraps.
++ */
++#define RGPU_HEAP_BASE	0x01100000ULL
++#define RGPU_HEAP_END	0xf0000000ULL
++#define RGPU_MAX_BO	1024
++#define OFF_FENCE	(OFF_SCRATCH + 0x100)
++
++struct rgpu_bo {
++	vm_offset_t va;
++	vm_size_t size;
++	uint64_t gpuva;
++	bool used;
++};
++static struct rgpu_bo rgpu_bos[RGPU_MAX_BO];
++static lck_grp_t *rgpu_grp;
++static lck_mtx_t *rgpu_lock;
++static uint64_t rgpu_ring_pa, rgpu_fence_va;
++static vm_offset_t rgpu_fence_cpu;
++static uint32_t rgpu_seqno;
++static volatile uint32_t rgpu_irqs, rgpu_irq_err, rgpu_irq_last;
++static int rgpu_fence_event;
++
++static void
++rgpu_irq(__unused void *arg)
++{
++	uint32_t st = g_rd(RBBM_INT_0_STATUS);
++	g_wr(RBBM_INT_CLEAR_CMD, st);
++	rgpu_irqs++;
++	rgpu_irq_last = st;
++	if (st & (INT_CP_HW_ERROR | INT_UCHE_OOB_ACCESS)) rgpu_irq_err++;
++	thread_wakeup((event_t)&rgpu_fence_event);
++}
++
++static uint32_t
++rgpu_fence_read(void)
++{
++	flush_dcache64((addr64_t)(rgpu_ring_pa - OFF_RING + OFF_FENCE), 64, TRUE);
++	return *(volatile uint32_t *)rgpu_fence_cpu;
++}
++
++/* Allocate a GPU buffer; returns its index or -1. */
++static int
++rgpu_bo_alloc(vm_size_t size)
++{
++	size = (size + PAGE_SIZE - 1) & ~(vm_size_t)PAGE_MASK;
++	lck_mtx_lock(rgpu_lock);
++	int slot = -1;
++	for (int i = 0; i < RGPU_MAX_BO; i++) if (!rgpu_bos[i].used) { slot = i; break; }
++	uint64_t at = RGPU_HEAP_BASE;
++	for (bool moved = true; moved && slot >= 0;) {
++		moved = false;
++		for (int i = 0; i < RGPU_MAX_BO; i++) {
++			struct rgpu_bo *b = &rgpu_bos[i];
++			if (b->used && at < b->gpuva + b->size && b->gpuva < at + size) {
++				at = b->gpuva + b->size;
++				moved = true;
++			}
++		}
++	}
++	vm_offset_t va = 0;
++	if (slot < 0 || at + size > RGPU_HEAP_END ||
++	    kmem_alloc(kernel_map, &va, size, KMA_DATA | KMA_ZERO, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++		lck_mtx_unlock(rgpu_lock);
++		return -1;
++	}
++	flush_dcache64((addr64_t)va, (unsigned)size, FALSE);
++	bool ok = true;
++	for (vm_size_t o = 0; ok && o < size; o += PAGE_SIZE) {
++		ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)(va + o));
++		ok = pn && gmmu_map(at + o, ptoa_64(pn), PAGE_SIZE, false);
++	}
++	if (!ok) {
++		gmmu_unmap(at, size);
++		gmmu_sync();
++		kmem_free(kernel_map, va, size);
++		lck_mtx_unlock(rgpu_lock);
++		return -1;
++	}
++	gmmu_sync();
++	rgpu_bos[slot] = (struct rgpu_bo){ .va = va, .size = size, .gpuva = at, .used = true };
++	lck_mtx_unlock(rgpu_lock);
++	return slot;
++}
++
++/* Free a GPU buffer; the caller makes sure the GPU is done with it. */
++static void
++rgpu_bo_free(int slot)
++{
++	lck_mtx_lock(rgpu_lock);
++	struct rgpu_bo *b = &rgpu_bos[slot];
++	if (b->used) {
++		gmmu_unmap(b->gpuva, b->size);
++		gmmu_sync();
++		kmem_free(kernel_map, b->va, b->size);
++		*b = (struct rgpu_bo){ 0 };
++	}
++	lck_mtx_unlock(rgpu_lock);
++}
++
++static void
++rgpu_ring_space(unsigned dw)
++{
++	for (unsigned i = 0; i < 1000000; i++) {
++		unsigned rptr = g_rd(CP_RB_RPTR) & (RING_DW - 1);
++		if (((rptr - wptr - 1) & (RING_DW - 1)) >= dw) return;
++		delay(1);
++	}
++	printf("RIVER GPU: ring stays full (rptr %u wptr %u)\n", g_rd(CP_RB_RPTR), wptr);
++}
++
++/* Queue command buffers (GPU VA, size in dwords); returns the fence seqno. */
++static uint32_t
++rgpu_submit(const uint64_t *ib, const uint32_t *ib_dw, unsigned n)
++{
++	lck_mtx_lock(rgpu_lock);
++	rgpu_ring_space(4 * n + 2 + 5);
++	for (unsigned i = 0; i < n; i++) {
++		OUT(pkt7(CP_INDIRECT_BUFFER_PFE, 3));
++		OUT((uint32_t)ib[i]);
++		OUT((uint32_t)(ib[i] >> 32));
++		OUT(ib_dw[i]);
++	}
++	uint32_t seq = ++rgpu_seqno;
++	OUT(pkt4(CP_SCRATCH_REG(2), 1));
++	OUT(seq);
++	OUT(pkt7(CP_EVENT_WRITE, 4));
++	OUT(CACHE_FLUSH_TS | CP_EVENT_WRITE_0_IRQ);
++	OUT((uint32_t)rgpu_fence_va);
++	OUT((uint32_t)(rgpu_fence_va >> 32));
++	OUT(seq);
++	flush_dcache64((addr64_t)rgpu_ring_pa, RING_SIZE, TRUE);
++	g_wr(CP_RB_WPTR, wptr);
++	lck_mtx_unlock(rgpu_lock);
++	return seq;
++}
++
++/* Sleep until fence seqno has signalled (wrap-safe compare); false on timeout. */
++static bool
++rgpu_wait(uint32_t seq, unsigned ms)
++{
++	uint64_t deadline;
++	clock_interval_to_deadline(ms, NSEC_PER_MSEC, &deadline);
++	for (;;) {
++		if ((int32_t)(rgpu_fence_read() - seq) >= 0) return true;
++		if (mach_absolute_time() > deadline) return false;
++		(void)assert_wait_deadline((event_t)&rgpu_fence_event, THREAD_UNINT, deadline);
++		if ((int32_t)(rgpu_fence_read() - seq) >= 0) {
++			clear_wait(current_thread(), THREAD_AWAKENED);
++			return true;
++		}
++		(void)thread_block(THREAD_CONTINUE_NULL);
++	}
++}
++
++/* Bring the service up on the running CP, then exercise it. */
++static void
++rgpu_service_test(vm_offset_t buf, uint64_t pa, uint64_t gva)
++{
++	rgpu_grp = lck_grp_alloc_init("rivergpu", LCK_GRP_ATTR_NULL);
++	rgpu_lock = lck_mtx_alloc_init(rgpu_grp, LCK_ATTR_NULL);
++	rgpu_ring_pa = pa + OFF_RING;
++	rgpu_fence_va = gva + OFF_FENCE;
++	rgpu_fence_cpu = buf + OFF_FENCE;
++	*(volatile uint32_t *)rgpu_fence_cpu = 0;
++	flush_dcache64((addr64_t)(pa + OFF_FENCE), 64, TRUE);
++	rgpu_seqno = 0;
++	g_wr(RBBM_INT_CLEAR_CMD, 0xffffffff);
++	bool irq = river_irq_register(GPU_INTID, false, rgpu_irq, NULL);
++	g_wr(RBBM_INT_0_MASK, INT_CP_CACHE_FLUSH_TS | INT_CP_HW_ERROR | INT_UCHE_OOB_ACCESS);
++	printf("RIVER GPU: service up: GPU IRQ INTID %u %s, ring %u dwords, BO heap %#llx-%#llx\n",
++	    GPU_INTID, irq ? "registered" : "NOT registered", RING_DW, RGPU_HEAP_BASE, RGPU_HEAP_END);
++
++	enum { N = 200 };
++	int tgt = rgpu_bo_alloc(64 * 1024), ibo = rgpu_bo_alloc(N * 64);
++	if (tgt < 0 || ibo < 0) { printf("RIVER GPU: BO allocation failed (%d %d)\n", tgt, ibo); return; }
++	struct rgpu_bo *T = &rgpu_bos[tgt], *I = &rgpu_bos[ibo];
++	printf("RIVER GPU: BOs: target %#lx bytes at GPU %#llx, IBs %#lx bytes at GPU %#llx\n",
++	    (unsigned long)T->size, T->gpuva, (unsigned long)I->size, I->gpuva);
++	uint64_t t0 = mach_absolute_time();
++	uint32_t last = 0, irqs0 = rgpu_irqs;
++	for (unsigned i = 0; i < N; i++) {
++		uint32_t *cmd = (uint32_t *)(I->va + i * 64);
++		uint64_t dst = T->gpuva + i * 4;
++		cmd[0] = pkt7(CP_MEM_WRITE, 3);
++		cmd[1] = (uint32_t)dst;
++		cmd[2] = (uint32_t)(dst >> 32);
++		cmd[3] = 0x5a000000u | i;
++		flush_dcache64((addr64_t)(vm_offset_t)cmd, 64, FALSE);
++		uint64_t ibva = I->gpuva + i * 64;
++		uint32_t dw = 4;
++		last = rgpu_submit(&ibva, &dw, 1);
++	}
++	bool done = rgpu_wait(last, 1000);
++	uint64_t t1 = mach_absolute_time(), ns;
++	absolutetime_to_nanoseconds(t1 - t0, &ns);
++	flush_dcache64((addr64_t)T->va, (unsigned)T->size, FALSE);
++	unsigned good = 0, firstbad = N;
++	for (unsigned i = 0; i < N; i++) {
++		if (((volatile uint32_t *)T->va)[i] == (0x5a000000u | i)) good++;
++		else if (firstbad == N) firstbad = i;
++	}
++	printf("RIVER GPU: %u submits (ring wrapped %u times): fence %s at %u (want %u) in %llu us, %u/%u writes ok (first bad %u), %u IRQs, %u error IRQs, last INT %#x\n",
++	    N, (N * 11) / RING_DW, done ? "signalled" : "TIMED OUT", rgpu_fence_read(), last,
++	    ns / 1000, good, N, firstbad, rgpu_irqs - irqs0, rgpu_irq_err, rgpu_irq_last);
++	rgpu_bo_free(ibo);
++	rgpu_bo_free(tgt);
++	int again = rgpu_bo_alloc(32 * 1024);
++	printf("RIVER GPU: BOs freed; reallocation got GPU %#llx (heap reuse %s)\n",
++	    again >= 0 ? rgpu_bos[again].gpuva : 0ULL, again >= 0 && rgpu_bos[again].gpuva == RGPU_HEAP_BASE ? "ok" : "unexpected");
++	if (again >= 0) rgpu_bo_free(again);
++}
++
+ void river_gpu_cp_start(void);
+ void
+ river_gpu_cp_start(void)
+@@ -537,7 +803,8 @@ river_gpu_cp_start(void)
+ 	 */
+ 	if (!gmmu_init(sm) ||
+ 	    !gmmu_map(GPU_VA_BASE, pa, OFF_RING, true) ||
+-	    !gmmu_map(GPU_VA_BASE + OFF_RING, pa + OFF_RING, BUF_SIZE - OFF_RING, false)) {
++	    !gmmu_map(GPU_VA_BASE + OFF_RING, pa + OFF_RING, BUF_SIZE - OFF_RING, false) ||
++	    (gmmu_sync(), false)) {
+ 		printf("RIVER GPU: GPU page tables could not be set up\n");
+ 		return;
+ 	}
+@@ -608,32 +875,32 @@ river_gpu_cp_start(void)
+ 	/* Clear ME_HALT and send CP_ME_INIT (a5xx_me_init, A506 workaround 0x0b). */
+ 	g_wr(CP_PFP_ME_CNTL, 0);
+ 	wptr = 0;
+-	ring[wptr++] = pkt7(CP_ME_INIT, 8);
+-	ring[wptr++] = 0x0000002f;
+-	ring[wptr++] = 0x00000003;
+-	ring[wptr++] = 0x20000000;
+-	ring[wptr++] = 0;
+-	ring[wptr++] = 0;
+-	ring[wptr++] = 0x0000000b;
+-	ring[wptr++] = 0;
+-	ring[wptr++] = 0;
++	OUT(pkt7(CP_ME_INIT, 8));
++	OUT(0x0000002f);
++	OUT(0x00000003);
++	OUT(0x20000000);
++	OUT(0);
++	OUT(0);
++	OUT(0x0000000b);
++	OUT(0);
++	OUT(0);
+ 	if (!submit(buf, pa, "CP_ME_INIT")) return;
+ 	printf("RIVER GPU: CP_ME_INIT consumed (rptr %u), RBBM_STATUS %#x\n", g_rd(CP_RB_RPTR), g_rd(RBBM_STATUS));
+ 
+ 	/* Proof of execution: the CP writes a scratch register (PKT4) ... */
+ 	g_wr(CP_SCRATCH_REG(0), 0);
+-	ring[wptr++] = pkt4(CP_SCRATCH_REG(0), 1);
+-	ring[wptr++] = 0x05060a5e;
++	OUT(pkt4(CP_SCRATCH_REG(0), 1));
++	OUT(0x05060a5e);
+ 	if (!submit(buf, pa, "scratch write")) return;
+ 	printf("RIVER GPU: CP wrote CP_SCRATCH_REG0 = %#x (expect 0x5060a5e)\n", g_rd(CP_SCRATCH_REG(0)));
+ 
+ 	/* ... then memory (CP_MEM_WRITE: addr lo, hi, data). Still in secure
+ 	 * mode until a zap shader runs, so this may be refused; it is last. */
+ 	uint64_t spa = pa + OFF_SCRATCH, sva = gva + OFF_SCRATCH;
+-	ring[wptr++] = pkt7(CP_MEM_WRITE, 3);
+-	ring[wptr++] = (uint32_t)sva;
+-	ring[wptr++] = (uint32_t)(sva >> 32);
+-	ring[wptr++] = 0x1c0ffee5;
++	OUT(pkt7(CP_MEM_WRITE, 3));
++	OUT((uint32_t)sva);
++	OUT((uint32_t)(sva >> 32));
++	OUT(0x1c0ffee5);
+ 	bool ok = submit(buf, pa, "CP_MEM_WRITE");
+ 	flush_dcache64((addr64_t)spa, 64, TRUE);
+ 	printf("RIVER GPU: CP_MEM_WRITE %s; memory now %#x (expect 0x1c0ffee5, was 0xdeadbeef); SMMU CB0 FSR %#x GFSR %#x\n",
+@@ -642,13 +909,13 @@ river_gpu_cp_start(void)
+ 
+ 	/* a5xx_hw_init: with the zap shader loaded, the CP leaves secure mode. */
+ 	if (!zap_load(fw, fw_size)) return;
+-	ring[wptr++] = pkt7(CP_SET_SECURE_MODE, 1);
+-	ring[wptr++] = 0;
++	OUT(pkt7(CP_SET_SECURE_MODE, 1));
++	OUT(0);
+ 	if (!submit(buf, pa, "CP_SET_SECURE_MODE 0")) return;
+-	ring[wptr++] = pkt7(CP_MEM_WRITE, 3);
+-	ring[wptr++] = (uint32_t)sva;
+-	ring[wptr++] = (uint32_t)(sva >> 32);
+-	ring[wptr++] = 0x2a506a5e;
++	OUT(pkt7(CP_MEM_WRITE, 3));
++	OUT((uint32_t)sva);
++	OUT((uint32_t)(sva >> 32));
++	OUT(0x2a506a5e);
+ 	ok = submit(buf, pa, "CP_MEM_WRITE after secure mode");
+ 	flush_dcache64((addr64_t)spa, 64, TRUE);
+ 	printf("RIVER GPU: out of secure mode; CP_MEM_WRITE %s, memory %#x (expect 0x2a506a5e); RBBM_STATUS %#x INT_0 %#x\n",
+@@ -658,13 +925,15 @@ river_gpu_cp_start(void)
+ 	/* Translation is enforced: a write to an unmapped GPU address must
+ 	 * fault in CB0 (FSR.TF, FAR = that address) and leave memory alone. */
+ 	volatile uint32_t *cb = (volatile uint32_t *)(sm + CB0);
+-	const uint64_t bad = GPU_VA_BASE + 0x01000000;
+-	ring[wptr++] = pkt7(CP_MEM_WRITE, 3);
+-	ring[wptr++] = (uint32_t)bad;
+-	ring[wptr++] = (uint32_t)(bad >> 32);
+-	ring[wptr++] = 0x0badf00d;
++	const uint64_t bad = 0xf0000000ULL;		/* above the BO heap, never mapped */
++	OUT(pkt7(CP_MEM_WRITE, 3));
++	OUT((uint32_t)bad);
++	OUT((uint32_t)(bad >> 32));
++	OUT(0x0badf00d);
+ 	ok = submit(buf, pa, "CP_MEM_WRITE to an unmapped address");
+ 	printf("RIVER GPU: unmapped write %s: CB0 FSR %#x FAR %#x%08x FSYNR0 %#x; RBBM_STATUS %#x\n",
+ 	    ok ? "consumed" : "stuck", cb[CB_FSR / 4], cb[CB_FAR / 4 + 1], cb[CB_FAR / 4], cb[CB_FSYNR0 / 4], g_rd(RBBM_STATUS));
+ 	cb[CB_FSR / 4] = cb[CB_FSR / 4];
++
++	rgpu_service_test(buf, pa, gva);
+ }

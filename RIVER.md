@@ -1334,3 +1334,17 @@ address, FSYNR0 WNR (write), terminated without stalling; the CP kept going
 Next (kernel GPU service): GPU memory objects with a GPU VA allocator, a
 submission path with fences (CP_EVENT_WRITE / CACHE_FLUSH_TS) and the GPU
 IRQ (SPI 33) instead of polling, then the /dev/rivergpu interface for Mesa.
+
+### 0168 (prepared): GPU memory objects, fenced submission, GPU IRQ
+river_gpu.c service layer: buffer objects = wired kernel pages
+(kmem_alloc, not contiguous) mapped 16 KiB at a time into the GPU VA heap
+0x01100000-0xf0000000 (first fit), cleaned/invalidated around GPU access;
+page-table pool grown to 1 MiB (256 tables) with per-table dirty cleaning;
+gmmu_unmap + kmem_free on release. Submission as mainline a5xx_submit minus
+preemption: CP_INDIRECT_BUFFER_PFE per command buffer, seqno to
+CP_SCRATCH_REG(2), CP_EVENT_WRITE CACHE_FLUSH_TS | IRQ to a fence word; the
+4 KiB ring wraps (space from CP_RB_RPTR). GPU IRQ GIC SPI 33 (INTID 65,
+level) -> RBBM_INT_0_STATUS, clear, wake waiters; mask = CP_CACHE_FLUSH_TS,
+CP_HW_ERROR, UCHE_OOB_ACCESS. Boot self-test: 200 submits of a
+CP_MEM_WRITE command buffer each (ring wraps ~2x), one fence wait, check all
+200 words, free, re-allocate (heap reuse).
