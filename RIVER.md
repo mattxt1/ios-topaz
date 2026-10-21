@@ -1090,3 +1090,12 @@ GDSC; 0155 does the same.
 still 0x8282800, GFX LDO status 0 (no BHS_EN_REST_ACK). 0156 powers the
 head switch under software control as switch_mode_to_bhs() does and logs
 whether BHS_EN_REST_ACK arrives, before enabling the GX GDSC.
+
+### r34 (0156; CI build of 4f5481b): BHS under SW control, no ack
+`BHS under SW control, status 0x4 after 50 x 10 us (NO ACK)`: the GFX LDO
+reports LDO_READY (its input, VDD_CX = PM8953 S2 via RPM, is present) but
+the head switch never acks; GX stays 0x8282800. DT ldo-enable-corner-map is
+all zero, so Linux always uses BHS (handed to the GDSC). Mainline
+gcc-msm8953.c: oxili_gx_gdsc has CLAMP_IO with clamp_io_ctrl GCC+0x5b00c,
+deasserted (bit 0) before power-on. 0157 returns to enable_bhs_mode and
+releases that clamp before enabling GX.
