@@ -889,3 +889,12 @@ output on), L 73, Gold RCG 0x501; S5 unchanged at 870 mV. spin **1397 MHz**
 40.9 C at boot (was 36.9). No eMMC errors; driverkitd only crash so far.
 Next for CPU: c5+ (1555-2016 MHz) needs S5/CPR voltage control (APM 875 mV
 threshold, mem-acc levels); CCI still GPLL0/2 400 MHz.
+
+### r22 (0144 + Gold 1401.6 MHz shim, sweetfb_hz=30; CI build of 029c1e9)
+spin 1401 MHz. riverFlush (8-pixel 64-bit packing, unchanged-row skip):
+**avg 11.3 ms per flush, ~1166 of 2270 rows written** over the first 256
+flushes (about a third of one core at 30 Hz, conversion only; the BGRA
+compose memcpy before it is not timed). Timeline: SpringBoard exec +20.7 s,
+**lock screen (first display on/swap) +123 s** (r16 at 800 MHz ~+300 s).
+User: "definitely a bit smoother". Hottest TSENS 40.5 C. No eMMC errors;
+driverkitd only crash.
