@@ -922,3 +922,12 @@ DSI0 CTRL 0x1f3 (video mode, 4 lanes), TRIG 0x4, CMD DMA ctrl 0x14000000.
 and back on with the display (lock screen, wake). The off/on blink between
 the two Apple logos during boot is iOS's own display power sequence, now
 visible because the backlight follows it.
+
+### r26 (0148 GIC SPIs, eMMC hc_irq, touch latch; CI build of a7ab291)
+`hc_irq on`; **every ADMA2 read slept on the interrupt: 24576 waits =
+24576 interrupts by +63 s**, none timed out. GPIO65 INTR_CFG 0xf6 (raw
+status, rising edge; ABL's target bits kept). Lock screen +76 s (same as
+r23-r25). User: touch and swipes unchanged. But "12288 touch reads in
+12288 polls": the INT-low trigger is always true (INT idles low on this
+panel), so the latch saved nothing. 0149 drops that trigger (latch,
+finger down, or every 10th poll) and counts reads per reason.
