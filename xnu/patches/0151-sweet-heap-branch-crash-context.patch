@@ -1,0 +1,48 @@
+diff --git a/osfmk/kern/exception.c b/osfmk/kern/exception.c
+index a86dd38..52bee5f 100644
+--- a/osfmk/kern/exception.c
++++ b/osfmk/kern/exception.c
+@@ -857,6 +857,43 @@ sweet_crash_log(const char *name, int pid, int sig, uint64_t code, uint64_t subc
+ 	printf("CRASH %s pc 0x%llx lr 0x%llx sp 0x%llx fp 0x%llx far 0x%llx\n", name,
+ 	    get_saved_state_pc(ss), get_saved_state_lr(ss), get_saved_state_sp(ss), fp,
+ 	    (uint64_t)saved_state64(ss)->far);
++	/* A branch into non-executable user memory can be a corrupted ObjC IMP.
++	 * Preserve the call-site instruction, registers, and likely ObjC operands
++	 * before the task's mappings disappear. Read only this process's memory. */
++	if (sig == 10 && get_saved_state_pc(ss) == (uint64_t)saved_state64(ss)->far) {
++		uint64_t lr = get_saved_state_lr(ss);
++		uint32_t insn;
++		printf("CRASH %s branch esr 0x%llx lr-4 0x%llx", name,
++		    (uint64_t)saved_state64(ss)->esr, lr >= 4 ? lr - 4 : 0);
++		if (lr >= 4 && copyin((user_addr_t)(lr - 4), &insn, sizeof(insn)) == 0) {
++			printf(" insn 0x%08x", insn);
++		} else {
++			printf(" unreadable");
++		}
++		printf("\n");
++		for (int i = 0; i < 28; i += 4) {
++			printf("CRASH %s regs x%d=0x%llx x%d=0x%llx x%d=0x%llx x%d=0x%llx\n",
++			    name, i, get_saved_state_reg(ss, i), i + 1,
++			    get_saved_state_reg(ss, i + 1), i + 2,
++			    get_saved_state_reg(ss, i + 2), i + 3, get_saved_state_reg(ss, i + 3));
++		}
++		printf("CRASH %s regs x28=0x%llx\n", name, get_saved_state_reg(ss, 28));
++		const int operands[] = { 0, 8, 16 };
++		for (unsigned i = 0; i < sizeof(operands) / sizeof(operands[0]); i++) {
++			int reg = operands[i];
++			uint64_t addr = get_saved_state_reg(ss, reg);
++			uint64_t words[8];
++			if (addr == 0 || copyin((user_addr_t)addr, words, sizeof(words)) != 0) {
++				printf("CRASH %s x%d memory 0x%llx unreadable\n", name, reg, addr);
++				continue;
++			}
++			for (int j = 0; j < 8; j += 4) {
++				printf("CRASH %s x%d memory 0x%llx: %016llx %016llx %016llx %016llx\n",
++				    name, reg, addr + j * sizeof(uint64_t), words[j], words[j + 1],
++				    words[j + 2], words[j + 3]);
++			}
++		}
++	}
+ 
+ 	char line[200];
+ 	int n = snprintf(line, sizeof(line), "CRASH %s bt", name);

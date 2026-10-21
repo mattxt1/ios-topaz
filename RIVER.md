@@ -963,3 +963,33 @@ not permitted", tag 35). Three such crashes in two processes, from r17 on
 (before ADMA2/interrupts): likely user-memory corruption from a kernel
 path (suspects: VM compressor/swap, page zeroing/COW, cache maintenance).
 Also r28: PosterBoard SIGTRAP/SIGABRT, Preferences SIGTRAP at +538 s.
+
+## r29 crash isolation (2026-10-21)
+
+The r17 SpringBoard and r28 appleaccountd logs each show `pc == far` inside
+their own writable malloc mapping (two tag 35, one tag 11). This is an
+instruction fetch from heap, not the separate r19 single-core `code 10`
+failed-page-in crash after an eMMC timeout. The latter boot did not provide
+a clean SMP comparison.
+
+Source survey before changing the kernel: ordinary user mappings from
+`pmap_cache_attributes()` use MAIR writeback (0xff) and outer-shareable
+PTEs (`SH_OUTER_MEMORY=2`, defined as inner+outer shareable). The ARM64 TLB
+paths use inner-shareable broadcast invalidations (`...is`). No wrong PTE
+attribute or local-only TLBI was found in that path. River's ADMA2 reads
+use a dedicated contiguous bounce buffer and copy into the requested kernel
+buffer; ADMA2 and IRQs postdate the first two crashes. This does not yet
+exclude cross-core cache behavior, swap writes, or another memory writer.
+
+Local r28-kernel payload variants prepared (not new kernel builds):
+- `river-r28-c1-boot.img` SHA-256 `23e1f5897cecd1b166785b1c2b895e13ca5a71b56d83156bcb2df8a2a25f4d91`:
+  `cpus=1`, otherwise r28 args. RAM boot accepted; live test in progress.
+- `river-r28-noswap-boot.img` SHA-256 `ffb1318267a106aacf47e127f367a8cba9ed8a6a92dfeae89e83379394324cf0`:
+  `cpus=4 vm_compressor=2`, otherwise r28 args. Not booted yet. XNU
+  `vm_fault.c` accepts 2 as `VM_PAGER_COMPRESSOR_NO_SWAP` and prints the
+  selected mode at boot.
+
+Patch 0151 extends the existing SWEET crash line only for SIGBUS with
+`pc == far`: ESR, instruction at LR-4, x0-x28, and 64 bytes at x0/x8/x16
+when readable. It compiled locally for river and topaz; a CI kernel build
+and phone test remain. Crash memory stays only in private local logs.
