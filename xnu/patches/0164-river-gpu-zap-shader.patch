@@ -1,0 +1,156 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index 1a94442..299962f 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -100,6 +100,7 @@ static const uint32_t addr_mode_cntl[] = {
+ /* adreno_pm4.xml.h opcodes */
+ #define CP_ME_INIT	72
+ #define CP_MEM_WRITE	61
++#define CP_SET_SECURE_MODE	102
+ 
+ /* Buffer layout in one contiguous 64 KiB allocation. */
+ #define BUF_SIZE	0x10000
+@@ -196,6 +197,123 @@ submit(vm_offset_t buf, uint64_t pa, const char *what)
+ 	return false;
+ }
+ 
++/* Qualcomm SCM call (SMCCC SMC64 standard call, SIP owner; x0 = 1 means
++ * interrupted, call again), as qcom_scm-smc.c. Returns x0; *r1 = x1. */
++static int64_t
++gpu_scm(uint32_t svc, uint32_t cmd, uint64_t arginfo, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t *r1)
++{
++	register uint64_t x0 __asm__("x0") = 0x42000000ULL | ((svc & 0xff) << 8) | (cmd & 0xff);
++	register uint64_t x1 __asm__("x1") = arginfo;
++	register uint64_t x2 __asm__("x2") = a0;
++	register uint64_t x3 __asm__("x3") = a1;
++	register uint64_t x4 __asm__("x4") = a2;
++	register uint64_t x5 __asm__("x5") = 0;
++	do {
++		__asm__ volatile("smc #0"
++		    : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5)
++		    :
++		    : "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
++	} while (x0 == 1);
++	if (r1) *r1 = x1;
++	return (int64_t)x0;
++}
++
++/* Physically contiguous permanent kernel memory, pa aligned to (pnum_mask + 1) pages. */
++static vm_offset_t
++contig(vm_size_t size, ppnum_t pnum_mask, uint64_t *pa)
++{
++	vm_offset_t va = 0;
++	if (kmem_alloc_contig(kernel_map, &va, size, PAGE_MASK, 0, pnum_mask,
++	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS)
++		return 0;
++	ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)va);
++	*pa = pn ? ptoa_64(pn) : 0;
++	return *pa ? va : 0;
++}
++
++/*
++ * Zap shader through TZ PIL, as mainline zap_shader_load_mdt + qcom_mdt_load:
++ * a506_zap.mdt is the ELF header + program headers (phdr 0, 0x94 bytes) with
++ * the hash segment packed after it, which is exactly the pas_init_image
++ * metadata; the one loadable segment (a506_zap.b02, relocatable, p_paddr
++ * 0x5000, 1 MiB alignment) goes to the start of a 1 MiB-aligned region given
++ * to TZ with pas_mem_setup(min..ALIGN(max, 4K)), then auth_and_reset. TZ
++ * hashes with the crypto engine: its clocks are voted on first (qcom,kgsl-hyp
++ * scm_core/iface/bus clocks; crypto_clk_src at 80 MHz). The region is never
++ * touched again by the kernel once TZ owns it.
++ */
++#define GPU_PAS_ID	13
++static bool
++zap_load(const uint8_t *fw, uint64_t fw_size)
++{
++	uint32_t mdt_size = 0, seg_size = 0;
++	const uint8_t *mdt = fw_find(fw, fw_size, "a506_zap.mdt", &mdt_size);
++	const uint8_t *seg = fw_find(fw, fw_size, "a506_zap.b02", &seg_size);
++	if (!mdt || !seg || mdt_size < 0x94 || memcmp(mdt, "\177ELF\001", 5)) {
++		printf("RIVER GPU: zap shader not in the firmware container\n");
++		return false;
++	}
++	const uint8_t *ph = mdt + *(const uint32_t *)(mdt + 0x1c);
++	uint16_t phnum = *(const uint16_t *)(mdt + 0x2c);
++	uint32_t ehdr = *(const uint32_t *)(ph + 16), hash = 0, lo = ~0u, hi = 0, filesz = 0, memsz = 0;
++	for (unsigned i = 1; i < phnum; i++) {
++		const uint32_t *p = (const uint32_t *)(ph + i * 32);
++		uint32_t type = p[0], paddr = p[3], fs = p[4], ms = p[5], flags = p[6];
++		if (((flags >> 24) & 7) == 2 && !hash) hash = fs;
++		if (type == 1 && ((flags >> 24) & 7) != 2 && ms) {
++			if (paddr < lo) lo = paddr;
++			if (paddr + ms > hi) hi = (paddr + ms + 0xfff) & ~0xfffu;
++			filesz = fs; memsz = ms;
++		}
++	}
++	if (ehdr + hash != mdt_size || lo == ~0u || filesz != seg_size || hi - lo > PAGE_SIZE) {
++		printf("RIVER GPU: unexpected zap layout (ehdr %#x hash %#x mdt %#x seg %#x/%#x load %#x-%#x)\n",
++		    ehdr, hash, mdt_size, seg_size, filesz, lo, hi);
++		return false;
++	}
++
++	vm_offset_t gcc_rcg = ml_io_map_unmappable(0x01814000, 0x4000, VM_WIMG_IO);
++	vm_offset_t gcc_vote = ml_io_map_unmappable(0x01844000, 0x4000, VM_WIMG_IO);
++	if (!gcc_rcg || !gcc_vote) { printf("RIVER GPU: GCC map failed\n"); return false; }
++	volatile uint32_t *rcg = (volatile uint32_t *)(gcc_rcg + 0x2004);	/* GCC 0x16004 */
++	rcg[1] = (1u << 8) | 19;		/* CFG: GPLL0 / 10 = 80 MHz */
++	rcg[0] |= 1;				/* update */
++	for (unsigned i = 0; i < 1000 && (rcg[0] & 1); i++) delay(1);
++	volatile uint32_t *vote = (volatile uint32_t *)(gcc_vote + 0x1004);	/* GCC 0x45004 */
++	*vote |= 7;				/* crypto ahb, axi, core */
++	__asm__ volatile("dsb sy" ::: "memory");
++	delay(100);
++	volatile uint32_t *cb = (volatile uint32_t *)(gcc_rcg + 0x201c);	/* 0x1601c core, 0x16020 axi, 0x16024 ahb */
++	printf("RIVER GPU: crypto clocks: rcg cmd %#x cfg %#x vote %#x cbcr core %#x axi %#x ahb %#x\n",
++	    rcg[0], rcg[1], *vote, cb[0], cb[1], cb[2]);
++
++	uint64_t mpa = 0, zpa = 0, r = 0;
++	vm_offset_t meta = contig(PAGE_SIZE, 0, &mpa);
++	vm_offset_t zap = contig(PAGE_SIZE, (ppnum_t)((0x100000 / PAGE_SIZE) - 1), &zpa);
++	if (!meta || !zap || (zpa & 0xfffff)) {
++		printf("RIVER GPU: zap memory allocation failed (meta %#llx zap %#llx)\n", mpa, zpa);
++		return false;
++	}
++	memcpy((void *)meta, mdt, mdt_size);
++	memcpy((void *)zap, seg, seg_size);	/* offset p_paddr - lo = 0; memsz == filesz */
++	flush_dcache64((addr64_t)mpa, PAGE_SIZE, TRUE);
++	flush_dcache64((addr64_t)zpa, PAGE_SIZE, TRUE);
++	(void)memsz;
++
++	int64_t st = gpu_scm(0x02, 0x07, 1, GPU_PAS_ID, 0, 0, &r);
++	printf("RIVER GPU: zap: PAS %u supported status %lld result %llu; metadata %#x bytes at %#llx, segment %#x bytes at %#llx (TZ range %#x)\n",
++	    GPU_PAS_ID, st, r, mdt_size, mpa, seg_size, zpa, hi - lo);
++	st = gpu_scm(0x02, 0x01, 2 | (2 << 6), GPU_PAS_ID, mpa, 0, &r);	/* ARGS(2, VAL, RW) */
++	printf("RIVER GPU: zap: pas_init_image status %lld result %#llx\n", st, r);
++	if (st || r) return false;
++	st = gpu_scm(0x02, 0x02, 3, GPU_PAS_ID, zpa, hi - lo, &r);
++	printf("RIVER GPU: zap: pas_mem_setup status %lld result %#llx\n", st, r);
++	if (st || r) return false;
++	st = gpu_scm(0x02, 0x05, 1, GPU_PAS_ID, 0, 0, &r);
++	printf("RIVER GPU: zap: auth_and_reset status %lld result %#llx\n", st, r);
++	return !st && !r;
++}
++
+ void river_gpu_cp_start(void);
+ void
+ river_gpu_cp_start(void)
+@@ -350,4 +468,19 @@ river_gpu_cp_start(void)
+ 	flush_dcache64((addr64_t)spa, 64, TRUE);
+ 	printf("RIVER GPU: CP_MEM_WRITE %s; memory now %#x (expect 0x1c0ffee5, was 0xdeadbeef); SMMU CB0 FSR %#x GFSR %#x\n",
+ 	    ok ? "consumed" : "stuck", scratch[0], s[0x8058/4], s[0x48/4]);
++	if (!ok) return;
++
++	/* a5xx_hw_init: with the zap shader loaded, the CP leaves secure mode. */
++	if (!zap_load(fw, fw_size)) return;
++	ring[wptr++] = pkt7(CP_SET_SECURE_MODE, 1);
++	ring[wptr++] = 0;
++	if (!submit(buf, pa, "CP_SET_SECURE_MODE 0")) return;
++	ring[wptr++] = pkt7(CP_MEM_WRITE, 3);
++	ring[wptr++] = (uint32_t)spa;
++	ring[wptr++] = (uint32_t)(spa >> 32);
++	ring[wptr++] = 0x2a506a5e;
++	ok = submit(buf, pa, "CP_MEM_WRITE after secure mode");
++	flush_dcache64((addr64_t)spa, 64, TRUE);
++	printf("RIVER GPU: out of secure mode; CP_MEM_WRITE %s, memory %#x (expect 0x2a506a5e); RBBM_STATUS %#x INT_0 %#x\n",
++	    ok ? "consumed" : "stuck", scratch[0], g_rd(RBBM_STATUS), g_rd(RBBM_INT_0_STATUS));
+ }

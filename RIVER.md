@@ -1238,3 +1238,15 @@ Next: zap shader through TZ PIL (pas_init_image / mem_setup /
 auth_and_reset, PAS id 13, from the RiverGPUFW container), then
 CP_SET_SECURE_MODE 0; then a first 2D blit/clear into a framebuffer, and a
 userland path (freedreno/GLES or a Metal-shaped driver).
+
+### 0164 (prepared): zap shader through TZ PIL, then CP_SET_SECURE_MODE 0
+Zap layout (parsed locally): a506_zap.mdt = phdr0 (ELF header + 3 phdrs,
+0x94) + hash segment (type 2, 0x1988) packed, i.e. the whole .mdt is the
+pas_init_image metadata; one PT_LOAD (a506_zap.b02, 0x1454 bytes, p_paddr
+0x5000, relocatable, align 1 MiB), so TZ range = 0x2000. 0164 votes the
+crypto clocks (GCC 0x45004 bits 0-2; crypto_clk_src 0x16004 = GPLL0/10 =
+80 MHz, as qcom,kgsl-hyp's scm clocks), copies metadata and segment into
+physically contiguous memory (segment 1 MiB aligned), then SCM PAS calls
+for id 13: is_supported (2/7), init_image (2/1, ARGS(2,VAL,RW)), mem_setup
+(2/2), auth_and_reset (2/5); on success CP_SET_SECURE_MODE 0 and another
+CP_MEM_WRITE to confirm the CP still runs.
