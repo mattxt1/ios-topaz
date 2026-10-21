@@ -29,4 +29,7 @@ ninja -C build-ios src/gallium/drivers/freedreno/river_gallium_test
 ```
 Status 2026-10-21: everything builds for iOS arm64, including
 `build-ios/src/gallium/drivers/freedreno/river_gallium_test` (12.7 MB, linked
-after the u_sync_provider fix). Not yet signed or run on the phone.
+after the u_sync_provider fix). Signed and run on the phone: RiverGPU opened
+and Mesa created an FD506 screen, then PID 1 SIGSEGV'd before context creation
+returned. See RIVER.md r49g. The Mesa source tree currently has temporary
+`RIVER DIAG` context markers; the diagnostic binary and RAM image are built.

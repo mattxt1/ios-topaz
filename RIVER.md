@@ -1456,3 +1456,22 @@ libfreedreno_drm, libfreedreno_ir3, gallium libfreedreno.a. Next: link and
 run `river_gallium_test` on the phone (sign with codesign -s -, pack with
 RIVER_FILES to /usr/local/bin, boot with riverinit=), expect a GPU clear
 through Mesa's blitter (ir3 shaders + draw) to read back as 00 80 ff ff.
+
+### r49g (r49 kernel + river_gallium_test, locally packed): screen created, context crash
+Signed the linked iOS arm64 test, packed it as RiverFiles in a RAM-only image,
+and booted it twice. The second boot had the USB receiver already running;
+private log `logs-private/r49-gallium-live-2.txt` captures the result. The
+kernel GPU self-test passed (200/200 writes, 0 error IRQs). PID 1 opened
+RiverGPU and Mesa created screen `FD506` by `freedreno` in 32.5 ms. Mesa
+logged unsupported `FD_TIMESTAMP` (id 6) and `FD_UCHE_TRAP_BASE` (id 13)
+queries, both nonfatal during screen creation. Immediately after the screen
+log, PID 1 exited with namespace 2 subcode 0xb (SIGSEGV), then XNU panicked
+because init exited. No GPU clear was submitted. Photo: private IMG_0366.
+Hypothesis: crash inside `fd5_context_create` or the call leading into it;
+the exact site is not yet observed. Mesa tree has temporary `RIVER DIAG`
+console markers around context setup, built and signed. Diagnostic RAM image:
+`shim-river/out/river-r49-gallium-diag-boot.img` (SHA256
+5a7ca58d2084304f1c3a7eaa111f6cf11239a82af8fa1ac038afec35c72f2f80).
+Next: when phone is in fastboot, RAM-boot this image with the receiver already
+running, inspect the last `RIVER DIAG` marker, fix the actual fault, remove
+temporary markers, then rerun the clear test.

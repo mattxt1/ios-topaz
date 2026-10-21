@@ -1,5 +1,19 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River GPU active handoff (2026-10-21)
+
+Mesa's signed `river_gallium_test` RAM-booted on r49. RiverGPU and freedreno
+screen creation worked (`FD506`, 32.5 ms); PID 1 then SIGSEGV'd before the
+clear and XNU panicked on init exit. Full USB log is private
+`../logs-private/r49-gallium-live-2.txt`; photo IMG_0366 is private. The
+exact crash site is unknown. A locally built and signed diagnostic image
+with temporary context markers is ready at
+`shim-river/out/river-r49-gallium-diag-boot.img` (SHA256
+5a7ca58d2084304f1c3a7eaa111f6cf11239a82af8fa1ac038afec35c72f2f80).
+Phone needs to return to fastboot; USB receiver is running. Boot the
+diagnostic image with `fastboot boot` only, inspect last `RIVER DIAG` marker,
+fix the fault, remove markers, and rerun. Details in RIVER.md r49g.
+
 ## River status (2026-10-21) — current
 
 River boots iOS 16.7.16 to an interactive home screen in ~70 s (r28; see
