@@ -1,0 +1,72 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index 7611977..065a92d 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -198,9 +198,9 @@ submit(vm_offset_t buf, uint64_t pa, const char *what)
+ }
+ 
+ /* Qualcomm SCM call (SMCCC SMC64 standard call, SIP owner; x0 = 1 means
+- * interrupted, call again), as qcom_scm-smc.c. Returns x0; *r1 = x1. */
++ * interrupted, call again), as qcom_scm-smc.c. Returns x0; *r1, *r2 = x1, x2. */
+ static int64_t
+-gpu_scm(uint32_t svc, uint32_t cmd, uint64_t arginfo, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t *r1)
++gpu_scm(uint32_t svc, uint32_t cmd, uint64_t arginfo, uint64_t a0, uint64_t a1, uint64_t a2, uint64_t *r1, uint64_t *r2)
+ {
+ 	register uint64_t x0 __asm__("x0") = 0x42000000ULL | ((svc & 0xff) << 8) | (cmd & 0xff);
+ 	register uint64_t x1 __asm__("x1") = arginfo;
+@@ -215,6 +215,7 @@ gpu_scm(uint32_t svc, uint32_t cmd, uint64_t arginfo, uint64_t a0, uint64_t a1,
+ 		    : "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
+ 	} while (x0 == 1);
+ 	if (r1) *r1 = x1;
++	if (r2) *r2 = x2;
+ 	return (int64_t)x0;
+ }
+ 
+@@ -312,16 +313,43 @@ zap_load(const uint8_t *fw, uint64_t fw_size)
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	(void)memsz;
+ 
+-	int64_t st = gpu_scm(0x02, 0x07, 1, GPU_PAS_ID, 0, 0, &r);
++	/*
++	 * r43: init_image and mem_setup succeeded, auth_and_reset returned -2
++	 * (result -15). Linux in recovery loads the same files ("Brought out of
++	 * reset"). TZ runs the zap through the GPU SMMU's secure context bank,
++	 * which needs the IOMMU secure page-table pool that an OS donates once
++	 * per boot (mainline qcom_iommu_sec_ptbl_init: SVC_MP 0x0c,
++	 * IOMMU_SECURE_PTBL_SIZE 3 -> size in result[0], status in result[1];
++	 * IOMMU_SECURE_PTBL_INIT 4, ARGS(3, RW, VAL, VAL) = addr, size, spare;
++	 * an error meaning "already initialised" is ignored there). XNU never
++	 * made it. The pool goes at 0x82000000, in the same unused low span as
++	 * the zap region (below the 0x84300000 carve-out, outside XNU's RAM); TZ
++	 * owns it from then on, so it is zeroed through a Device mapping only.
++	 */
++	uint64_t psize = 0, pst = 0;
++	int64_t st = gpu_scm(0x0c, 0x03, 1, 0, 0, 0, &psize, &pst);
++	printf("RIVER GPU: iommu secure ptbl size status %lld size %#llx result %#llx\n", st, psize, pst);
++	if (!st && !pst && psize && psize <= 0x2000000) {
++		uint64_t ppa = 0x82000000ULL, plen = (psize + PAGE_SIZE - 1) & ~(uint64_t)(PAGE_SIZE - 1);
++		vm_offset_t pv = ml_io_map_unmappable((vm_offset_t)ppa, (vm_size_t)plen, VM_WIMG_IO);
++		if (pv) {
++			for (uint64_t o = 0; o < plen; o += 4) *(volatile uint32_t *)(pv + o) = 0;
++			__asm__ volatile("dsb sy" ::: "memory");
++			st = gpu_scm(0x0c, 0x04, 3 | (2 << 4), ppa, psize, 0, &r, NULL);
++			printf("RIVER GPU: iommu secure ptbl init at %#llx size %#llx status %lld result %#llx\n", ppa, psize, st, r);
++		}
++	}
++
++	st = gpu_scm(0x02, 0x07, 1, GPU_PAS_ID, 0, 0, &r, NULL);
+ 	printf("RIVER GPU: zap: PAS %u supported status %lld result %llu; metadata %#x bytes at %#llx, segment %#x bytes at %#llx (TZ range %#x)\n",
+ 	    GPU_PAS_ID, st, r, mdt_size, mpa, seg_size, zpa, hi - lo);
+-	st = gpu_scm(0x02, 0x01, 2 | (2 << 6), GPU_PAS_ID, mpa, 0, &r);	/* ARGS(2, VAL, RW) */
++	st = gpu_scm(0x02, 0x01, 2 | (2 << 6), GPU_PAS_ID, mpa, 0, &r, NULL);	/* ARGS(2, VAL, RW) */
+ 	printf("RIVER GPU: zap: pas_init_image status %lld result %#llx\n", st, r);
+ 	if (st || r) return false;
+-	st = gpu_scm(0x02, 0x02, 3, GPU_PAS_ID, zpa, hi - lo, &r);
++	st = gpu_scm(0x02, 0x02, 3, GPU_PAS_ID, zpa, hi - lo, &r, NULL);
+ 	printf("RIVER GPU: zap: pas_mem_setup status %lld result %#llx\n", st, r);
+ 	if (st || r) return false;
+-	st = gpu_scm(0x02, 0x05, 1, GPU_PAS_ID, 0, 0, &r);
++	st = gpu_scm(0x02, 0x05, 1, GPU_PAS_ID, 0, 0, &r, NULL);
+ 	printf("RIVER GPU: zap: auth_and_reset status %lld result %#llx\n", st, r);
+ 	return !st && !r;
+ }

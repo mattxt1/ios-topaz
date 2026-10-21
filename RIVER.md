@@ -1260,3 +1260,24 @@ msm8953.dtsi uses a fixed no-map zap@81800000 (0x2000), inside kgsl-hyp's
 gpu_region alloc range 0x80000000-0x90000000; on river that span has only
 dynamic pools below the first carve-out at 0x84300000 and is outside XNU's
 RAM. 0165: load the segment at 0x81800000 through a Device mapping.
+
+### r43 (0165; sha256 a27b739f...): region accepted, auth_and_reset refused (r39-live-7.txt)
+`pas_init_image status 0`, `pas_mem_setup status 0 result 0` (0x81800000 +
+0x2000 accepted), `auth_and_reset status -2 result 0xfffffffffffffff1`.
+Locally: sha256(a506_zap.b02) is entry 2 of the hash segment (b01 at 0x68),
+.mdt = b00 + b01, so the loaded content is right.
+
+### Linux reference: zap shader loads in recovery
+RAM-only: vendor_b and modem_b mounted read-only just to copy a530_pm4/pfp
+and a506_zap.* into a tmpfs over /vendor (/odm/firmware -> /vendor/odm/
+firmware), relabelled vendor_firmware_file for ueventd, then kgsl force
+flags + open: `a506_zap: loading from 0x8f800000 to 0x8f802000`, `a506_zap:
+Brought out of reset`. msm-bus client scm_pas votes crypto master 55 -> EBI
+512 (ab 393.6 MB/s, ib 3.936 GB/s) only around init_image and
+auth_and_reset. Linux's IOMMU driver also donates the GPU SMMU secure
+page-table pool once per boot (qcom_iommu_sec_ptbl_init), which XNU never
+did; TZ needs it to map the zap into the secure context bank, matching
+"first three calls pass, auth_and_reset fails". Afterwards: force flags 0,
+tmpfs unmounted, partitions unmounted.
+0166: IOMMU_SECURE_PTBL_SIZE / _INIT (SVC_MP 3/4) with the pool at
+0x82000000 (unused low span, zeroed via a Device mapping) before the PAS calls.
