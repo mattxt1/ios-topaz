@@ -1441,3 +1441,10 @@ the test sent its fixed two-command struct with a 24-byte length, so the
 kernel read the empty second command slot as the buffer handle and refused
 every one-command submit. Test fixed (packs ncmd/nbos/commands/handles);
 rerun pending.
+Rerun with the fixed test (r39-live-15.txt): `submit 0 fence 201 ... in
+0.288 ms: 256/256 words written by the GPU`, `500 submit+wait round trips:
+500 ok, 120.3 us each` (IOKit call + kernel submit + GPU + IRQ + wake +
+second IOKit call), `refused bad handle / out-of-range offset / bad prep:
+0xe00002c2` (kIOReturnBadArgument each), `BO_FREE 0`. The kernel GPU
+service is complete enough for a userland driver: next, Mesa freedreno on a
+small libdrm-style shim over RiverGPU (GEM_NEW/INFO/SUBMIT/WAIT/CPU_PREP).
