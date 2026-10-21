@@ -878,3 +878,14 @@ used identical eMMC code.
   ceiling: Gold 1401.6 MHz needs no voltage change** (APCS C1 PLL L=73 from
   XO, mux src 5). Above that needs CPR/S5 voltage control (+ APM threshold
   875 mV and mem-acc levels).
+
+### Gold at 1401.6 MHz (shim eba7a6f, r21 kernel): works
+`river-r21-1401-boot.img` sha256 c6a7f508...32fe8 (fallback same payload at
+800 MHz: `river-r21-800-boot.img`). APCS C1 PLL mode 0x80000007 (locked,
+output on), L 73, Gold RCG 0x501; S5 unchanged at 870 mV. spin **1397 MHz**
+(was 798). 64 KiB cached copy 8190 MB/s (was 4762), DRAM read 5408 MB/s
+(was 3731), copy/write unchanged (~2.7 / ~5.5 GB/s). FIPS KATs pass: RSA
+10 ms (17), ECDSA 19 ms (33), PBKDF 33 ms (58) = 1.75x. Hottest TSENS
+40.9 C at boot (was 36.9). No eMMC errors; driverkitd only crash so far.
+Next for CPU: c5+ (1555-2016 MHz) needs S5/CPR voltage control (APM 875 mV
+threshold, mem-acc levels); CCI still GPLL0/2 400 MHz.
