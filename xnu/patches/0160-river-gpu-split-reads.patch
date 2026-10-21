@@ -1,0 +1,34 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 3709361..3a3884f 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -256,8 +256,29 @@ river_gpu_probe(void)
+  }
+  bool powered = (gx & (1u << 31)) && (cx & (1u << 31)) && !(ahb & (1u << 31)) && !(gfx & (1u << 31));
+  if (!powered) { printf("RIVER GPU: not powered/clocked; GPU registers not read\n"); return; }
++ /*
++  * r36/r37 SErrored at the first GPU register read with every GCC/LDO value
++  * matching Linux. Split the possibilities: an SError still pending from the
++  * power-on writes (barrier + 10 ms, with DAIF shown), the CX-side GPU SMMU
++  * (0x1c40000, needs only ahb/bimc_gfx and gdsc_oxili_cx), then the GX-side
++  * RBBM. One log line before each access marks which one faults.
++  */
++ uint64_t daif;
++ __asm__ volatile("mrs %0, daif" : "=r"(daif));
++ __asm__ volatile("dsb sy; isb" ::: "memory");
++ delay(10000);
++ printf("RIVER GPU: power-on writes settled (DAIF %#llx)\n", daif);
++ vm_offset_t s = ri_map(0x01c40000);
++ if (!s) return;
++ printf("RIVER GPU: reading GPU SMMU sCR0\n");
++ uint32_t scr0 = ri_rd(s, 0x0);
++ printf("RIVER GPU: SMMU sCR0 %#x; reading IDR0/IDR1\n", scr0);
++ printf("RIVER GPU: SMMU IDR0 %#x IDR1 %#x\n", ri_rd(s, 0x20), ri_rd(s, 0x24));
+  vm_offset_t r = ri_map(0x01c00000);
+  if (!r) return;
++ printf("RIVER GPU: reading RBBM_STATUS\n");
++ uint32_t st = ri_rd(r, 0x4f5 * 4);
++ printf("RIVER GPU: RBBM_STATUS %#x; reading the rest\n", st);
+  printf("RIVER GPU: RBBM_STATUS %#x STATUS3 %#x INT_0_STATUS %#x CP_RB_BASE %#x\n",
+      ri_rd(r, 0x4f5 * 4), ri_rd(r, 0x530 * 4), ri_rd(r, 0x4e1 * 4), ri_rd(r, 0x800 * 4));
+  uint32_t c0 = ri_rd(r, 0x4d2 * 4); delay(1000); uint32_t c1 = ri_rd(r, 0x4d2 * 4);

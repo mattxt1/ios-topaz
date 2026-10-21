@@ -1152,3 +1152,20 @@ Next: in recovery, start kgsl fully (firmware available) and inspect
 msm-bus-dbg / rpm_master_stats / tzdbg while the GPU runs; and test reads
 of other GPU-side addresses (GPU SMMU 0x1c40000) to see if the whole
 region faults.
+
+### Recovery follow-up: GPU path is not a bus-vote problem
+DT: `slv-gpu-cfg` (CPU -> GPU register port) is a slave of `fab-pcnoc`, the
+same NoC as disp-ss-cfg, sdcc-1, tlmm and blsp, which XNU already uses, so a
+missing RPM/msm-bus vote cannot explain an SError on GPU register reads (the
+grp3d vote 26 -> 512 is GPU -> DDR bandwidth). RPM bus clocks in recovery are
+identical with kgsl forced on or off (bimc 931/178 MHz, pcnoc/snoc 100 MHz,
+sysmmnoc 66 MHz). GFX LDO is fed from VDD_CX (pm8953_s2_level, level 256);
+gfx_mem_acc_corner (0x194415c bit 0) only selects SRAM timing. With
+/vendor and /firmware mounted kgsl loaded PM4/PFP, failed the zap shader
+(not on recovery's search path) and then refused opens with EAGAIN; it wrote
+GPU registers in a5xx_start before that without an SError, so HLOS access is
+allowed by TZ in this power state. Recovery has no /dev/mem, so GCC+0x5b00c
+cannot be read there.
+0160: after power-on, barrier + 10 ms and DAIF in the log, then read the
+CX-side GPU SMMU (0x1c40000 sCR0/IDR0/IDR1), then RBBM_STATUS, with a log
+line before each access, to localise the fault.
