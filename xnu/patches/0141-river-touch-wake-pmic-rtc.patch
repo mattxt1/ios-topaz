@@ -1,0 +1,136 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index ca68ddb..5077530 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -221,12 +221,56 @@ ri_thread(void *arg, wait_result_t result)
+   ri_wait(10);
+  }
+ }
++/* Wall clock from the PM8953 RTC (SID0 0x6000, qpnp-rtc layout): 32-bit
++ * seconds at 0x48..0x4b, enable in 0x46 bit 7. Read-only, through the
++ * SPMI observer channel of the RTC_RW peripheral (PPID 0x060). Boot-arg
++ * riverrtcoff=N adds N seconds (the RTC may count from another epoch). */
++static bool
++ri_spmi_read(vm_offset_t obs, unsigned addr, unsigned count, uint32_t *v)
++{
++ ri_wr(obs, 0, (1u << 27) | ((addr & 0xff) << 4) | ((count - 1) & 7));
++ for (unsigned i = 0; i < 1000; i++) {
++  unsigned st = ri_rd(obs, 8);
++  if (st & 1) { if (st & 14) return false; *v = ri_rd(obs, 0x18); return true; }
++  delay(1);
++ }
++ return false;
++}
++static void
++river_rtc_init(void)
++{
++ vm_offset_t core = ri_map(0x0200f000), obs = 0;
++ if (!core) return;
++ uint32_t ver = ri_rd(core, 0);
++ if (ver < 0x20010000 || ver >= 0x50000000) return;
++ for (unsigned i = 0; i < 256 && !obs; i++) {
++  if (((ri_rd(core, 0x800 + i*4) >> 8) & 0xfff) == 0x060) obs = ri_map(0x02c00000 + i*0x8000);
++ }
++ uint32_t ctrl = 0, a = 0, b0 = 0, b = 0;
++ if (!obs || !ri_spmi_read(obs, 0x46, 1, &ctrl) || !ri_spmi_read(obs, 0x48, 4, &a) ||
++     !ri_spmi_read(obs, 0x48, 1, &b0)) {
++  printf("RIVER RTC: PM8953 RTC not readable\n");
++  return;
++ }
++ b = a;
++ if ((b0 & 0xff) < (a & 0xff) && !ri_spmi_read(obs, 0x48, 4, &b)) return;	/* byte 0 rolled over */
++ int off = 0;
++ PE_parse_boot_argn("riverrtcoff", &off, sizeof(off));
++ uint64_t secs = (uint64_t)b + (int64_t)off;
++ printf("RIVER RTC: ctrl %#x raw %u offset %d -> %llu\n", ctrl & 0xff, b, off, secs);
++ if (!(ctrl & 0x80) || secs < 1577836800ULL) {	/* disabled, or before 2020 */
++  printf("RIVER RTC: not plausible; calendar left unset\n");
++  return;
++ }
++ clock_set_calendar_microtime((clock_sec_t)secs, 0);
++}
+ void
+ river_input_init(void)
+ {
+  int enabled=0;
+  if(ri_started) return;
+  ri_started=true;
++ river_rtc_init();
+  if(!PE_parse_boot_argn("riverinput",&enabled,sizeof(enabled)) || enabled!=1) return;
+  thread_t t;
+  if(kernel_thread_start(ri_thread,NULL,&t)==KERN_SUCCESS)thread_deallocate(t);
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 92c3999..543772a 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -67,6 +67,14 @@ sweet_hold_set(SweetSurface **set, bool on)
+ }
+ class AppleCLCD;
+ static AppleCLCD *sweet_cons_fb;
++/* iOS's display power state (RequestPowerChange), for touch-to-wake in SweetHID. */
++static volatile bool sweet_fb_off;
++extern "C" bool sweet_fb_display_off(void);
++bool
++sweet_fb_display_off(void)
++{
++	return sweet_fb_off;
++}
+ static void sweet_cons_show(void);
+ class OSDictionary;
+ static void sweet_bl_log(const char *who, OSDictionary *d);
+@@ -1215,6 +1223,7 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
+ 			bool changed = off != fFB->fPowerOff;
+ 			if (changed) {
+ 				fFB->fPowerOff = off;
++				sweet_fb_off = off;
+ 				fFB->fFadeStep = 0;
+ 				fFB->fDirty = true;     /* on: redraw the latest frame */
+ 			}
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
+index 6ae2c44..a305d6c 100644
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -573,9 +573,43 @@ sweet_hid_key(int key, int down)
+ 	}
+ }
+ 
++#if defined(RIVER)
++/*
++ * Touch-to-wake: with iOS's display off (auto-lock), a finger landing on the
++ * glass sends one short Power press, as the side button does, and that touch
++ * is swallowed until it lifts so waking never taps the woken screen. Apple's
++ * digitizer has a dedicated wake gesture; this panel's firmware does not.
++ */
++extern "C" bool sweet_fb_display_off(void);
++static bool sweet_touch_waking[SWEET_TOUCH_FINGERS];
++#endif
++
+ extern "C" void
+ sweet_hid_touch(int finger, int down, int x, int y)
+ {
++#if defined(RIVER)
++	if (finger >= 0 && finger < SWEET_TOUCH_FINGERS) {
++		if (sweet_touch_waking[finger]) {
++			if (!down) {
++				sweet_touch_waking[finger] = false;
++			}
++			return;
++		}
++		if (down && sweet_fb_display_off()) {
++			bool other = false;
++			for (int i = 0; i < SWEET_TOUCH_FINGERS; i++) {
++				other |= sweet_touch_waking[i];
++			}
++			sweet_touch_waking[finger] = true;
++			if (!other) {
++				IOLog("SWEET HID: touch %d wakes the display\n", finger);
++				sweet_hid_key(0, 1);
++				sweet_hid_key(0, 0);
++			}
++			return;
++		}
++	}
++#endif
+ 	if (gSweetTouch) {
+ 		gSweetTouch->touch(finger, down != 0, x, y);
+ 	}
