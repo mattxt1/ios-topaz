@@ -1448,3 +1448,11 @@ second IOKit call), `refused bad handle / out-of-range offset / bad prep:
 0xe00002c2` (kIOReturnBadArgument each), `BO_FREE 0`. The kernel GPU
 service is complete enough for a userland driver: next, Mesa freedreno on a
 small libdrm-style shim over RiverGPU (GEM_NEW/INFO/SUBMIT/WAIT/CPU_PREP).
+
+## Mesa freedreno for river (started 2026-10-21; see mesa/README.md)
+Mesa 26.2.5 cross-compiles for iOS arm64 with a new `river` freedreno
+kernel backend over RiverGPU (patch mesa/patches/0001). Built so far:
+libfreedreno_drm, libfreedreno_ir3, gallium libfreedreno.a. Next: link and
+run `river_gallium_test` on the phone (sign with codesign -s -, pack with
+RIVER_FILES to /usr/local/bin, boot with riverinit=), expect a GPU clear
+through Mesa's blitter (ir3 shaders + draw) to read back as 00 80 ff ff.

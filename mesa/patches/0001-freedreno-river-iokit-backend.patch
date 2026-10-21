@@ -1,0 +1,915 @@
+diff --git a/include/river-libdrm/xf86drm.h b/include/river-libdrm/xf86drm.h
+new file mode 100644
+index 0000000..926bd39
+--- /dev/null
++++ b/include/river-libdrm/xf86drm.h
+@@ -0,0 +1,69 @@
++/*
++ * Copyright © 2026 river bring-up contributors
++ * SPDX-License-Identifier: MIT
++ *
++ * Minimal libdrm stand-in for freedreno on the river XNU port (iOS), where
++ * there is no DRM: the GPU is reached through the RiverGPU IOKit service
++ * (src/freedreno/drm/river). drmGetVersion() names the device "river" so
++ * fd_device_new() picks that backend; buffer sharing (GEM names, PRIME)
++ * and sync objects are not available and fail with -ENOSYS.
++ */
++#ifndef RIVER_XF86DRM_H
++#define RIVER_XF86DRM_H
++
++#include <errno.h>
++#include <stdint.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "drm-uapi/drm.h"
++
++#define DRM_NODE_PRIMARY 0
++#define DRM_NODE_CONTROL 1
++#define DRM_NODE_RENDER  2
++
++typedef struct _drmVersion {
++   int version_major;
++   int version_minor;
++   int version_patchlevel;
++   int name_len;
++   char *name;
++   int date_len;
++   char *date;
++   int desc_len;
++   char *desc;
++} drmVersion, *drmVersionPtr;
++
++static inline drmVersionPtr
++drmGetVersion(int fd)
++{
++   drmVersionPtr v = (drmVersionPtr)calloc(1, sizeof(*v));
++   if (!v)
++      return NULL;
++   v->version_major = 1;
++   v->name = strdup("river");
++   v->name_len = 5;
++   return v;
++}
++
++static inline void
++drmFreeVersion(drmVersionPtr v)
++{
++   if (v) {
++      free(v->name);
++      free(v);
++   }
++}
++
++static inline int drmIoctl(int fd, unsigned long request, void *arg) { errno = ENOSYS; return -1; }
++static inline int drmOpenWithType(const char *name, const char *busid, int type) { return -ENOSYS; }
++static inline int drmGetCap(int fd, uint64_t capability, uint64_t *value) { return -ENOSYS; }
++static inline int drmPrimeFDToHandle(int fd, int prime_fd, uint32_t *handle) { return -ENOSYS; }
++static inline int drmPrimeHandleToFD(int fd, uint32_t handle, uint32_t flags, int *prime_fd) { return -ENOSYS; }
++static inline int drmSyncobjDestroy(int fd, uint32_t handle) { return -ENOSYS; }
++static inline int drmSyncobjFDToHandle(int fd, int obj_fd, uint32_t *handle) { return -ENOSYS; }
++static inline int drmSyncobjExportSyncFile(int fd, uint32_t handle, int *sync_file_fd) { return -ENOSYS; }
++static inline int drmSyncobjImportSyncFile(int fd, uint32_t handle, int sync_file_fd) { return -ENOSYS; }
++static inline int drmSyncobjReset(int fd, const uint32_t *handles, uint32_t handle_count) { return -ENOSYS; }
++
++#endif /* RIVER_XF86DRM_H */
+diff --git a/meson.build b/meson.build
+index 5f19ef9..77ee3c2 100644
+--- a/meson.build
++++ b/meson.build
+@@ -1940,6 +1940,16 @@ if dep_libdrm.found()
+   endif
+ endif
+ 
++# river (XNU/iOS): no DRM; freedreno talks to the RiverGPU IOKit service and
++# only needs a stand-in xf86drm.h (include/river-libdrm), not libdrm itself.
++with_freedreno_river = freedreno_kmds.contains('river')
++river_libdrm_stub = with_freedreno_river and not dep_libdrm.found()
++if river_libdrm_stub
++  dep_libdrm = declare_dependency(
++    include_directories : include_directories('include/river-libdrm', 'include'),
++  )
++endif
++
+ # Then get each libdrm module
+ foreach d : _libdrm_checks
+   if d[1]
+diff --git a/meson.options b/meson.options
+index 93a60e3..c90c82f 100644
+--- a/meson.options
++++ b/meson.options
+@@ -222,7 +222,7 @@ option(
+   'freedreno-kmds',
+   type : 'array',
+   value : ['msm'],
+-  choices : ['msm', 'kgsl', 'virtio', 'wsl'],
++  choices : ['msm', 'kgsl', 'virtio', 'wsl', 'river'],
+   description : 'List of kernel-mode drivers to enable for freedreno ' +
+                 'gallium and vulkan driver',
+ )
+diff --git a/src/freedreno/drm/freedreno_device.c b/src/freedreno/drm/freedreno_device.c
+index 6c64e64..c82e9fc 100644
+--- a/src/freedreno/drm/freedreno_device.c
++++ b/src/freedreno/drm/freedreno_device.c
+@@ -19,7 +19,12 @@
+ #include "freedreno_drm_perfetto.h"
+ #include "freedreno_priv.h"
+ 
++#ifdef HAVE_FREEDRENO_MSM
+ struct fd_device *msm_device_new(int fd, drmVersionPtr version);
++#endif
++#ifdef HAVE_FREEDRENO_RIVER
++struct fd_device *river_device_new(int fd, drmVersionPtr version);
++#endif
+ #ifdef HAVE_FREEDRENO_VIRTIO
+ struct fd_device *virtio_device_new(int fd, drmVersionPtr version);
+ #endif
+@@ -48,6 +53,13 @@ fd_device_new(int fd)
+       dev = virtio_device_new(-1, version);
+    } else
+ #endif
++#ifdef HAVE_FREEDRENO_RIVER
++   if (!strcmp(version->name, "river")) {
++      DEBUG_MSG("RiverGPU IOKit device");
++      dev = river_device_new(fd, version);
++   } else
++#endif
++#ifdef HAVE_FREEDRENO_MSM
+    if (!strcmp(version->name, "msm")) {
+       DEBUG_MSG("msm DRM device");
+       if (version->version_major != 1) {
+@@ -57,6 +69,9 @@ fd_device_new(int fd)
+       }
+ 
+       dev = msm_device_new(fd, version);
++   } else
++#endif
++   if (false) {
+ #ifdef HAVE_FREEDRENO_VIRTIO
+    } else if (!strcmp(version->name, "virtio_gpu")) {
+       DEBUG_MSG("virtio_gpu DRM device");
+diff --git a/src/freedreno/drm/meson.build b/src/freedreno/drm/meson.build
+index d2baf58..b6fde47 100644
+--- a/src/freedreno/drm/meson.build
++++ b/src/freedreno/drm/meson.build
+@@ -45,7 +45,23 @@ libfreedreno_drm_msm_files = files(
+   'msm/msm_ringbuffer.c',
+   'msm/msm_ringbuffer_sp.c',
+ )
+-libfreedreno_drm_files += libfreedreno_drm_msm_files
++if freedreno_kmds.contains('msm')
++  libfreedreno_drm_files += libfreedreno_drm_msm_files
++  libfreedreno_drm_flags += '-DHAVE_FREEDRENO_MSM'
++endif
++
++libfreedreno_drm_river_files = files(
++  'river/river_bo.c',
++  'river/river_device.c',
++  'river/river_pipe.c',
++  'river/river_priv.h',
++  'river/river_ringbuffer_sp.c',
++)
++if with_freedreno_river
++  libfreedreno_drm_files += libfreedreno_drm_river_files
++  libfreedreno_drm_flags += '-DHAVE_FREEDRENO_RIVER'
++  libfreedreno_drm_deps += dependency('appleframeworks', modules : ['IOKit', 'CoreFoundation'])
++endif
+ 
+ libfreedreno_drm_virtio_files = files(
+   'virtio/virtio_bo.c',
+diff --git a/src/freedreno/drm/river/river_bo.c b/src/freedreno/drm/river/river_bo.c
+new file mode 100644
+index 0000000..5f9c086
+--- /dev/null
++++ b/src/freedreno/drm/river/river_bo.c
+@@ -0,0 +1,101 @@
++/*
++ * Copyright © 2026 river bring-up contributors
++ * SPDX-License-Identifier: MIT
++ *
++ * Buffers are cached in the CPU and not coherent with the GPU; the kernel
++ * cleans every buffer named in a submit and RIVER_CPU_PREP waits for the
++ * buffer's last fence and invalidates it before the CPU reads.
++ */
++#include "river_priv.h"
++
++static int
++river_bo_offset(struct fd_bo *bo, uint64_t *offset)
++{
++   /* mapped by IOConnectMapMemory64(type = handle), not by mmap offset */
++   *offset = 0;
++   return 0;
++}
++
++static void *
++river_bo_map(struct fd_bo *bo)
++{
++   mach_vm_address_t addr = 0;
++   mach_vm_size_t size = 0;
++   kern_return_t kr = IOConnectMapMemory64(river_conn(bo->dev), bo->handle,
++                                           mach_task_self(), &addr, &size,
++                                           kIOMapAnywhere);
++   if (kr) {
++      ERROR_MSG("map of bo %u failed: %#x", bo->handle, kr);
++      return NULL;
++   }
++   return (void *)(uintptr_t)addr;
++}
++
++static int
++river_bo_cpu_prep(struct fd_bo *bo, struct fd_pipe *pipe, uint32_t op)
++{
++   uint64_t in[2] = { bo->handle, (op & FD_BO_PREP_NOSYNC) ? 0 : 10000 };
++   kern_return_t kr = IOConnectCallScalarMethod(river_conn(bo->dev),
++                                                RIVER_CPU_PREP, in, 2, NULL, NULL);
++   if (kr == kIOReturnTimeout)
++      return -EBUSY;
++   return kr ? -EINVAL : 0;
++}
++
++static int
++river_bo_madvise(struct fd_bo *bo, int willneed)
++{
++   return willneed;
++}
++
++static uint64_t
++river_bo_iova(struct fd_bo *bo)
++{
++   return to_river_bo(bo)->gpuva;
++}
++
++static void
++river_bo_set_name(struct fd_bo *bo, const char *fmt, va_list ap)
++{
++}
++
++static const struct fd_bo_funcs funcs = {
++   .offset = river_bo_offset,
++   .map = river_bo_map,
++   .cpu_prep = river_bo_cpu_prep,
++   .madvise = river_bo_madvise,
++   .iova = river_bo_iova,
++   .set_name = river_bo_set_name,
++   .destroy = fd_bo_fini_common,
++};
++
++struct fd_bo *
++river_bo_new(struct fd_device *dev, uint32_t size, uint32_t flags)
++{
++   uint64_t in = size, out[3];
++   uint32_t n = 3;
++   kern_return_t kr = IOConnectCallScalarMethod(river_conn(dev), RIVER_BO_NEW,
++                                                &in, 1, out, &n);
++   if (kr || n < 3) {
++      ERROR_MSG("bo_new(%u) failed: %#x", size, kr);
++      return NULL;
++   }
++
++   struct river_bo *river_bo = calloc(1, sizeof(*river_bo));
++   if (!river_bo) {
++      uint64_t handle = out[0];
++      IOConnectCallScalarMethod(river_conn(dev), RIVER_BO_FREE, &handle, 1,
++                                NULL, NULL);
++      return NULL;
++   }
++
++   struct fd_bo *bo = &river_bo->base;
++   river_bo->gpuva = out[1];
++   bo->size = size;
++   bo->handle = (uint32_t)out[0];
++   bo->funcs = &funcs;
++
++   fd_bo_init_common(bo, dev);
++
++   return bo;
++}
+diff --git a/src/freedreno/drm/river/river_device.c b/src/freedreno/drm/river/river_device.c
+new file mode 100644
+index 0000000..00bf8f0
+--- /dev/null
++++ b/src/freedreno/drm/river/river_device.c
+@@ -0,0 +1,72 @@
++/*
++ * Copyright © 2026 river bring-up contributors
++ * SPDX-License-Identifier: MIT
++ */
++#include "river_priv.h"
++
++static void
++river_device_destroy(struct fd_device *dev)
++{
++   struct river_device *river_dev = to_river_device(dev);
++   if (river_dev->conn)
++      IOServiceClose(river_dev->conn);
++}
++
++static void
++river_bo_close_handle(struct fd_bo *bo)
++{
++   uint64_t handle = bo->handle;
++   IOConnectCallScalarMethod(river_conn(bo->dev), RIVER_BO_FREE, &handle, 1,
++                             NULL, NULL);
++}
++
++static const struct fd_device_funcs funcs = {
++   .bo_new = river_bo_new,
++   .bo_close_handle = river_bo_close_handle,
++   .pipe_new = river_pipe_new,
++   .destroy = river_device_destroy,
++};
++
++int
++river_get_param(struct fd_device *dev, enum river_param p, uint64_t *value)
++{
++   uint64_t in = p;
++   uint32_t n = 1;
++   kern_return_t kr = IOConnectCallScalarMethod(river_conn(dev), RIVER_GET_PARAM,
++                                                &in, 1, value, &n);
++   return kr ? -EINVAL : 0;
++}
++
++struct fd_device *
++river_device_new(int fd, drmVersionPtr version)
++{
++   io_service_t svc =
++      IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("RiverGPU"));
++   if (!svc) {
++      ERROR_MSG("no RiverGPU service");
++      return NULL;
++   }
++
++   io_connect_t conn = 0;
++   kern_return_t kr = IOServiceOpen(svc, mach_task_self(), 0, &conn);
++   IOObjectRelease(svc);
++   if (kr) {
++      ERROR_MSG("RiverGPU open failed: %#x", kr);
++      return NULL;
++   }
++
++   struct river_device *river_dev = calloc(1, sizeof(*river_dev));
++   if (!river_dev) {
++      IOServiceClose(conn);
++      return NULL;
++   }
++
++   struct fd_device *dev = &river_dev->base;
++   river_dev->conn = conn;
++   dev->funcs = &funcs;
++   /* softpin-era msm: fixed GPU addresses, submit queues not needed */
++   dev->version = FD_VERSION_SOFTPIN;
++   dev->bo_size = sizeof(struct river_bo);
++
++   return dev;
++}
+diff --git a/src/freedreno/drm/river/river_pipe.c b/src/freedreno/drm/river/river_pipe.c
+new file mode 100644
+index 0000000..001b1a0
+--- /dev/null
++++ b/src/freedreno/drm/river/river_pipe.c
+@@ -0,0 +1,126 @@
++/*
++ * Copyright © 2026 river bring-up contributors
++ * SPDX-License-Identifier: MIT
++ */
++#include "freedreno_ringbuffer_sp.h"
++#include "river_priv.h"
++
++static int
++river_pipe_get_param(struct fd_pipe *pipe, enum fd_param_id param,
++                     uint64_t *value)
++{
++   struct river_pipe *river_pipe = to_river_pipe(pipe);
++
++   switch (param) {
++   case FD_DEVICE_ID:
++   case FD_GPU_ID:
++      *value = river_pipe->gpu_id;
++      return 0;
++   case FD_GMEM_SIZE:
++      *value = river_pipe->gmem;
++      return 0;
++   case FD_GMEM_BASE:
++      *value = river_pipe->gmem_base;
++      return 0;
++   case FD_CHIP_ID:
++      *value = river_pipe->chip_id;
++      return 0;
++   case FD_MAX_FREQ:
++      *value = 133333333; /* GFX3D RCG as set by the kernel today */
++      return 0;
++   case FD_NR_PRIORITIES:
++      *value = 1;
++      return 0;
++   case FD_CTX_FAULTS:
++   case FD_GLOBAL_FAULTS:
++   case FD_SUSPEND_COUNT:
++      *value = 0;
++      return 0;
++   case FD_VA_SIZE:
++      *value = river_pipe->va_size;
++      return 0;
++   default:
++      ERROR_MSG("unsupported param id: %d", param);
++      return -1;
++   }
++}
++
++static int
++river_pipe_set_param(struct fd_pipe *pipe, enum fd_param_id param, uint64_t value)
++{
++   return -1;
++}
++
++static int
++river_pipe_wait(struct fd_pipe *pipe, const struct fd_fence *fence, uint64_t timeout)
++{
++   /* timeout is in ns; the kernel takes ms */
++   uint64_t ms = timeout == OS_TIMEOUT_INFINITE ? 0xffffffffull
++                                                : MAX2(timeout / 1000000, 1);
++   uint64_t in[2] = { fence->kfence, MIN2(ms, 0xffffffffull) };
++   kern_return_t kr = IOConnectCallScalarMethod(river_conn(pipe->dev), RIVER_WAIT,
++                                                in, 2, NULL, NULL);
++   if (kr == kIOReturnTimeout)
++      return -ETIMEDOUT;
++   if (kr) {
++      ERROR_MSG("wait-fence %u failed: %#x", fence->kfence, kr);
++      return -EINVAL;
++   }
++   return 0;
++}
++
++static void
++river_pipe_destroy(struct fd_pipe *pipe)
++{
++   fd_pipe_sp_ringpool_fini(pipe);
++   free(to_river_pipe(pipe));
++}
++
++static const struct fd_pipe_funcs sp_funcs = {
++   .ringbuffer_new_object = fd_ringbuffer_sp_new_object,
++   .submit_new = river_submit_sp_new,
++   .flush = fd_pipe_sp_flush,
++   .get_param = river_pipe_get_param,
++   .set_param = river_pipe_set_param,
++   .wait = river_pipe_wait,
++   .destroy = river_pipe_destroy,
++};
++
++struct fd_pipe *
++river_pipe_new(struct fd_device *dev, enum fd_pipe_id id, uint32_t prio)
++{
++   if (id != FD_PIPE_3D)
++      return NULL;
++
++   struct river_pipe *river_pipe = calloc(1, sizeof(*river_pipe));
++   if (!river_pipe)
++      return NULL;
++
++   struct fd_pipe *pipe = &river_pipe->base;
++   pipe->funcs = &sp_funcs;
++   pipe->dev = dev;
++
++   uint64_t v;
++   if (!river_get_param(dev, RIVER_PARAM_GPU_ID, &v))
++      river_pipe->gpu_id = v;
++   if (!river_get_param(dev, RIVER_PARAM_CHIP_ID, &v))
++      river_pipe->chip_id = v;
++   if (!river_get_param(dev, RIVER_PARAM_GMEM_SIZE, &v))
++      river_pipe->gmem = v;
++   if (!river_get_param(dev, RIVER_PARAM_GMEM_BASE, &v))
++      river_pipe->gmem_base = v;
++   (void)river_get_param(dev, RIVER_PARAM_VA_START, &river_pipe->va_start);
++   (void)river_get_param(dev, RIVER_PARAM_VA_SIZE, &river_pipe->va_size);
++
++   if (!(river_pipe->gpu_id || river_pipe->chip_id)) {
++      free(river_pipe);
++      return NULL;
++   }
++
++   INFO_MSG("RiverGPU pipe: GPU-id %d, chip-id 0x%016" PRIx64 ", GMEM 0x%08x",
++            river_pipe->gpu_id, river_pipe->chip_id, river_pipe->gmem);
++
++   fd_pipe_sp_ringpool_init(pipe);
++
++   return pipe;
++}
+diff --git a/src/freedreno/drm/river/river_priv.h b/src/freedreno/drm/river/river_priv.h
+new file mode 100644
+index 0000000..1a993a0
+--- /dev/null
++++ b/src/freedreno/drm/river/river_priv.h
+@@ -0,0 +1,83 @@
++/*
++ * Copyright © 2026 river bring-up contributors
++ * SPDX-License-Identifier: MIT
++ *
++ * freedreno backend for the RiverGPU IOKit service of the river (Moto G7,
++ * SDM632, Adreno 506) XNU port. The kernel side is iokit/Kernel/arm/RiverGPU.cpp
++ * + bsd/dev/river_gpu.c in https://github.com/mattxt1/ios-topaz (river-bringup):
++ * msm-style GEM buffers with a fixed GPU address (softpin), indirect-buffer
++ * submission with a fence, fence wait and CPU prep, behind an IOKit
++ * connection instead of DRM ioctls.
++ */
++#ifndef RIVER_PRIV_H_
++#define RIVER_PRIV_H_
++
++#include <IOKit/IOKitLib.h>
++
++#include "freedreno_drmif.h"
++#include "freedreno_priv.h"
++
++/* RiverGPUUserClient selectors */
++enum river_sel {
++   RIVER_GET_PARAM = 0,
++   RIVER_BO_NEW = 1,
++   RIVER_BO_FREE = 2,
++   RIVER_SUBMIT = 3,
++   RIVER_WAIT = 4,
++   RIVER_CPU_PREP = 5,
++   RIVER_LOG = 6,
++};
++
++/* RIVER_GET_PARAM */
++enum river_param {
++   RIVER_PARAM_CHIP_ID = 0,
++   RIVER_PARAM_GPU_ID = 1,
++   RIVER_PARAM_GMEM_SIZE = 2,
++   RIVER_PARAM_GMEM_BASE = 3,
++   RIVER_PARAM_VA_START = 4,
++   RIVER_PARAM_VA_SIZE = 5,
++   RIVER_PARAM_FENCE = 6,
++};
++
++/* RIVER_SUBMIT limits (bsd/dev/river_gpu.c) */
++#define RIVER_MAX_CMDS 64
++
++struct river_device {
++   struct fd_device base;
++   io_connect_t conn;
++};
++FD_DEFINE_CAST(fd_device, river_device);
++
++struct fd_device *river_device_new(int fd, drmVersionPtr version);
++
++struct river_pipe {
++   struct fd_pipe base;
++   uint32_t gpu_id;
++   uint64_t chip_id;
++   uint64_t gmem_base;
++   uint32_t gmem;
++   uint64_t va_start, va_size;
++};
++FD_DEFINE_CAST(fd_pipe, river_pipe);
++
++struct fd_pipe *river_pipe_new(struct fd_device *dev, enum fd_pipe_id id,
++                               uint32_t prio);
++struct fd_submit *river_submit_sp_new(struct fd_pipe *pipe);
++
++struct river_bo {
++   struct fd_bo base;
++   uint64_t gpuva;
++};
++FD_DEFINE_CAST(fd_bo, river_bo);
++
++struct fd_bo *river_bo_new(struct fd_device *dev, uint32_t size, uint32_t flags);
++
++static inline io_connect_t
++river_conn(struct fd_device *dev)
++{
++   return to_river_device(dev)->conn;
++}
++
++int river_get_param(struct fd_device *dev, enum river_param p, uint64_t *value);
++
++#endif /* RIVER_PRIV_H_ */
+diff --git a/src/freedreno/drm/river/river_ringbuffer_sp.c b/src/freedreno/drm/river/river_ringbuffer_sp.c
+new file mode 100644
+index 0000000..1421b38
+--- /dev/null
++++ b/src/freedreno/drm/river/river_ringbuffer_sp.c
+@@ -0,0 +1,93 @@
++/*
++ * Copyright © 2026 river bring-up contributors
++ * SPDX-License-Identifier: MIT
++ *
++ * Softpin submit for RiverGPU, after msm_ringbuffer_sp.c: merge deferred
++ * submits, then one RIVER_SUBMIT with { ncmd, nbos, cmds[], handles[] }.
++ */
++#include <assert.h>
++
++#include "drm/freedreno_ringbuffer_sp.h"
++#include "river_priv.h"
++
++static int
++flush_submit_list(struct list_head *submit_list)
++{
++   struct fd_submit_sp *fd_submit = to_fd_submit_sp(last_submit(submit_list));
++   struct fd_pipe *pipe = fd_submit->base.pipe;
++   unsigned nr_cmds = 0;
++
++   MESA_TRACE_FUNC();
++
++   foreach_submit (submit, submit_list)
++      nr_cmds += to_fd_ringbuffer_sp(submit->primary)->u.nr_cmds;
++
++   if (nr_cmds > RIVER_MAX_CMDS) {
++      ERROR_MSG("submit with %u command buffers (max %u)", nr_cmds,
++                RIVER_MAX_CMDS);
++      return -EINVAL;
++   }
++
++   uint32_t cmds[RIVER_MAX_CMDS][3];
++   unsigned cmd_idx = 0;
++
++   foreach_submit_safe (submit, submit_list) {
++      struct fd_ringbuffer_sp *deferred_primary =
++         to_fd_ringbuffer_sp(submit->primary);
++
++      for (unsigned i = 0; i < deferred_primary->u.nr_cmds; i++) {
++         struct fd_bo *ring_bo = deferred_primary->u.cmds[i].ring_bo;
++         (void)fd_submit_append_bo(fd_submit, ring_bo);
++         cmds[cmd_idx][0] = ring_bo->handle;
++         cmds[cmd_idx][1] = submit_offset(ring_bo, deferred_primary->offset);
++         cmds[cmd_idx][2] = deferred_primary->u.cmds[i].size / 4;
++         cmd_idx++;
++      }
++
++      if (submit == last_submit(submit_list))
++         break;
++
++      struct fd_submit_sp *fd_deferred_submit = to_fd_submit_sp(submit);
++      for (unsigned i = 0; i < fd_deferred_submit->nr_bos; i++)
++         fd_submit_append_bo(fd_submit, fd_deferred_submit->bos[i]);
++
++      list_del(&submit->node);
++      fd_submit_del(submit);
++   }
++
++   size_t len = (2 + 3 * nr_cmds + fd_submit->nr_bos) * sizeof(uint32_t);
++   uint32_t *req = malloc(len);
++   if (!req)
++      return -ENOMEM;
++   req[0] = nr_cmds;
++   req[1] = fd_submit->nr_bos;
++   memcpy(&req[2], cmds, 3 * nr_cmds * sizeof(uint32_t));
++   for (unsigned i = 0; i < fd_submit->nr_bos; i++)
++      req[2 + 3 * nr_cmds + i] = fd_submit->bos[i]->handle;
++
++   uint64_t fence = 0;
++   uint32_t nout = 1;
++   kern_return_t kr = IOConnectCallMethod(river_conn(pipe->dev), RIVER_SUBMIT,
++                                          NULL, 0, req, len, &fence, &nout,
++                                          NULL, NULL);
++   free(req);
++
++   if (fd_submit->in_fence_fd != -1)
++      close(fd_submit->in_fence_fd);
++
++   if (kr) {
++      ERROR_MSG("submit failed: %#x (%u cmds, %u bos)", kr, nr_cmds,
++                fd_submit->nr_bos);
++      return -EINVAL;
++   }
++
++   fd_submit->out_fence->kfence = (uint32_t)fence;
++   fd_submit->out_fence->fence_fd = -1;
++   return 0;
++}
++
++struct fd_submit *
++river_submit_sp_new(struct fd_pipe *pipe)
++{
++   return fd_submit_sp_new(pipe, flush_submit_list);
++}
+diff --git a/src/freedreno/meson.build b/src/freedreno/meson.build
+index e8f01b8..c69c1e1 100644
+--- a/src/freedreno/meson.build
++++ b/src/freedreno/meson.build
+@@ -22,7 +22,7 @@ subdir('ir2')
+ subdir('ir3')
+ subdir('fdl')
+ 
+-if system_has_kms_drm
++if system_has_kms_drm or with_freedreno_river
+   subdir('drm')
+ endif
+ 
+diff --git a/src/gallium/drivers/freedreno/meson.build b/src/gallium/drivers/freedreno/meson.build
+index b04379b..1c8f6ec 100644
+--- a/src/gallium/drivers/freedreno/meson.build
++++ b/src/gallium/drivers/freedreno/meson.build
+@@ -295,6 +295,35 @@ driver_freedreno = declare_dependency(
+   ],
+ )
+ 
++if with_freedreno_river
++  river_gallium_test = executable(
++    'river_gallium_test',
++    [
++      'river_gallium_test.c',
++      freedreno_tracepoints[1],
++      freedreno_xml_header_files,
++    ],
++    include_directories : freedreno_includes,
++    dependencies : [
++      idep_nir,
++      idep_mesautil,
++      idep_u_tracepoints,
++      idep_xmlconfig,
++      dependency('appleframeworks', modules : ['IOKit', 'CoreFoundation']),
++    ],
++    link_with : [
++      libfreedreno,
++      libfreedreno_drm,
++      libfreedreno_ir2,
++      libfreedreno_ir3,
++      libfreedreno_layout,
++      libgallium,
++      libfreedreno_perfcntrs,
++    ],
++    install : false,
++  )
++endif
++
+ gmemtool = executable(
+   'gmemtool',
+   [
+diff --git a/src/gallium/drivers/freedreno/river_gallium_test.c b/src/gallium/drivers/freedreno/river_gallium_test.c
+new file mode 100644
+index 0000000..a8a2fe6
+--- /dev/null
++++ b/src/gallium/drivers/freedreno/river_gallium_test.c
+@@ -0,0 +1,159 @@
++/*
++ * Copyright © 2026 river bring-up contributors
++ * SPDX-License-Identifier: MIT
++ *
++ * river_gallium_test: first end-to-end check of Mesa freedreno on the river
++ * XNU port (Adreno 506 behind the RiverGPU IOKit service). Creates the
++ * freedreno screen through the river backend, clears a render target with
++ * the GPU (util_blitter: ir3-compiled shaders, a real draw), reads it back
++ * and checks the pixels. Runs as PID 1 (riverinit=), so it logs to the
++ * console and through RiverGPU's LOG selector, and never exits.
++ */
++#include <fcntl.h>
++#include <stdarg.h>
++#include <stdio.h>
++#include <unistd.h>
++#include <mach/mach_time.h>
++#include <IOKit/IOKitLib.h>
++
++#include "pipe/p_context.h"
++#include "pipe/p_screen.h"
++#include "pipe/p_state.h"
++#include "util/driconf.h"
++#include "util/u_inlines.h"
++
++#include "freedreno_screen.h"
++
++static const driOptionDescription fd_driconf[] = {
++#include "driinfo_freedreno.h"
++};
++
++static io_connect_t log_conn;
++
++static void
++say(const char *fmt, ...)
++{
++   char line[512];
++   va_list ap;
++   va_start(ap, fmt);
++   int n = vsnprintf(line, sizeof(line), fmt, ap);
++   va_end(ap);
++   printf("river-gallium-test: %s\n", line);
++   if (log_conn && n > 0)
++      IOConnectCallMethod(log_conn, 6, NULL, 0, line,
++                          (size_t)(n < (int)sizeof(line) ? n : (int)sizeof(line) - 1),
++                          NULL, NULL, NULL, NULL);
++}
++
++static double
++ms_since(uint64_t t0)
++{
++   mach_timebase_info_data_t tb;
++   mach_timebase_info(&tb);
++   return (double)(mach_absolute_time() - t0) * tb.numer / tb.denom / 1e6;
++}
++
++static void
++run(void)
++{
++   driOptionCache info = {0}, cache = {0};
++   driParseOptionInfo(&info, fd_driconf, ARRAY_SIZE(fd_driconf));
++   struct pipe_screen_config config = { .options = &cache, .options_info = &info };
++
++   int fd = open("/dev/null", O_RDWR);
++   uint64_t t0 = mach_absolute_time();
++   struct pipe_screen *screen = fd_screen_create(fd, &config, NULL);
++   if (!screen) {
++      say("fd_screen_create failed");
++      return;
++   }
++   say("screen \"%s\" by \"%s\" created in %.1f ms", screen->get_name(screen),
++       screen->get_vendor(screen), ms_since(t0));
++
++   struct pipe_context *ctx = screen->context_create(screen, NULL, 0);
++   if (!ctx) {
++      say("context_create failed");
++      return;
++   }
++
++   const unsigned W = 64, H = 64;
++   struct pipe_resource templ = {
++      .target = PIPE_TEXTURE_2D,
++      .format = PIPE_FORMAT_R8G8B8A8_UNORM,
++      .width0 = W, .height0 = H, .depth0 = 1, .array_size = 1,
++      .bind = PIPE_BIND_RENDER_TARGET | PIPE_BIND_SAMPLER_VIEW,
++   };
++   struct pipe_resource *rt = screen->resource_create(screen, &templ);
++   if (!rt) {
++      say("resource_create failed");
++      return;
++   }
++
++   struct pipe_surface surf = {
++      .format = templ.format,
++      .texture = rt,
++   };
++   union pipe_color_union color = { .f = { 0.0f, 0.5f, 1.0f, 1.0f } };
++
++   t0 = mach_absolute_time();
++   ctx->clear_render_target(ctx, &surf, &color, 0, 0, W, H, false);
++   struct pipe_fence_handle *fence = NULL;
++   ctx->flush(ctx, &fence, 0);
++   bool done = screen->fence_finish(screen, ctx, fence, OS_TIMEOUT_INFINITE);
++   screen->fence_reference(screen, &fence, NULL);
++   double ms = ms_since(t0);
++
++   struct pipe_box box = { .width = W, .height = H, .depth = 1 };
++   struct pipe_transfer *xfer = NULL;
++   const uint8_t *px = ctx->texture_map(ctx, rt, 0, PIPE_MAP_READ, &box, &xfer);
++   if (!px) {
++      say("texture_map failed");
++      return;
++   }
++   unsigned good = 0;
++   uint32_t first = 0;
++   for (unsigned y = 0; y < H; y++) {
++      const uint8_t *row = px + y * xfer->stride;
++      for (unsigned x = 0; x < W; x++) {
++         const uint8_t *p = row + x * 4;
++         if (x == 0 && y == 0)
++            first = p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24;
++         if (p[0] == 0x00 && (p[1] == 0x7f || p[1] == 0x80) && p[2] == 0xff && p[3] == 0xff)
++            good++;
++      }
++   }
++   ctx->texture_unmap(ctx, xfer);
++   say("GPU clear of %ux%u RGBA8 (0, 0.5, 1, 1): fence %s in %.2f ms, %u/%u pixels right, pixel 0 = %08x",
++       W, H, done ? "signalled" : "NOT signalled", ms, good, W * H, first);
++
++   pipe_resource_reference(&rt, NULL);
++   ctx->destroy(ctx);
++   screen->destroy(screen);
++   say("done");
++}
++
++int
++main(void)
++{
++   int fd = open("/dev/console", O_RDWR);
++   if (fd >= 0) {
++      dup2(fd, 1);
++      dup2(fd, 2);
++   }
++   setvbuf(stdout, NULL, _IONBF, 0);
++
++   io_service_t svc = 0;
++   for (int i = 0; i < 60 && !svc; i++) {
++      svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("RiverGPU"));
++      if (!svc)
++         sleep(1);
++   }
++   if (svc && IOServiceOpen(svc, mach_task_self(), 0, &log_conn))
++      log_conn = 0;
++   say("PID %d, RiverGPU %s", getpid(), svc ? "found" : "NOT found");
++   if (svc)
++      run();
++
++   for (;;)
++      sleep(3600);
++}
+diff --git a/src/util/meson.build b/src/util/meson.build
+index b11f0c4..7b734a9 100644
+--- a/src/util/meson.build
++++ b/src/util/meson.build
+@@ -314,7 +314,7 @@ deps_for_libmesa_util = [
+   idep_mesautilformat,
+ ]
+ 
+-if dep_libdrm.found()
++if dep_libdrm.found() and not river_libdrm_stub
+   files_mesa_util += files('u_sync_provider.c', 'u_sync_provider.h')
+   deps_for_libmesa_util += dep_libdrm
+ endif

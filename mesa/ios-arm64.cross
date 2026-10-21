@@ -1,0 +1,16 @@
+# Meson cross file: Mesa for the river iOS 16.7 userland (arm64, no arm64e).
+# xcrun picks the installed iPhoneOS SDK and sets the sysroot.
+[binaries]
+c = ['xcrun', '--sdk', 'iphoneos', 'clang', '-arch', 'arm64', '-mios-version-min=16.0']
+cpp = ['xcrun', '--sdk', 'iphoneos', 'clang++', '-arch', 'arm64', '-mios-version-min=16.0']
+objc = ['xcrun', '--sdk', 'iphoneos', 'clang', '-arch', 'arm64', '-mios-version-min=16.0']
+ar = ['xcrun', '--sdk', 'iphoneos', 'ar']
+strip = ['xcrun', '--sdk', 'iphoneos', 'strip']
+
+[host_machine]
+system = 'ios'
+subsystem = 'ios'
+kernel = 'xnu'
+cpu_family = 'aarch64'
+cpu = 'arm64'
+endian = 'little'
