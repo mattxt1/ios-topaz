@@ -1,0 +1,20 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index aaff80e..2c2f26c 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -200,7 +200,14 @@ river_gpu_power_on(vm_offset_t g, vm_offset_t ldo)
+  ri_wr(g, 0x00, ri_rd(g, 0x00) | 1u);		/* update */
+  for (unsigned i = 0; i < 1000 && (ri_rd(g, 0x00) & 1u); i++) delay(1);
+  if (!river_gdsc_on(g, 0x4c, "oxili_cx")) return;
+- ri_wr(g, 0x20, ri_rd(g, 0x20) | 1u);		/* gfx3d root clock before GX */
++ /* gdsc_oxili_gx's core_root_clk is gfx3d_clk_src itself: Linux's
++  * rcg_set_force_enable() sets CMD_RCGR ROOT_EN (bit 1) and waits for
++  * ROOT_OFF (bit 31) to clear before the GDSC powers up (r32: without it the
++  * root stayed off and GX never reported PWR_ON). */
++ ri_wr(g, 0x00, ri_rd(g, 0x00) | (1u << 1));
++ for (unsigned i = 0; i < 1000 && (ri_rd(g, 0x00) & (1u << 31)); i++) delay(1);
++ printf("RIVER GPU: GFX3D root forced on, cmd %#x\n", ri_rd(g, 0x00));
++ ri_wr(g, 0x20, ri_rd(g, 0x20) | 1u);		/* gfx3d branch */
+  if (!river_gdsc_on(g, 0x1c, "oxili_gx")) return;
+  (void)river_cbcr_on(g, 0x20, "gfx3d");
+  (void)river_cbcr_on(g, 0x28, "oxili_ahb");

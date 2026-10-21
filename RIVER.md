@@ -1075,3 +1075,12 @@ ALWAYSON_COUNTER (0x4d2) read twice as proof of life. No RPM CX vote
 (assumes CX >= low SVS). Next: build r32 with rivergpu=2, boot, read
 "RIVER GPU:" lines; then pull firmware (recovery, vendor partition,
 private) and start the CP.
+
+### r32 (0154 rivergpu=2; CI build of 2dd3b64): CX on, GX not
+LDO -> BHS (ctrl 0x20000038, clamp released). **gdsc_oxili_cx powered on
+(0xa0282800).** gdsc_oxili_gx did not (0x8282800, LDO status 0 = no BHS
+ack); GFX3D RCG cmd stayed 0x80000000 (ROOT_OFF) with cfg 0x505 and the
+gfx3d branch enabled (0x80004f01). Boot continued normally. GX's
+core_root_clk is clk_gfx3d_clk_src (dt-bindings 0x917f76ef), which Linux
+force-enables (rcg_set_force_enable: CMD_RCGR ROOT_EN bit 1) before the
+GDSC; 0155 does the same.
