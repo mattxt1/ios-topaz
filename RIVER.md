@@ -1348,3 +1348,18 @@ level) -> RBBM_INT_0_STATUS, clear, wake waiters; mask = CP_CACHE_FLUSH_TS,
 CP_HW_ERROR, UCHE_OOB_ACCESS. Boot self-test: 200 submits of a
 CP_MEM_WRITE command buffer each (ring wraps ~2x), one fence wait, check all
 200 words, free, re-allocate (heap reuse).
+
+### r46 (0168): **GPU buffer objects + fenced submission + GPU IRQ work** (r39-live-10.txt)
+```
+service up: GPU IRQ INTID 65 registered, ring 1024 dwords, BO heap 0x1100000-0xf0000000
+BOs: target 0x10000 bytes at GPU 0x1100000, IBs 0x4000 bytes at GPU 0x1110000
+200 submits (ring wrapped 2 times): fence signalled at 200 (want 200) in 1371 us, 200/200 writes ok, 198 IRQs, 0 error IRQs, last INT 0x100000
+BOs freed; reallocation got GPU 0x1100000 (heap reuse ok)
+```
+Non-contiguous BOs through our page tables, 200 indirect-buffer submissions
+(~6.9 us each incl. CPU cache maintenance), ring wrap, CACHE_FLUSH_TS fences
+and the SPI 33 interrupt (198 IRQs for 200 fences: some coalesced), no GPU
+error interrupts, BO free + GPU VA reuse. Unmapped-write check still faults
+(FAR 0xf0000000).
+Next: the userland interface (BO create/map into a task/free, submit with
+BO list + fence, wait) so Mesa freedreno can run in an iOS process.
