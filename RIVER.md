@@ -1193,3 +1193,16 @@ secure-config restore after OXILI_CX_GDSC leaves collapse. Boot continued to
 SpringBoard with the GPU left powered. Next: CP bring-up (a5xx_start
 register setup, PM4/PFP microcode load, then the zap shader or
 RBBM_SECVID_TRUST_CNTL to leave secure mode, a minimal ring).
+
+### 0162 (prepared): rivergpu=3 command processor bring-up
+bsd/dev/river_gpu.c follows mainline a5xx_hw_init (A506 branches, offsets
+grepped from Linux v6.6 a5xx.xml.h; no HWCG/preemption/GPMU) with one
+contiguous 64 KiB buffer (PM4 microcode minus its first dword, PFP, 4 KiB
+ring, scratch), surveys the GPU SMMU (SMR/S2CR, CB0 SCTLR: physical if M=0),
+clears ME_HALT, sends CP_ME_INIT (A506 workaround 0x0b), then a PKT4 write of
+CP_SCRATCH_REG0 and a CP_MEM_WRITE to memory, logging RPTR/RBBM/fault state.
+Still in secure mode (no zap shader yet), so the memory write may be refused.
+Microcode reaches the kernel only through the local RAM-only boot image:
+tools/river-gpufw.py packs ../device-private/gpu-firmware, mkpayload.py
+--blob RiverGPUFW=... appends it and names it in /chosen/memory-map
+(RIVER_GPUFW=1 tools/kbuild-river.sh). Nothing Qualcomm enters git or CI.

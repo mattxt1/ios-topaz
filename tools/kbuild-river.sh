@@ -6,6 +6,8 @@
 # tools/mkadt_river.py's ADT and builds shim-river/out/river-NAME-boot.img
 # from the private boot_b.img/base DTB in ../device-private (or $RIVER_PRIVATE).
 # Never calls fastboot: boot the image yourself with `fastboot boot`.
+# RIVER_GPUFW=1 packs $priv/gpu-firmware (Qualcomm microcode from the phone,
+# never committed or uploaded) into the local payload for rivergpu=3.
 set -eu
 cd "$(dirname "$0")/.."
 name=${1:?usage: REPO=owner/ios-topaz kbuild-river.sh NAME [BOOTARGS]}
@@ -40,6 +42,11 @@ kernel=$k/kernel.development.sweet
 # The board switch must have reached the compiler: river-only strings.
 strings "$kernel" | grep -q "RIVER GIC" || { echo "$kernel is not a river build" >&2; exit 1; }
 python3 tools/mkadt_river.py "$k/river.adt"
-python3 tools/mkpayload.py "$kernel" "$k/river.adt" "$k/payload.bin" --cmdline "$args"
+set --
+if [ -n "${RIVER_GPUFW:-}" ]; then
+  python3 tools/river-gpufw.py "$priv/gpu-firmware" "$k/river-gpufw.bin"
+  set -- --blob "RiverGPUFW=$k/river-gpufw.bin"
+fi
+python3 tools/mkpayload.py "$kernel" "$k/river.adt" "$k/payload.bin" --cmdline "$args" "$@"
 python3 shim-river/build.py --boot "$priv/boot_b.img" --dtb "$priv/boot_b-kernel.dtb" \
   --payload "$k/payload.bin" -o "shim-river/out/river-$name-boot.img"

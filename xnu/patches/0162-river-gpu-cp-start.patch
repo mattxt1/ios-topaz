@@ -1,0 +1,1034 @@
+diff --git a/bsd/conf/files b/bsd/conf/files
+new file mode 100644
+index 0000000..c1098f0
+--- /dev/null
++++ b/bsd/conf/files
+@@ -0,0 +1,654 @@
++#
++# Mach Operating System
++# Copyright (c) 1989 Carnegie-Mellon University
++# All rights reserved.  The CMU software License Agreement specifies
++# the terms and conditions for use and redistribution.
++#
++
++OPTIONS/config_macf			optional config_macf
++OPTIONS/mach_assert			optional mach_assert
++OPTIONS/mach_ldebug			optional mach_ldebug
++OPTIONS/mach_vm_debug			optional mach_vm_debug
++OPTIONS/quota				optional quota
++OPTIONS/kdebug				optional kdebug
++OPTIONS/config_triggers			optional config_triggers
++OPTIONS/diagnostic			optional diagnostic
++OPTIONS/config_dtrace			optional config_dtrace
++OPTIONS/profiling			optional profiling
++OPTIONS/config_perfmon      		optional config_perfmon
++OPTIONS/config_audit			optional config_audit
++OPTIONS/config_fse			optional config_fse
++OPTIONS/sockets				optional sockets
++OPTIONS/sysv_sem			optional sysv_sem
++OPTIONS/sysv_msg			optional sysv_msg
++OPTIONS/sysv_shm			optional sysv_shm
++OPTIONS/importance_inheritance		optional importance_inheritance
++OPTIONS/importance_debug		optional importance_debug
++OPTIONS/config_ecc_logging		optional config_ecc_logging
++
++#
++# Network options
++#
++OPTIONS/networking			optional networking
++OPTIONS/inet				optional inet
++OPTIONS/ipv6send			optional ipv6send
++OPTIONS/ether				optional ether
++OPTIONS/vlan				optional vlan
++OPTIONS/bond				optional bond
++OPTIONS/if_fake				optional if_fake
++OPTIONS/if_headless			optional if_headless
++OPTIONS/bpfilter			optional bpfilter
++OPTIONS/multipath			optional multipath
++OPTIONS/mptcp				optional mptcp
++OPTIONS/dummynet			optional dummynet
++OPTIONS/tcpdebug			optional tcpdebug
++OPTIONS/if_bridge			optional if_bridge
++OPTIONS/bridgestp			optional bridgestp if_bridge
++OPTIONS/gif					optional gif
++OPTIONS/sendfile			optional sendfile
++OPTIONS/pf				optional pf
++OPTIONS/pflog				optional pflog pf
++OPTIONS/zlib				optional zlib
++OPTIONS/remote_vif			optional remote_vif
++
++#
++# Skywalk options
++#
++OPTIONS/skywalk				optional skywalk
++OPTIONS/config_nexus_user_pipe		optional config_nexus_user_pipe
++OPTIONS/config_nexus_kernel_pipe	optional config_nexus_kernel_pipe
++OPTIONS/config_nexus_monitor		optional config_nexus_monitor
++OPTIONS/config_nexus_flowswitch		optional config_nexus_flowswitch
++OPTIONS/config_nexus_netif		optional config_nexus_netif
++
++#
++# Filesystem options
++#
++OPTIONS/fdesc				optional fdesc
++OPTIONS/fifo				optional fifo
++OPTIONS/devfs				optional devfs
++OPTIONS/routefs				optional routefs
++OPTIONS/crypto				optional crypto
++OPTIONS/fs_compression		optional fs_compression
++
++OPTIONS/config_imageboot              optional config_imageboot
++
++bsd/nfs/nfs_syscalls.c			standard
++bsd/nfs/nfs_gss.c			optional nfsserver
++bsd/nfs/nfs_serv.c			optional nfsserver
++bsd/nfs/nfs_socket.c			optional nfsserver
++bsd/nfs/nfs_srvcache.c			optional nfsserver
++bsd/nfs/nfs_subs.c			optional nfsserver
++bsd/nfs/nfs_upcall.c			optional nfsserver
++bsd/nfs/gss/gss_krb5_mech.c		optional nfsserver
++bsd/nfs/gss/ccrypto.c			optional nfsserver
++bsd/kern/netboot.c			optional config_netboot
++
++bsd/dev/dtrace/dtrace.c			optional config_dtrace
++bsd/dev/dtrace/lockprof.c		optional config_dtrace
++bsd/dev/dtrace/lockstat.c		optional config_dtrace
++bsd/dev/dtrace/dtrace_ptss.c		optional config_dtrace
++bsd/dev/dtrace/dtrace_subr.c		optional config_dtrace
++bsd/dev/dtrace/dtrace_glue.c		optional config_dtrace
++bsd/dev/dtrace/dtrace_xoroshiro128_plus.c	optional config_dtrace
++bsd/dev/dtrace/blist.c			optional config_dtrace
++bsd/dev/dtrace/fbt.c			optional config_dtrace
++bsd/dev/dtrace/fbt_blacklist.c		optional config_dtrace
++bsd/dev/dtrace/sdt.c			optional config_dtrace
++bsd/dev/dtrace/sdt_subr.c		optional config_dtrace
++bsd/dev/dtrace/systrace.c		optional config_dtrace
++bsd/dev/dtrace/profile_prvd.c		optional config_dtrace
++bsd/dev/dtrace/fasttrap.c		optional config_dtrace
++./systrace_args.c			optional config_dtrace
++
++bsd/dev/random/randomdev.c		standard
++
++bsd/dev/memdev.c			standard
++bsd/dev/sweet_ufs.c			standard
++bsd/dev/river_emmc.c			standard
++bsd/dev/river_gpu.c			standard
++bsd/dev/sweet_sample.c			standard
++bsd/dev/sweet_keys.c			standard
++bsd/dev/sweet_touch.c			standard
++bsd/dev/sweet_i2c1.c			standard
++bsd/dev/sweet_cpufreq.c			standard
++bsd/dev/sweet_rpmh.c			standard
++bsd/dev/sweet_spmi.c			standard
++bsd/dev/sweet_usb.c			standard
++bsd/dev/mem.c				standard
++bsd/dev/munge.c 			optional config_requires_u32_munging
++bsd/dev/unix_startup.c			standard
++
++bsd/dev/monotonic.c optional monotonic
++bsd/dev/dev_perfmon.c optional config_perfmon
++
++bsd/libkern/crc32.c			standard
++bsd/libkern/random.c			standard
++bsd/libkern/scanc.c			standard
++bsd/libkern/strsep.c			standard
++bsd/libkern/bcd.c			standard
++bsd/libkern/memchr.c			standard
++bsd/libkern/url_encode.c		standard
++
++bsd/vfs/vfs_attrlist.c			standard
++bsd/vfs/vfs_bio.c			standard
++bsd/vfs/vfs_cache.c			standard
++bsd/vfs/vfs_cluster.c			standard
++bsd/vfs/vfs_conf.c			standard
++bsd/vfs/vfs_fslog.c			standard
++bsd/vfs/vfs_init.c			standard
++bsd/vfs/vfs_io_compression_stats.c	optional config_io_compression_stats
++bsd/vfs/vfs_lookup.c			standard
++bsd/vfs/vfs_quota.c			optional quota
++bsd/vfs/vfs_subr.c			standard
++bsd/vfs/vfs_syscalls.c			standard
++bsd/vfs/vfs_support.c			standard
++bsd/vfs/vfs_utfconv.c			standard
++bsd/vfs/vfs_unicode.c			standard
++bsd/vfs/vfs_vnops.c			standard
++bsd/vfs/vfs_xattr.c			standard
++bsd/vfs/vnode_if.c			standard
++bsd/vfs/kpi_vfs.c			standard
++bsd/vfs/vfs_fsevents.c			standard
++bsd/vfs/vfs_cprotect.c			standard
++bsd/vfs/doc_tombstone.c			standard
++bsd/vfs/vfs_disk_conditioner.c standard
++
++bsd/miscfs/deadfs/dead_vnops.c		standard
++bsd/miscfs/devfs/devfs_fdesc_support.c	optional fdesc
++bsd/miscfs/fifofs/fifo_vnops.c		optional fifo sockets
++bsd/miscfs/specfs/spec_vnops.c		standard
++
++bsd/miscfs/devfs/devfs_tree.c		optional devfs
++bsd/miscfs/devfs/devfs_vnops.c		optional devfs
++bsd/miscfs/devfs/devfs_vfsops.c		optional devfs
++
++bsd/miscfs/mockfs/mockfs_fsnode.c	optional mockfs
++bsd/miscfs/mockfs/mockfs_vfsops.c	optional mockfs
++bsd/miscfs/mockfs/mockfs_vnops.c	optional mockfs
++
++bsd/miscfs/routefs/routefs_ops.c	optional routefs
++
++bsd/kern/decmpfs.c			standard
++
++bsd/net/net_stubs.c			standard
++bsd/net/bpf.c				optional bpfilter
++bsd/net/bpf_filter.c			optional bpfilter
++bsd/net/if_bridge.c			optional if_bridge
++bsd/net/bridgestp.c			optional bridgestp
++bsd/net/if.c				optional networking
++bsd/net/init.c				optional sockets
++bsd/net/dlil.c				optional networking
++bsd/net/ether_if_module.c		optional ether
++bsd/net/ether_inet_pr_module.c		optional ether inet
++bsd/net/ether_inet6_pr_module.c		optional ether inet
++bsd/net/if_loop.c			optional loop
++bsd/net/if_mib.c			optional networking
++bsd/net/if_vlan.c			optional vlan
++bsd/net/if_fake.c			optional if_fake
++bsd/net/if_headless.c			optional if_headless
++bsd/net/multicast_list.c		optional networking
++bsd/net/if_bond.c			optional bond
++bsd/net/devtimer.c			optional bond
++bsd/net/ndrv.c				optional networking
++bsd/net/radix.c				optional networking
++bsd/net/raw_cb.c			optional networking
++bsd/net/raw_usrreq.c			optional networking
++bsd/net/route.c				optional networking
++bsd/net/rtsock.c			optional networking
++bsd/net/netsrc.c			optional networking
++bsd/net/ntstat.c			optional networking
++bsd/net/net_perf.c			optional networking
++bsd/net/if_gif.c          		optional gif
++bsd/net/if_stf.c          		optional stf
++bsd/net/if_ports_used.c			optional networking
++bsd/net/if_low_power_mode.c		optional networking
++bsd/net/kpi_interface.c		optional networking
++bsd/net/kpi_protocol.c		optional networking
++bsd/net/kpi_interfacefilter.c	optional networking
++bsd/net/net_str_id.c			optional networking
++bsd/net/if_utun.c			optional networking
++bsd/net/if_ipsec.c			optional ipsec
++bsd/net/necp.c				optional necp
++bsd/net/necp_client.c		optional necp
++bsd/net/network_agent.c			optional networking
++bsd/net/bloom_filter.c			optional networking
++bsd/net/if_pflog.c			optional pflog
++bsd/net/nat464_utils.c			optional networking
++bsd/net/pf.c				optional pf
++bsd/net/pf_if.c				optional pf
++bsd/net/pf_ioctl.c			optional pf
++bsd/net/pf_norm.c			optional pf
++bsd/net/pf_osfp.c			optional pf
++bsd/net/pf_pbuf.c			optional pf
++bsd/net/pf_ruleset.c			optional pf
++bsd/net/pf_table.c			optional pf
++bsd/net/iptap.c				optional networking
++bsd/net/pktap.c				optional networking
++bsd/net/if_llreach.c          		optional networking
++bsd/net/flowhash.c			optional networking
++bsd/net/flowadv.c			optional networking
++bsd/net/content_filter.c		optional content_filter
++bsd/net/content_filter_crypto.c         optional content_filter
++bsd/net/packet_mangler.c		optional packet_mangler
++bsd/net/if_llatbl.c			optional networking
++bsd/net/nwk_wq.c			optional networking
++bsd/net/skmem_sysctl.c		optional skywalk
++bsd/net/restricted_in_port.c		optional networking
++bsd/net/remote_vif.c			optional remote_vif
++
++bsd/net/classq/classq.c			optional networking
++bsd/net/classq/classq_subr.c		optional networking
++bsd/net/classq/classq_util.c		optional networking
++bsd/net/classq/classq_fq_codel.c	optional networking
++
++bsd/net/pktsched/pktsched.c		optional networking
++bsd/net/pktsched/pktsched_fq_codel.c	optional networking
++bsd/net/pktsched/pktsched_netem.c	optional networking
++
++bsd/netinet/cpu_in_cksum_gen.c		standard
++bsd/netinet/in_cksum.c			optional inet
++bsd/netinet/igmp.c			optional inet
++bsd/netinet/in.c			optional inet
++bsd/netinet/dhcp_options.c		optional inet
++bsd/netinet/in_arp.c			optional inet
++bsd/netinet/in_mcast.c			optional inet
++bsd/netinet/in_pcb.c			optional inet
++bsd/netinet/in_pcblist.c		optional inet
++bsd/netinet/in_proto.c			optional inet
++bsd/netinet/in_rmx.c			optional inet
++bsd/netinet/in_stat.c			optional inet
++bsd/netinet/in_tclass.c			optional inet
++bsd/netinet/ip_dummynet.c  		optional dummynet
++bsd/netinet/ip_icmp.c			optional inet
++bsd/netinet/ip_id.c			optional inet
++bsd/netinet/ip_input.c			optional inet
++bsd/netinet/ip_output.c			optional inet
++bsd/netinet/raw_ip.c			optional inet
++bsd/netinet/tcp_cache.c			optional inet
++bsd/netinet/tcp_debug.c			optional tcpdebug
++bsd/netinet/tcp_input.c			optional inet
++bsd/netinet/tcp_output.c		optional inet
++bsd/netinet/tcp_sack.c			optional inet
++bsd/netinet/tcp_subr.c			optional inet
++bsd/netinet/tcp_timer.c			optional inet
++bsd/netinet/tcp_usrreq.c		optional inet
++bsd/netinet/tcp_cc.c			optional inet
++bsd/netinet/tcp_newreno.c		optional inet
++bsd/netinet/tcp_cubic.c			optional inet
++bsd/netinet/cbrtf.c			optional inet
++bsd/netinet/tcp_ledbat.c		optional inet
++bsd/netinet/tcp_rledbat.c		optional inet
++bsd/netinet/tcp_log.c			optional inet
++bsd/netinet/tcp_sysctls.c		optional inet
++bsd/netinet/tcp_ccdbg.c			optional inet
++bsd/netinet/udp_usrreq.c		optional inet
++bsd/netinet/in_gif.c      		optional gif inet
++bsd/netinet/ip_ecn.c          		optional inet
++bsd/netinet/ip_encap.c         		optional inet 
++bsd/netinet/kpi_ipfilter.c		optional inet
++bsd/netinet/flow_divert.c		optional flow_divert
++bsd/netinet/mp_proto.c			optional multipath
++bsd/netinet/mp_pcb.c			optional multipath
++bsd/netinet/mptcp.c			optional mptcp
++bsd/netinet/mptcp_subr.c		optional mptcp
++bsd/netinet/mptcp_usrreq.c		optional mptcp
++bsd/netinet/mptcp_opt.c			optional mptcp
++bsd/netinet/mptcp_timer.c		optional mptcp
++bsd/netinet6/ah_core.c      		optional ipsec
++bsd/netinet6/ah_input.c     		optional ipsec
++bsd/netinet6/ah_output.c   		optional ipsec
++bsd/netinet6/esp_core.c     		optional ipsec ipsec_esp
++bsd/netinet6/esp_input.c    		optional ipsec ipsec_esp
++bsd/netinet6/esp_output.c   		optional ipsec ipsec_esp
++bsd/netinet6/esp_rijndael.c 		optional ipsec ipsec_esp
++bsd/netinet6/esp_chachapoly.c 		optional ipsec ipsec_esp
++bsd/netinet6/ipsec.c        		optional ipsec
++bsd/netinet6/dest6.c        		optional inet
++bsd/netinet6/frag6.c        		optional inet
++bsd/netinet6/icmp6.c        		optional inet
++bsd/netinet6/in6.c          		optional inet
++bsd/netinet6/in6_cga.c			optional inet
++bsd/netinet6/in6_cksum.c    		optional inet
++bsd/netinet6/in6_gif.c      		optional gif inet
++bsd/netinet6/ip6_forward.c  		optional inet
++bsd/netinet6/in6_ifattach.c 		optional inet
++bsd/netinet6/ip6_input.c    		optional inet
++bsd/netinet6/ip6_output.c   		optional inet
++bsd/netinet6/in6_src.c      		optional inet
++bsd/netinet6/in6_mcast.c      		optional inet
++bsd/netinet6/in6_pcb.c      		optional inet
++bsd/netinet6/in6_proto.c    		optional inet
++bsd/netinet6/in6_rmx.c      		optional inet
++bsd/netinet6/mld6.c         		optional inet
++bsd/netinet6/nd6.c          		optional inet
++bsd/netinet6/nd6_nbr.c      		optional inet
++bsd/netinet6/nd6_prproxy.c     		optional inet
++bsd/netinet6/nd6_rtr.c      		optional inet
++bsd/netinet6/nd6_rti.c			optional inet
++bsd/netinet6/nd6_send.c			optional inet
++bsd/netinet6/raw_ip6.c      		optional inet
++bsd/netinet6/route6.c       		optional inet
++bsd/netinet6/scope6.c       		optional inet
++bsd/netinet6/udp6_output.c  		optional inet
++bsd/netinet6/udp6_usrreq.c  		optional inet
++bsd/netinet6/ip6_id.c			optional inet
++
++bsd/netkey/key.c          		optional ipsec
++bsd/netkey/key_debug.c    		optional ipsec
++bsd/netkey/keysock.c      		optional ipsec
++bsd/netkey/keydb.c      		optional ipsec
++
++bsd/net/multi_layer_pkt_log.c		optional inet inet ipsec ipsec_esp
++
++bsd/crypto/entropy/entropy_sysctl.c standard
++
++#bsd/netpm/pm_aTT.c        optional pm
++#bsd/netpm/pm_ams.c        optional pm
++#bsd/netpm/pm_dispatch.c   optional pm
++#bsd/netpm/pm_filter.c     optional pm
++#bsd/netpm/pm_list.c       optional pm
++#bsd/netpm/pm_log.c        optional pm
++#bsd/netpm/pm_nat.c        optional pm
++#bsd/netpm/pm_pmd.c        optional pm
++#bsd/netpm/pm_route.c      optional pm
++#bsd/netpm/pm_usrreq.c     optional pm
++
++bsd/security/audit/audit.c			optional config_audit	
++bsd/security/audit/audit_arg.c			optional config_audit
++bsd/security/audit/audit_bsd.c			optional config_audit
++bsd/security/audit/audit_bsm.c			optional config_audit
++bsd/security/audit/audit_bsm_errno.c		optional config_audit
++bsd/security/audit/audit_bsm_fcntl.c		optional config_audit
++bsd/security/audit/audit_bsm_domain.c		optional config_audit
++bsd/security/audit/audit_bsm_klib.c		optional config_audit
++bsd/security/audit/audit_bsm_socket_type.c	optional config_audit
++bsd/security/audit/audit_bsm_token.c		optional config_audit
++./audit_kevents.c				optional config_audit
++bsd/security/audit/audit_mac.c			optional config_audit
++bsd/security/audit/audit_pipe.c			optional config_audit
++bsd/security/audit/audit_session.c		standard
++bsd/security/audit/audit_syscalls.c		standard
++bsd/security/audit/audit_worker.c		optional config_audit
++
++bsd/pthread/pthread_shims.c		standard
++bsd/pthread/sweet_pthread_init.c	standard
++bsd/pthread/sweet_pthread_support.c	standard
++bsd/pthread/sweet_pthread_synch.c	standard
++bsd/pthread/pthread_priority.c		standard
++bsd/pthread/pthread_workqueue.c		standard
++
++bsd/kern/bsd_init.c			standard
++./init_sysent.c				standard
++bsd/kern/kdebug_common.c		standard
++bsd/kern/kdebug_triage.c		standard
++bsd/kern/kdebug.c			standard
++bsd/kern/kern_acct.c			standard
++bsd/kern/kern_aio.c			standard
++bsd/kern/kern_authorization.c		standard
++bsd/kern/kern_backtrace.c		standard
++bsd/kern/kern_clock.c			standard
++bsd/kern/kern_core.c			optional config_coredump
++bsd/kern/kern_credential.c		standard
++bsd/kern/kern_crossarch.c		standard
++bsd/kern/kern_cs.c			standard
++bsd/kern/sweet_amfi.c			standard
++
++# Apple OSS hfs-627.100.6, staged by xnu/patches/0026-stage-hfs.sh
++bsd/sweet_hfs/core/BTree.c		optional sweet_hfs
++bsd/sweet_hfs/core/BTreeAllocate.c		optional sweet_hfs
++bsd/sweet_hfs/core/BTreeMiscOps.c		optional sweet_hfs
++bsd/sweet_hfs/core/BTreeNodeOps.c		optional sweet_hfs
++bsd/sweet_hfs/core/BTreeNodeReserve.c		optional sweet_hfs
++bsd/sweet_hfs/core/BTreeScanner.c		optional sweet_hfs
++bsd/sweet_hfs/core/BTreeTreeOps.c		optional sweet_hfs
++bsd/sweet_hfs/core/BTreeWrapper.c		optional sweet_hfs
++bsd/sweet_hfs/core/CatalogUtilities.c		optional sweet_hfs
++bsd/sweet_hfs/core/FileExtentMapping.c		optional sweet_hfs
++bsd/sweet_hfs/core/FileIDsServices.c		optional sweet_hfs
++bsd/sweet_hfs/core/MacOSStubs.c		optional sweet_hfs
++bsd/sweet_hfs/core/UnicodeWrappers.c		optional sweet_hfs
++bsd/sweet_hfs/core/VolumeAllocation.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_attrlist.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_btreeio.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_catalog.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_chash.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_cnode.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_cprotect.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_endian.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_extents.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_fsinfo.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_hotfiles.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_journal.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_link.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_lookup.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_notification.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_quota.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_readwrite.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_resize.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_search.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_vfsops.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_vfsutils.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_vnops.c		optional sweet_hfs
++bsd/sweet_hfs/core/hfs_xattr.c		optional sweet_hfs
++bsd/sweet_hfs/core/rangelist.c		optional sweet_hfs
++bsd/sweet_hfs/hfs_encodings/hfs_encodinghint.c		optional sweet_hfs
++bsd/sweet_hfs/hfs_encodings/hfs_encodings.c		optional sweet_hfs
++bsd/sweet_hfs/sweet_hfs_iokit.c		optional sweet_hfs
++
++bsd/kern/kern_csr.c			optional config_csr
++bsd/kern/kern_debug.c			standard
++bsd/kern/kern_symfile.c			standard
++bsd/kern/kern_descrip.c			standard
++bsd/kern/kern_guarded.c			standard
++bsd/kern/kern_event.c			standard
++bsd/kern/kern_control.c			optional networking
++bsd/kern/kern_exec.c			standard
++bsd/kern/kern_exit.c			standard
++bsd/kern/kern_ktrace.c			standard
++bsd/kern/kern_lockf.c			standard
++bsd/kern/kern_fork.c			standard
++bsd/kern/kern_asl.c			standard
++bsd/kern/kern_malloc.c			standard
++bsd/kern/kern_mman.c			standard
++bsd/kern/kern_persona.c			standard
++bsd/kern/kern_physio.c			standard
++bsd/kern/kern_priv.c			standard
++bsd/kern/kern_proc.c			standard
++bsd/kern/kern_prot.c			standard
++bsd/kern/kern_resource.c		standard
++bsd/kern/kern_shutdown.c		standard
++bsd/kern/kern_sig.c			standard
++bsd/kern/kern_subr.c			standard
++bsd/kern/kern_synch.c			standard
++bsd/kern/kern_sysctl.c			standard
++bsd/kern/kern_newsysctl.c		standard
++bsd/kern/kern_memorystatus.c	optional config_memorystatus
++bsd/kern/kern_memorystatus_freeze.c	optional config_memorystatus
++bsd/kern/kern_memorystatus_notify.c	optional config_memorystatus
++bsd/kern/kern_memorystatus_policy.c	optional config_memorystatus
++bsd/kern/kern_mib.c			standard
++bsd/kern/kpi_mbuf.c			optional sockets
++bsd/kern/kern_sfi.c			standard
++bsd/kern/kern_time.c			standard
++bsd/kern/kern_trustcache.c  standard
++bsd/kern/kern_codesigning.c standard
++bsd/kern/code_signing/ppl.c standard
++bsd/kern/code_signing/xnu.c standard
++bsd/kern/kern_xxx.c			standard
++bsd/kern/mach_process.c			standard
++bsd/kern/mcache.c			optional sockets
++bsd/kern/stackshot.c			standard
++bsd/kern/subr_log.c			standard
++bsd/kern/subr_log_stream.c		standard
++bsd/kern/subr_prf.c			standard
++bsd/kern/subr_sbuf.c			standard
++bsd/kern/subr_xxx.c			standard
++bsd/kern/counter_test.c			optional development
++bsd/kern/counter_test.c			optional debug
++bsd/kern/sys_eventlink.c		standard
++bsd/kern/sys_generic.c			standard
++bsd/kern/sys_pipe.c			standard
++bsd/kern/sys_record_event.c		standard
++bsd/kern/sys_socket.c			optional sockets
++bsd/kern/sys_domain.c			optional sockets
++bsd/kern/sys_coalition.c		optional config_coalitions
++bsd/kern/sys_persona.c			optional config_personas
++bsd/kern/sys_ulock.c			standard
++bsd/kern/sys_work_interval.c		standard
++./syscalls.c				standard
++bsd/kern/tty.c				standard
++bsd/kern/tty_compat.c			standard
++bsd/kern/tty_conf.c			standard
++bsd/kern/tty_dev.c			optional ptmx pty
++bsd/kern/tty_ptmx.c			optional ptmx
++bsd/kern/tty_pty.c			optional pty
++bsd/kern/tty_subr.c			standard
++bsd/kern/tty_tty.c			standard
++bsd/kern/ubc_subr.c			standard
++bsd/kern/uipc_domain.c			optional sockets
++bsd/kern/uipc_mbuf.c			optional sockets
++bsd/kern/uipc_mbuf2.c		 	optional sockets
++bsd/kern/uipc_proto.c			optional sockets
++bsd/kern/uipc_socket.c			optional sockets
++bsd/kern/uipc_socket2.c			optional sockets
++# Temporarily opting out 
++#bsd/kern/uipc_syscalls.c		optional sockets bound-checks
++bsd/kern/uipc_syscalls.c		optional sockets
++bsd/kern/uipc_usrreq.c			optional sockets
++bsd/kern/vsock_domain.c			optional sockets
++bsd/kern/sysv_ipc.c			standard
++bsd/kern/sysv_shm.c			standard
++bsd/kern/sysv_sem.c			standard
++bsd/kern/sysv_msg.c			standard
++bsd/kern/mach_fat.c			standard
++bsd/kern/mach_loader.c			standard
++bsd/kern/posix_sem.c			standard
++bsd/kern/posix_shm.c			standard
++# XXXdbg - I need this in the journaling and block cache code
++bsd/kern/qsort.c				standard xnu-library
++bsd/kern/kpi_socket.c			optional sockets
++bsd/kern/kpi_socketfilter.c		optional sockets
++bsd/kern/proc_info.c			standard
++bsd/kern/process_policy.c		standard
++bsd/kern/kern_overrides.c 		standard
++bsd/kern/socket_info.c			optional sockets
++bsd/kern/subr_eventhandler.c		standard
++bsd/kern/sys_reason.c			standard
++bsd/kern/sys_recount.c			standard
++bsd/kern/tracker.c			optional sockets
++bsd/kern/socket_flows.c                 optional sockets
++bsd/kern/hvg_sysctl.c			standard
++
++bsd/vm/vnode_pager.c			standard
++bsd/vm/vm_unix.c				standard
++bsd/vm/dp_backing_file.c		standard
++bsd/vm/vm_compressor_backing_file.c	standard
++bsd/kern/kern_ecc.c			optional config_ecc_logging
++bsd/kern/kern_ntptime.c                 standard
++
++bsd/uxkern/ux_exception.c		standard
++
++bsd/conf/param.c			standard
++./ioconf.c				standard
++
++bsd/kern/imageboot.c			optional config_imageboot
++bsd/kern/chunklist.c			optional config_imageboot_chunklist
++
++osfmk/kperf/kperfbsd.c			optional kperf
++bsd/kern/kern_kpc.c			optional kpc
++
++bsd/kern/proc_uuid_policy.c		optional config_proc_uuid_policy
++
++bsd/pgo/profile_runtime.c        	optional pgo
++bsd/pgo/profile_runtime_data.c     	standard
++
++bsd/miscfs/nullfs/null_subr.c       optional nullfs
++bsd/miscfs/nullfs/null_vfsops.c     optional nullfs
++bsd/miscfs/nullfs/null_vnops.c      optional nullfs
++
++bsd/miscfs/bindfs/bind_subr.c       optional bindfs
++bsd/miscfs/bindfs/bind_vfsops.c     optional bindfs
++bsd/miscfs/bindfs/bind_vnops.c      optional bindfs
++
++bsd/tests/bsd_tests.c 			optional config_xnupost
++bsd/tests/copyio_tests.c		optional config_xnupost
++bsd/tests/pmap_test_sysctl.c		optional config_xnupost
++bsd/tests/ptrauth_data_tests_sysctl.c		optional config_xnupost
++bsd/tests/stack_chk_tests_sysctl.c		optional config_xnupost
++bsd/tests/readonly_proc_tests_sysctl.c      optional config_xnupost
++
++bsd/net/skywalk_stubs.c				standard
++bsd/skywalk/namespace/netns.c			optional skywalk
++bsd/skywalk/namespace/protons.c			optional skywalk
++bsd/skywalk/namespace/flowidns.c		optional skywalk
++bsd/skywalk/core/skywalk.c			optional skywalk
++bsd/skywalk/core/skywalk_proc_info.c		optional skywalk
++bsd/skywalk/core/skywalk_sysctl.c		optional skywalk
++bsd/skywalk/channel/channel.c			optional skywalk
++bsd/skywalk/channel/channel_kern.c		optional skywalk
++bsd/skywalk/channel/channel_ring.c		optional skywalk
++bsd/skywalk/channel/kern_channel_event.c	optional skywalk
++bsd/skywalk/channel/channel_syscalls.c		optional skywalk
++bsd/skywalk/lib/cuckoo_hashtable.c		optional skywalk
++bsd/skywalk/lib/cuckoo_hashtable_test.c		optional skywalk
++bsd/skywalk/lib/net_filter_event.c		optional skywalk
++bsd/skywalk/mem/skmem.c				optional skywalk
++bsd/skywalk/mem/skmem_arena.c			optional skywalk
++bsd/skywalk/mem/skmem_cache.c			optional skywalk
++bsd/skywalk/mem/skmem_region.c			optional skywalk
++bsd/skywalk/mem/skmem_test.c			optional skywalk
++bsd/skywalk/nexus/nexus.c			optional skywalk
++bsd/skywalk/nexus/nexus_adapter.c		optional skywalk
++bsd/skywalk/nexus/nexus_ioctl.c			optional skywalk
++bsd/skywalk/nexus/nexus_kern.c			optional skywalk
++bsd/skywalk/nexus/nexus_mbq.c			optional skywalk
++bsd/skywalk/nexus/nexus_pktq.c			optional skywalk
++bsd/skywalk/nexus/nexus_syscalls.c		optional skywalk
++bsd/skywalk/nexus/nexus_traffic_rule.c		optional skywalk
++bsd/skywalk/nexus/flowswitch/nx_flowswitch.c	optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/fsw.c		optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/fsw_vp.c		optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/fsw_dp.c			optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/fsw_ip.c			optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/fsw_ip_frag.c		optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/fsw_cellular.c		optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/fsw_ethernet.c		optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/fsw_flow.c		optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/fsw_netagent.c		optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/fsw_classq.c		optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/fsw_qos.c		optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/flow/flow.c		optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/flow/flow_classifier.c	optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/flow/flow_entry.c	optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/flow/flow_manager.c	optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/flow/flow_namespace.c	optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/flow/flow_owner.c	optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/flow/flow_route.c	optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/flow/flow_stats.c	optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/flow/flow_track.c	optional config_nexus_flowswitch
++bsd/skywalk/nexus/flowswitch/flow/flow_agg.c	optional config_nexus_flowswitch
++bsd/skywalk/nexus/monitor/nx_monitor.c		optional config_nexus_monitor
++bsd/skywalk/nexus/netif/nx_netif.c		optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_compat.c	optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_host.c		optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_mit.c		optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_netagent.c	optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_filter.c	optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_filter_compat.c	optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_filter_native.c	optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_filter_vp.c	optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_flow.c		optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_vp.c		optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_util.c		optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_poll.c		optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_gso.c		optional config_nexus_netif
++bsd/skywalk/nexus/netif/nx_netif_llink.c	optional config_nexus_netif
++bsd/skywalk/nexus/upipe/nx_user_pipe.c		optional config_nexus_user_pipe
++bsd/skywalk/nexus/kpipe/nx_kernel_pipe.c	optional config_nexus_kernel_pipe
++bsd/skywalk/nexus/kpipe/nx_kpipe_loopback.c	optional config_nexus_kernel_pipe
++bsd/skywalk/packet/packet_copy.c		optional skywalk
++bsd/skywalk/packet/packet_kern.c		optional skywalk
++bsd/skywalk/packet/pbufpool.c			optional skywalk
++bsd/skywalk/packet/pbufpool_kern.c		optional skywalk
++bsd/dev/cpu_copy_in_cksum_gen.c			optional skywalk
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+new file mode 100644
+index 0000000..dc41276
+--- /dev/null
++++ b/bsd/dev/river_gpu.c
+@@ -0,0 +1,353 @@
++/*
++ * river (Moto G7, SDM632) Adreno 506 command processor bring-up, boot-arg
++ * rivergpu=3. Runs after sweet_keys.c has powered the GPU, restored its TZ
++ * secure configuration and read RBBM (rivergpu=2 path).
++ *
++ * Follows mainline drivers/gpu/drm/msm/adreno/a5xx_gpu.c a5xx_hw_init()
++ * (A506 branches; no HWCG, preemption or GPMU, which A506 lacks) with GPU
++ * buffers in physically contiguous kernel memory. The GPU SMMU context bank
++ * is left as TZ restored it and only surveyed: with SCTLR.M clear the GPU's
++ * addresses are physical.
++ *
++ * The PM4/PFP microcode (a530_pm4.fw, a530_pfp.fw) is Qualcomm firmware and
++ * never part of this tree: tools/mkpayload.py --blob appends a local
++ * container (tools/river-gpufw.py) to the RAM-only boot image and names it in
++ * the ADT as /chosen/memory-map RiverGPUFW = <phys, size>.
++ */
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <kern/clock.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
++#include <libkern/libkern.h>
++#include <arm/caches_internal.h>
++#include <vm/pmap.h>
++#include <vm/vm_kern.h>
++#include <vm/memory_types.h>
++
++extern vm_offset_t ml_io_map_unmappable(vm_offset_t, vm_size_t, uint32_t);
++extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
++extern void delay(int usec);
++
++#define GPU_PA		0x01c00000
++#define GPU_SIZE	0x40000
++#define SMMU_PA		0x01c40000
++#define SMMU_SIZE	0x10000
++
++/* a5xx.xml.h (Linux v6.6), dword register indices */
++#define VBIF_ROUND_ROBIN_QOS_ARB	0x3049
++#define RBBM_PERFCTR_GPU_BUSY_MASKED	0x046f
++#define RBBM_AHB_CNTL0			0x0093
++#define RBBM_AHB_CNTL1			0x0094
++#define RBBM_AHB_CNTL2			0x0095
++#define RBBM_INTERFACE_HANG_INT_CNTL	0x002f
++#define RBBM_PERFCTR_CNTL		0x0464
++#define CP_PERFCTR_CP_SEL_0		0x0bb0
++#define RBBM_PERFCTR_RBBM_SEL_0		0x046b
++#define UCHE_CACHE_WAYS			0x0e96
++#define UCHE_WRITE_THRU_BASE_LO		0x0e87
++#define UCHE_WRITE_THRU_BASE_HI		0x0e88
++#define UCHE_TRAP_BASE_LO		0x0e89
++#define UCHE_TRAP_BASE_HI		0x0e8a
++#define UCHE_GMEM_RANGE_MIN_LO		0x0e8b
++#define UCHE_GMEM_RANGE_MIN_HI		0x0e8c
++#define UCHE_GMEM_RANGE_MAX_LO		0x0e8d
++#define UCHE_GMEM_RANGE_MAX_HI		0x0e8e
++#define UCHE_MODE_CNTL			0x0e81
++#define CP_ROQ_THRESHOLDS_1		0x081f
++#define CP_ROQ_THRESHOLDS_2		0x0820
++#define CP_MEQ_THRESHOLDS		0x0825
++#define CP_MERCIU_SIZE			0x0826
++#define CP_PFP_ME_CNTL			0x0832
++#define CP_CHICKEN_DBG			0x0833
++#define CP_PFP_INSTR_BASE_LO		0x0835
++#define CP_PFP_INSTR_BASE_HI		0x0836
++#define CP_ME_INSTR_BASE_LO		0x0838
++#define CP_ME_INSTR_BASE_HI		0x0839
++#define CP_RB_BASE			0x0800
++#define CP_RB_BASE_HI			0x0801
++#define CP_RB_CNTL			0x0802
++#define CP_RB_RPTR			0x0806
++#define CP_RB_WPTR			0x0807
++#define CP_PROTECT(i)			(0x0880 + (i))
++#define CP_PROTECT_CNTL			0x08a0
++#define CP_ME_STAT_DATA			0x0b14
++#define CP_INTERRUPT_STATUS		0x0b18
++#define CP_HW_FAULT			0x0b1a
++#define CP_SCRATCH_REG(i)		(0x0b78 + (i))
++#define PC_DBG_ECO_CNTL			0x0d00
++#define RB_DBG_ECO_CNTL			0x0cc4
++#define RB_MODE_CNTL			0x0cc6
++#define TPL1_MODE_CNTL			0x0f02
++#define VPC_DBG_ECO_CNTL		0x0e60
++#define HLSQ_DBG_ECO_CNTL		0x0e04
++#define RBBM_INT_0_MASK			0x0038
++#define RBBM_INT_0_STATUS		0x04e1
++#define RBBM_AHB_ERROR_STATUS		0x04f4
++#define RBBM_STATUS			0x04f5
++#define RBBM_SECVID_TRUST_CNTL		0xf400
++#define RBBM_SECVID_TSB_TRUSTED_BASE_LO	0xf800
++#define RBBM_SECVID_TSB_TRUSTED_BASE_HI	0xf801
++#define RBBM_SECVID_TSB_TRUSTED_SIZE	0xf802
++#define RBBM_SECVID_TSB_CNTL		0xf803
++static const uint32_t addr_mode_cntl[] = {
++	0x0860 /* CP */, 0x0bc1 /* VSC */, 0x0c81 /* GRAS */, 0x0cc5 /* RB */,
++	0x0d01 /* PC */, 0x0e05 /* HLSQ */, 0x0e41 /* VFD */, 0x0e61 /* VPC */,
++	0x0e80 /* UCHE */, 0x0ec1 /* SP */, 0x0f01 /* TPL1 */, 0xf810 /* SECVID_TSB */,
++};
++#define A5XX_RBBM_STATUS_HI_BUSY	0x00000001
++/* adreno_pm4.xml.h opcodes */
++#define CP_ME_INIT	72
++#define CP_MEM_WRITE	61
++
++/* Buffer layout in one contiguous 64 KiB allocation. */
++#define BUF_SIZE	0x10000
++#define OFF_PM4		0x0000
++#define OFF_PFP		0x8000
++#define OFF_RING	0xc000
++#define RING_SIZE	0x1000		/* CP_RB_CNTL BUFSZ = log2(4096 / 8) = 9 */
++#define OFF_SCRATCH	0xf000
++
++static vm_offset_t gr;		/* GPU registers */
++static uint32_t *ring;
++static unsigned wptr;
++
++static uint32_t
++g_rd(uint32_t reg)
++{
++	uint32_t v = *(volatile uint32_t *)(gr + reg * 4);
++	__asm__ volatile("dmb oshld" ::: "memory");
++	return v;
++}
++static void
++g_wr(uint32_t reg, uint32_t v)
++{
++	*(volatile uint32_t *)(gr + reg * 4) = v;
++	__asm__ volatile("dsb osh" ::: "memory");
++}
++static void
++g_rmw(uint32_t reg, uint32_t clear, uint32_t set)
++{
++	g_wr(reg, (g_rd(reg) & ~clear) | set);
++}
++
++/* adreno_gpu.h PM4_PARITY / PKT4 / OUT_PKT7 */
++static uint32_t
++pm4_parity(uint32_t v)
++{
++	return (0x9669 >> (0xf & (v ^ (v >> 4) ^ (v >> 8) ^ (v >> 12) ^ (v >> 16) ^
++	    (v >> 20) ^ (v >> 24) ^ (v >> 28)))) & 1;
++}
++static uint32_t
++pkt4(uint32_t reg, uint32_t cnt)
++{
++	return 0x40000000 | cnt | (pm4_parity(cnt) << 7) | ((reg & 0x3ffff) << 8) |
++	    (pm4_parity(reg) << 27);
++}
++static uint32_t
++pkt7(uint32_t op, uint32_t cnt)
++{
++	return 0x70000000 | cnt | (pm4_parity(cnt) << 15) | ((op & 0x7f) << 16) |
++	    (pm4_parity(op) << 23);
++}
++static uint32_t
++protect_rw(uint32_t reg, uint32_t len)
++{
++	uint32_t l = 0;
++	while ((2u << l) <= len) l++;
++	return (1u << 30) | (1u << 29) | ((l & 0x1f) << 24) | ((reg << 2) & 0xfffff);
++}
++
++/* Find one file in the RiverGPUFW container ("RIVGPUFW", u32 count, then
++ * count x { char name[24]; u32 off; u32 size }, offsets from the start). */
++static const uint8_t *
++fw_find(const uint8_t *c, uint64_t csize, const char *name, uint32_t *size)
++{
++	if (csize < 12 || memcmp(c, "RIVGPUFW", 8)) return NULL;
++	uint32_t n = *(const uint32_t *)(c + 8);
++	for (uint32_t i = 0; i < n && 12 + (i + 1) * 32 <= csize; i++) {
++		const uint8_t *e = c + 12 + i * 32;
++		uint32_t off = *(const uint32_t *)(e + 24), sz = *(const uint32_t *)(e + 28);
++		if (!strncmp((const char *)e, name, 24) && (uint64_t)off + sz <= csize) {
++			*size = sz;
++			return c + off;
++		}
++	}
++	return NULL;
++}
++
++/* Hand the CP everything written since the last submit; wait until RPTR
++ * catches up (adreno_idle) and RBBM is idle apart from HI_BUSY. */
++static bool
++submit(vm_offset_t buf, uint64_t pa, const char *what)
++{
++	flush_dcache64((addr64_t)(pa + OFF_RING), RING_SIZE, TRUE);
++	(void)buf;
++	g_wr(CP_RB_WPTR, wptr);
++	for (unsigned i = 0; i < 100000; i++) {
++		if (g_rd(CP_RB_RPTR) == wptr && !(g_rd(RBBM_STATUS) & ~A5XX_RBBM_STATUS_HI_BUSY))
++			return true;
++		delay(1);
++	}
++	printf("RIVER GPU: %s timed out: rptr %u wptr %u RBBM_STATUS %#x INT_0 %#x CP_HW_FAULT %#x CP_INT %#x AHB_ERR %#x\n",
++	    what, g_rd(CP_RB_RPTR), wptr, g_rd(RBBM_STATUS), g_rd(RBBM_INT_0_STATUS),
++	    g_rd(CP_HW_FAULT), g_rd(CP_INTERRUPT_STATUS), g_rd(RBBM_AHB_ERROR_STATUS));
++	return false;
++}
++
++void river_gpu_cp_start(void);
++void
++river_gpu_cp_start(void)
++{
++	/* Firmware container from the ADT. */
++	DTEntry mm;
++	void const *prop;
++	unsigned int psize;
++	if (SecureDTLookupEntry(NULL, "/chosen/memory-map", &mm) != kSuccess ||
++	    SecureDTGetProperty(mm, "RiverGPUFW", &prop, &psize) != kSuccess || psize != 16) {
++		printf("RIVER GPU: no RiverGPUFW in the boot image; CP not started\n");
++		return;
++	}
++	uint64_t fw_pa = ((const uint64_t *)prop)[0], fw_size = ((const uint64_t *)prop)[1];
++	const uint8_t *fw = (const uint8_t *)ml_static_ptovirt((vm_offset_t)fw_pa);
++	uint32_t pm4_size = 0, pfp_size = 0;
++	const uint8_t *pm4 = fw ? fw_find(fw, fw_size, "a530_pm4.fw", &pm4_size) : NULL;
++	const uint8_t *pfp = fw ? fw_find(fw, fw_size, "a530_pfp.fw", &pfp_size) : NULL;
++	if (!pm4 || !pfp || pm4_size <= 16 || pfp_size <= 16 ||
++	    pm4_size - 4 > OFF_PFP - OFF_PM4 || pfp_size - 4 > OFF_RING - OFF_PFP) {
++		printf("RIVER GPU: firmware container at %#llx+%#llx incomplete (pm4 %u, pfp %u)\n",
++		    fw_pa, fw_size, pm4_size, pfp_size);
++		return;
++	}
++	const uint32_t *p4 = (const uint32_t *)pm4, *pf = (const uint32_t *)pfp;
++	printf("RIVER GPU: microcode pm4 %u bytes [%#x %#x %#x], pfp %u bytes [%#x %#x %#x]\n",
++	    pm4_size, p4[1], p4[2], p4[3], pfp_size, pf[1], pf[2], pf[3]);
++
++	gr = ml_io_map_unmappable(GPU_PA, GPU_SIZE, VM_WIMG_IO);
++	vm_offset_t sm = ml_io_map_unmappable(SMMU_PA, SMMU_SIZE, VM_WIMG_IO);
++	if (!gr || !sm) { printf("RIVER GPU: register map failed\n"); return; }
++
++	/* GPU SMMU survey (IDR0 NUMSMRG 4, IDR1: 4 KiB pages, CB space at +0x8000). */
++	volatile uint32_t *s = (volatile uint32_t *)sm;
++	printf("RIVER GPU: reading SMMU SMR/S2CR\n");
++	printf("RIVER GPU: SMMU SMR %#x %#x %#x %#x S2CR %#x %#x %#x %#x\n",
++	    s[0x800/4], s[0x804/4], s[0x808/4], s[0x80c/4], s[0xc00/4], s[0xc04/4], s[0xc08/4], s[0xc0c/4]);
++	printf("RIVER GPU: reading SMMU CB0 (gfx3d_user)\n");
++	printf("RIVER GPU: SMMU CB0 SCTLR %#x TCR %#x FSR %#x\n",
++	    s[0x8000/4], s[0x8030/4], s[0x8058/4]);
++
++	/* GPU buffers. */
++	vm_offset_t buf = 0;
++	if (kmem_alloc_contig(kernel_map, &buf, BUF_SIZE, PAGE_MASK, 0, 0,
++	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++		printf("RIVER GPU: no buffer memory\n");
++		return;
++	}
++	ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)buf);
++	uint64_t pa = pn ? ptoa_64(pn) : 0;
++	if (!pa) { printf("RIVER GPU: buffer has no physical address\n"); return; }
++	/* adreno_fw_create_bo: the first dword of the .fw file is not loaded. */
++	memcpy((void *)(buf + OFF_PM4), pm4 + 4, pm4_size - 4);
++	memcpy((void *)(buf + OFF_PFP), pfp + 4, pfp_size - 4);
++	ring = (uint32_t *)(buf + OFF_RING);
++	volatile uint32_t *scratch = (volatile uint32_t *)(buf + OFF_SCRATCH);
++	scratch[0] = 0xdeadbeef;
++	flush_dcache64((addr64_t)pa, BUF_SIZE, TRUE);
++	printf("RIVER GPU: buffers at pa %#llx (pm4 +%#x pfp +%#x ring +%#x scratch +%#x)\n",
++	    pa, OFF_PM4, OFF_PFP, OFF_RING, OFF_SCRATCH);
++
++	/* a5xx_hw_init, A506 path. */
++	g_wr(VBIF_ROUND_ROBIN_QOS_ARB, 0x00000003);
++	g_wr(RBBM_PERFCTR_GPU_BUSY_MASKED, 0xffffffff);
++	g_wr(RBBM_AHB_CNTL0, 0x00000001);
++	g_wr(RBBM_INTERFACE_HANG_INT_CNTL, (1u << 30) | 0xffff);
++	g_wr(RBBM_PERFCTR_CNTL, 0x01);
++	g_wr(CP_PERFCTR_CP_SEL_0, 0);			/* PERF_CP_ALWAYS_COUNT */
++	g_wr(RBBM_PERFCTR_RBBM_SEL_0, 6);
++	g_wr(UCHE_CACHE_WAYS, 0x02);
++	g_wr(UCHE_TRAP_BASE_LO, 0xffff0000);
++	g_wr(UCHE_TRAP_BASE_HI, 0x0001ffff);
++	g_wr(UCHE_WRITE_THRU_BASE_LO, 0xffff0000);
++	g_wr(UCHE_WRITE_THRU_BASE_HI, 0x0001ffff);
++	g_wr(UCHE_GMEM_RANGE_MIN_LO, 0x00100000);
++	g_wr(UCHE_GMEM_RANGE_MIN_HI, 0);
++	g_wr(UCHE_GMEM_RANGE_MAX_LO, 0x00100000 + (128 + 8) * 1024 - 1);
++	g_wr(UCHE_GMEM_RANGE_MAX_HI, 0);
++	g_wr(CP_MEQ_THRESHOLDS, 0x20);
++	g_wr(CP_MERCIU_SIZE, 0x400);
++	g_wr(CP_ROQ_THRESHOLDS_2, 0x40000030);
++	g_wr(CP_ROQ_THRESHOLDS_1, 0x20100d0a);
++	g_wr(PC_DBG_ECO_CNTL, (0x100u << 11) | (0x100u << 22));
++	g_rmw(PC_DBG_ECO_CNTL, 0, 1u << 8);		/* TWO_PASS_USE_WFI */
++	g_rmw(RB_DBG_ECO_CNTL, 0, 1u << 9);		/* 1-SP: no DP2 clock gating */
++	g_wr(UCHE_MODE_CNTL, 1u << 29);
++	g_wr(CP_CHICKEN_DBG, 0x02000000);
++	g_wr(RBBM_AHB_CNTL1, 0xa6ffffff);
++	g_wr(RBBM_AHB_CNTL2, 0x0000003f);
++	g_wr(TPL1_MODE_CNTL, 1u << 7);			/* highest bank bit, regbit 1 */
++	g_wr(RB_MODE_CNTL, 1u << 1);
++	g_rmw(VPC_DBG_ECO_CNTL, 0, 1u << 10);
++	g_wr(CP_PROTECT_CNTL, 0x00000007);
++	static const uint32_t prot[][2] = {
++		{0x04, 4}, {0x08, 8}, {0x10, 16}, {0x20, 32}, {0x40, 64}, {0x80, 64},
++		{RBBM_SECVID_TSB_TRUSTED_BASE_LO, 16}, {RBBM_SECVID_TRUST_CNTL, 2},
++		{0x800, 64}, {0x840, 8}, {0x880, 32}, {0xaa0, 1}, {0xcc0, 1}, {0xcf0, 2},
++		{0xe68, 8}, {0xe70, 16}, {0xe80, 16}, {0x10000, 0x8000},
++	};
++	for (unsigned i = 0; i < sizeof(prot) / sizeof(prot[0]); i++)
++		g_wr(CP_PROTECT(i), protect_rw(prot[i][0], prot[i][1]));
++	g_wr(RBBM_SECVID_TSB_CNTL, 0);
++	g_wr(RBBM_SECVID_TSB_TRUSTED_BASE_LO, 0);
++	g_wr(RBBM_SECVID_TSB_TRUSTED_BASE_HI, 0);
++	g_wr(RBBM_SECVID_TSB_TRUSTED_SIZE, 0);
++	for (unsigned i = 0; i < sizeof(addr_mode_cntl) / sizeof(addr_mode_cntl[0]); i++)
++		g_wr(addr_mode_cntl[i], 0x1);
++	g_rmw(VPC_DBG_ECO_CNTL, 0, 1u << 23);		/* LMLOADKILL_DISABLE */
++	g_rmw(HLSQ_DBG_ECO_CNTL, 1u << 18, 0);
++
++	g_wr(CP_ME_INSTR_BASE_LO, (uint32_t)(pa + OFF_PM4));
++	g_wr(CP_ME_INSTR_BASE_HI, (uint32_t)((pa + OFF_PM4) >> 32));
++	g_wr(CP_PFP_INSTR_BASE_LO, (uint32_t)(pa + OFF_PFP));
++	g_wr(CP_PFP_INSTR_BASE_HI, (uint32_t)((pa + OFF_PFP) >> 32));
++	g_wr(CP_RB_BASE, (uint32_t)(pa + OFF_RING));
++	g_wr(CP_RB_BASE_HI, (uint32_t)((pa + OFF_RING) >> 32));
++	g_wr(CP_RB_CNTL, 0x08000000 | (2u << 8) | 9u);	/* NO_UPDATE, BLKSZ 32 B, 4 KiB */
++	g_wr(RBBM_INT_0_MASK, 0);			/* polled; GPU IRQ not routed */
++	printf("RIVER GPU: hw_init done; RBBM_STATUS %#x CP_PFP_ME_CNTL %#x rptr %u\n",
++	    g_rd(RBBM_STATUS), g_rd(CP_PFP_ME_CNTL), g_rd(CP_RB_RPTR));
++
++	/* Clear ME_HALT and send CP_ME_INIT (a5xx_me_init, A506 workaround 0x0b). */
++	g_wr(CP_PFP_ME_CNTL, 0);
++	wptr = 0;
++	ring[wptr++] = pkt7(CP_ME_INIT, 8);
++	ring[wptr++] = 0x0000002f;
++	ring[wptr++] = 0x00000003;
++	ring[wptr++] = 0x20000000;
++	ring[wptr++] = 0;
++	ring[wptr++] = 0;
++	ring[wptr++] = 0x0000000b;
++	ring[wptr++] = 0;
++	ring[wptr++] = 0;
++	if (!submit(buf, pa, "CP_ME_INIT")) return;
++	printf("RIVER GPU: CP_ME_INIT consumed (rptr %u), RBBM_STATUS %#x\n", g_rd(CP_RB_RPTR), g_rd(RBBM_STATUS));
++
++	/* Proof of execution: the CP writes a scratch register (PKT4) ... */
++	g_wr(CP_SCRATCH_REG(0), 0);
++	ring[wptr++] = pkt4(CP_SCRATCH_REG(0), 1);
++	ring[wptr++] = 0x05060a5e;
++	if (!submit(buf, pa, "scratch write")) return;
++	printf("RIVER GPU: CP wrote CP_SCRATCH_REG0 = %#x (expect 0x5060a5e)\n", g_rd(CP_SCRATCH_REG(0)));
++
++	/* ... then memory (CP_MEM_WRITE: addr lo, hi, data). Still in secure
++	 * mode until a zap shader runs, so this may be refused; it is last. */
++	uint64_t spa = pa + OFF_SCRATCH;
++	ring[wptr++] = pkt7(CP_MEM_WRITE, 3);
++	ring[wptr++] = (uint32_t)spa;
++	ring[wptr++] = (uint32_t)(spa >> 32);
++	ring[wptr++] = 0x1c0ffee5;
++	bool ok = submit(buf, pa, "CP_MEM_WRITE");
++	flush_dcache64((addr64_t)spa, 64, TRUE);
++	printf("RIVER GPU: CP_MEM_WRITE %s; memory now %#x (expect 0x1c0ffee5, was 0xdeadbeef); SMMU CB0 FSR %#x GFSR %#x\n",
++	    ok ? "consumed" : "stuck", scratch[0], s[0x8058/4], s[0x48/4]);
++}
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 5183a39..35f1708 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -321,6 +321,10 @@ river_gpu_probe(void)
+      ri_rd(r, 0x4f5 * 4), ri_rd(r, 0x530 * 4), ri_rd(r, 0x4e1 * 4), ri_rd(r, 0x800 * 4));
+  uint32_t c0 = ri_rd(r, 0x4d2 * 4); delay(1000); uint32_t c1 = ri_rd(r, 0x4d2 * 4);
+  printf("RIVER GPU: ALWAYSON_COUNTER %#x -> %#x after 1 ms (%s)\n", c0, c1, c1 != c0 ? "GPU alive" : "not counting");
++ if (on >= 3 && c1 != c0) {
++  extern void river_gpu_cp_start(void);
++  river_gpu_cp_start();
++ }
+ }
+ 
+ static void
