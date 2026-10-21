@@ -1,0 +1,166 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index dd23ac8..3539552 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -67,6 +67,17 @@ sweet_hold_set(SweetSurface **set, bool on)
+ }
+ class AppleCLCD;
+ static AppleCLCD *sweet_cons_fb;
++#if defined(RIVER)
++/*
++ * Row hashes of what each flip buffer holds, so a full-screen frame copies
++ * (and cleans) only rows that differ from the buffer's previous content.
++ */
++#define RIVER_FB_ROWS 2270
++static uint64_t river_flip_hash[2][RIVER_FB_ROWS];
++static bool river_flip_valid[2];
++static uint64_t river_present_ns, river_present_rows, river_presents, river_direct;
++static int river_zc;	/* boot-arg riverzc=1: scan iOS's scanout-pool surface directly */
++#endif
+ /* iOS's display power state (RequestPowerChange), for touch-to-wake in SweetHID. */
+ static volatile bool sweet_fb_off;
+ extern "C" bool sweet_fb_display_off(void);
+@@ -165,6 +176,7 @@ public:
+ 	void riverMdpSetup(void);
+ 	uint32_t      fPipeFlush;     /* CTL_FLUSH bits of ABL's splash pipe (+ CTL) */
+ 	uint32_t      fBootFormat, fBootUnpack;	/* ABL's 24bpp SRC_FORMAT / UNPACK_PATTERN */
++	bool          fBackClean;	/* back buffer's dirty rows already cleaned */
+ #endif
+ 	SweetSurface *fSurface;         /* the panel memory as an IOSurface */
+ 	IOLock       *fLock;            /* swaps and client list */
+@@ -543,7 +555,20 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
+ 		fb->flipBack();
+ 	}
+ 	if (rec != NULL) {
++#if defined(RIVER)
++		uint64_t pt0 = mach_absolute_time();
+ 		fb->present(rec);
++		uint64_t pns;
++		absolutetime_to_nanoseconds(mach_absolute_time() - pt0, &pns);
++		river_present_ns += pns;
++		if ((++river_presents % 256) == 0) {
++			IOLog("RIVER FB: %llu presents, last 256 avg %llu us, %llu rows copied, %llu direct\n",
++			    river_presents, river_present_ns / 256 / 1000, river_present_rows / 256, river_direct);
++			river_present_ns = river_present_rows = river_direct = 0;
++		}
++#else
++		fb->present(rec);
++#endif
+ 		IOFreeData(rec, SWEET_FB_SWAP_REC_SIZE);
+ 		IOLockLock(fb->fLock);
+ 		memcpy(fb->fRetireHold, fb->fShowHold, sizeof(taken));
+@@ -865,7 +890,13 @@ void
+ AppleCLCD::flipBack(void)
+ {
+ 	uint32_t idx = fFlipIdx ^ 1;
++#if defined(RIVER)
++	if (!fBackClean)
++#endif
+ 	sweet_dcache_clean((vm_offset_t)(uintptr_t)fFlip[idx]->getBytesNoCopy(), (unsigned)fFlip[idx]->getLength());
++#if defined(RIVER)
++	fBackClean = false;
++#endif
+ 	scanFrom(fFlipPhys[idx], fRowBytes);
+ 	fFlipIdx = idx;
+ }
+@@ -874,6 +905,10 @@ void
+ AppleCLCD::flipFrom(const uint8_t *src, uint32_t srcStride)
+ {
+ 	uint8_t *dst = backBuffer();
++#if defined(RIVER)
++	river_flip_valid[fFlipIdx ^ 1] = false;
++	fBackClean = false;
++#endif
+ 	if (srcStride == fRowBytes) {
+ 		memcpy(dst, src, (size_t)fRowBytes * fHeight);
+ 	} else {
+@@ -893,8 +928,11 @@ bool
+ AppleCLCD::directPresent(const uint8_t *rec)
+ {
+ #if defined(RIVER)
+-	(void)rec;
+-	return false;	/* river: compose into flip buffers first; zero-copy later */
++	/* Default: compose into flip buffers (row-skip copy). riverzc=1 tries
++	 * scanning the surface itself; topaz saw half-drawn frames that way. */
++	if (!river_zc) {
++		return false;
++	}
+ #endif
+ 	if (fVig0 == NULL) {
+ 		return false;
+@@ -931,10 +969,17 @@ AppleCLCD::directPresent(const uint8_t *rec)
+ 				 * next frame in this surface at once, so scanning it directly let
+ 				 * the panel show frames half drawn. Cached to cached, a few ms.
+ 				 */
++#if defined(RIVER)
++				if (fFlip[0] != NULL && !river_zc) {
++#else
+ 				if (fFlip[0] != NULL) {
++#endif
+ 					flipFrom((const uint8_t *)(va + s->offset + (uint64_t)oy * s->bytesPerRow + (uint64_t)ox * 4),
+ 					    s->bytesPerRow);
+ 				} else {
++#if defined(RIVER)
++					river_direct++;
++#endif
+ 					sweet_dcache_clean((vm_offset_t)(va + s->offset + (uint64_t)oy * s->bytesPerRow), (unsigned)((uint64_t)fHeight * s->bytesPerRow));
+ 					scanFrom(pa, s->bytesPerRow);
+ 				}
+@@ -1078,6 +1123,45 @@ AppleCLCD::present(const uint8_t *rec)
+ 		    s->memory == NULL || last > s->memory->getLength()) {
+ 			src = 0;
+ 		}
++#if defined(RIVER)
++		if (src != 0 && bpe == 4 && fFlip[0] != NULL && dx == 0 && dy == 0 &&
++		    w == (int32_t)fWidth && h == (int32_t)fHeight && fHeight <= RIVER_FB_ROWS &&
++		    (((src + s->offset + (uint64_t)sx * 4) | s->bytesPerRow) & 7) == 0) {
++			uint32_t back = fFlipIdx ^ 1, run = 0, copied = 0;
++			for (int32_t y = 0; y <= h; y++) {
++				bool dirty = false;
++				if (y < h) {
++					const uint64_t *q = (const uint64_t *)(src + s->offset +
++					    (uint64_t)(sy + y) * s->bytesPerRow + (uint64_t)sx * 4);
++					uint64_t hsh = 0xcbf29ce484222325ULL;
++					for (int32_t i = 0; i < w / 2; i++) {
++						hsh = (hsh ^ q[i]) * 0x100000001b3ULL;
++					}
++					dirty = !river_flip_valid[back] || river_flip_hash[back][y] != hsh;
++					if (dirty) {
++						river_flip_hash[back][y] = hsh;
++						memcpy((void *)(dst + (uint64_t)y * fRowBytes), q, (size_t)w * 4);
++						copied++;
++						run++;
++					}
++				}
++				if (!dirty && run) {	/* clean the finished run of copied rows */
++					sweet_dcache_clean((vm_offset_t)(dst + (uint64_t)(y - run) * fRowBytes),
++					    (unsigned)(run * fRowBytes));
++					run = 0;
++				}
++			}
++			river_flip_valid[back] = true;
++			fBackClean = true;
++			river_present_rows += copied;
++			s->release();
++			continue;
++		}
++		if (fFlip[0] != NULL) {
++			river_flip_valid[fFlipIdx ^ 1] = false;	/* partial layers: hashes unknown */
++			fBackClean = false;
++		}
++#endif
+ 		if (src != 0 && bpe == 4) {
+ 			for (int32_t y = 0; y < h; y++) {
+ 				memcpy((void *)(dst + (uint64_t)(dy + y) * fRowBytes + (uint64_t)dx * 4),
+@@ -1222,6 +1306,11 @@ AppleCLCD::riverMdpSetup(void)
+ 	fScanStride = fBootStride;
+ 	fPipeFlush = flush | (1u << 17);
+ 	fCtl0 = ctl;
++	PE_parse_boot_argn("riverzc", &river_zc, sizeof(river_zc));
++	if (river_zc) {
++		/* full-screen surfaces from the contiguous scanout pool (topaz) */
++		sweet_scanout_set_geometry(fWidth, fHeight, fLogicalW, fLogicalH);
++	}
+ 	fVig0 = pipe;	/* last: enables the flip path */
+ 	river_scan_fb = this;
+ 	sweet_console_show_hook = river_cons_show;
