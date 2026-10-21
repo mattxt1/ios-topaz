@@ -1034,4 +1034,12 @@ no eMMC errors or heap-execution crash in the final log. This argues against
 immediate PIO write/read corruption in this run, but not a wrong source
 buffer or rare later failure. The user returned to fastboot. Next, the
 normal four-core `r29-diag-4c` image (0151 crash context, no write verifier)
-was accepted by `fastboot boot`; result pending.
+was accepted by `fastboot boot`. Its live log is
+`logs-private/r19-live-18.txt`: about ten minutes of active use and more
+than 125 logged touch events, no heap-execution crash or eMMC error.
+User: Settings loads/scrolls; Safari works with keyboard/typing; Messages
+loads/scrolls; Phone loads, dials and scrolls. Photos opens to a black
+screen; App Store remains at loading. `MobileSlideShow` and `AppStore`
+executed without a logged crash, so these are separate app issues, not
+the heap-execution signature. User returned to fastboot for a repeat
+of the same diagnostic image.
