@@ -1,0 +1,194 @@
+diff --git a/bsd/dev/river_emmc.c b/bsd/dev/river_emmc.c
+index 72510aa..5b4c1de 100644
+--- a/bsd/dev/river_emmc.c
++++ b/bsd/dev/river_emmc.c
+@@ -235,8 +235,14 @@ river_emmc_wait_ns(uint32_t bits, uint32_t *status, uint64_t ns)
+ 			return 0;
+ 		}
+ 		if (mach_absolute_time() > end) {
++			/*
++			 * This thread can be preempted between reading the status and
++			 * the deadline check (r19 cpus=1: a CMD18 "timeout" with status
++			 * 0). Look once more before calling it a timeout.
++			 */
++			s = rd(hc, SDHCI_INT_STATUS);
+ 			*status = s;
+-			return ETIMEDOUT;
++			return (s & INT_ERROR) ? EIO : (s & bits) ? 0 : ETIMEDOUT;
+ 		}
+ 	}
+ }
+@@ -272,6 +278,7 @@ river_emmc_reset(uint32_t which)
+  * 1 us = 25 clocks at 25 MHz.
+  */
+ static uint32_t cmd_gap_us = 50;
++static void river_emmc_recover(void);
+ 
+ /*
+  * The only way this file talks to the card. CMD24 is separately gated to
+@@ -285,7 +292,7 @@ river_emmc_cmd_n(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uin
+     uint32_t count)
+ {
+ 	switch (index) {
+-	case 0: case 1: case 2: case 3: case 7: case 8: case 13: case 17:
++	case 0: case 1: case 2: case 3: case 7: case 8: case 12: case 13: case 17:
+ 		break;
+ 	case 6:
+ 		if (arg != CMD6_WRITE_BYTE(EXT_CSD_BUS_WIDTH, 0) &&
+@@ -380,6 +387,7 @@ river_emmc_cmd_n(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uin
+ 		printf("RIVER eMMC: CMD%u LBA 0x%x data %s, status 0x%08x\n", index, arg,
+ 		    error == EIO ? "error" : "timeout", status);
+ 		river_emmc_reset(RESET_CMD | RESET_DAT);
++		river_emmc_recover();
+ 		return error;
+ 	}
+ 	wr(hc, SDHCI_INT_STATUS, 0xffffffff);
+@@ -392,6 +400,32 @@ river_emmc_cmd(uint32_t index, uint32_t arg, uint32_t rsp, uint32_t *resp, uint3
+ 	return river_emmc_cmd_n(index, arg, rsp, resp, buf, 1);
+ }
+ 
++/*
++ * After a failed data transfer the card may still be sending or receiving
++ * (r19: CMD18 timed out, then CMD17/CMD24 got command timeouts 0x18000 and
++ * SpringBoard died on a failed page-in). CMD12 STOP_TRANSMISSION returns it
++ * to tran, as Linux does; CMD13 confirms, polling out a write's busy state.
++ */
++static void
++river_emmc_recover(void)
++{
++	uint32_t r = 0;
++	int error = river_emmc_cmd(12, 0, RSP_R1B, &r, NULL);
++	uint64_t end = deadline(WRITE_TIMEOUT_NS);
++	int st = -1;
++	do {
++		if (!river_emmc_cmd(13, RCA << 16, RSP_R1, &r, NULL)) {
++			st = (r >> 9) & 0xf;
++			if (st == 4) {
++				break;
++			}
++		}
++		delay(1000);
++	} while (mach_absolute_time() < end);
++	printf("RIVER eMMC: recovery CMD12 %s, card state %d%s\n", error ? "failed" : "ok", st,
++	    st == 4 ? " (tran)" : " (NOT tran)");
++}
++
+ /* Read `n` (2..MULTI_MAX) consecutive blocks: CMD23 count, CMD18. */
+ static int
+ river_emmc_read_multi(uint64_t lba, uint32_t n, void *dst)
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 5077530..202bdb3 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -20,6 +20,7 @@ static vm_offset_t ri_tlmm, ri_touch, ri_key, ri_spmi, ri_obs;
+ static uint32_t ri_pon_off;
+ static bool ri_started, ri_pon_ok, ri_touch_ok;
+ static int ri_chan;
++static char ri_rtc_note[96] = "RIVER RTC: not read";
+ /* ml_io_map uses an 8 MiB permanent submap, almost filled by splash RAM.
+  * Map only the needed 16 KiB register pages through kernel_map instead.
+  * The returned pointer preserves the physical offset within that page. */
+@@ -150,6 +151,7 @@ ri_probe(void)
+   }
+   uint8_t pon = 0; bool ok = ri_pon(&pon);
+   printf("RIVER INPUT: PON read=%d value=%#x observer=%#x\n", ok, pon,ri_pon_off);
++  printf("%s (repeated for the live log)\n", ri_rtc_note);
+  }
+  if (!ri_tlmm || !ri_touch || !ri_key) return;
+  printf("RIVER INPUT: GPIO10=%#x GPIO11=%#x reset64=%#x/%#x irq65=%#x/%#x vol85=%#x/%#x\n",ri_rd(ri_tlmm,0x2000),ri_rd(ri_tlmm,0x3000),ri_rd(ri_touch,0),ri_rd(ri_touch,4),ri_rd(ri_touch,0x1000),ri_rd(ri_touch,0x1004),ri_rd(ri_key,0x1000),ri_rd(ri_key,0x1004));
+@@ -236,33 +238,39 @@ ri_spmi_read(vm_offset_t obs, unsigned addr, unsigned count, uint32_t *v)
+  }
+  return false;
+ }
+-static void
+-river_rtc_init(void)
++bool river_rtc_utc(clock_sec_t *out);
++bool
++river_rtc_utc(clock_sec_t *out)
+ {
+  vm_offset_t core = ri_map(0x0200f000), obs = 0;
+- if (!core) return;
++ if (!core) return false;
+  uint32_t ver = ri_rd(core, 0);
+- if (ver < 0x20010000 || ver >= 0x50000000) return;
++ if (ver < 0x20010000 || ver >= 0x50000000) {
++  snprintf(ri_rtc_note, sizeof(ri_rtc_note), "RIVER RTC: SPMI version %#x unsupported", ver);
++  printf("%s\n", ri_rtc_note);
++  return false;
++ }
+  for (unsigned i = 0; i < 256 && !obs; i++) {
+   if (((ri_rd(core, 0x800 + i*4) >> 8) & 0xfff) == 0x060) obs = ri_map(0x02c00000 + i*0x8000);
+  }
+  uint32_t ctrl = 0, a = 0, b0 = 0, b = 0;
+  if (!obs || !ri_spmi_read(obs, 0x46, 1, &ctrl) || !ri_spmi_read(obs, 0x48, 4, &a) ||
+      !ri_spmi_read(obs, 0x48, 1, &b0)) {
+-  printf("RIVER RTC: PM8953 RTC not readable\n");
+-  return;
++  snprintf(ri_rtc_note, sizeof(ri_rtc_note), "RIVER RTC: PM8953 RTC not readable (channel %s)", obs ? "found" : "missing");
++  printf("%s\n", ri_rtc_note);
++  return false;
+  }
+  b = a;
+- if ((b0 & 0xff) < (a & 0xff) && !ri_spmi_read(obs, 0x48, 4, &b)) return;	/* byte 0 rolled over */
++ if ((b0 & 0xff) < (a & 0xff) && !ri_spmi_read(obs, 0x48, 4, &b)) return false;	/* byte 0 rolled over */
+  int off = 0;
+  PE_parse_boot_argn("riverrtcoff", &off, sizeof(off));
+  uint64_t secs = (uint64_t)b + (int64_t)off;
+- printf("RIVER RTC: ctrl %#x raw %u offset %d -> %llu\n", ctrl & 0xff, b, off, secs);
+- if (!(ctrl & 0x80) || secs < 1577836800ULL) {	/* disabled, or before 2020 */
+-  printf("RIVER RTC: not plausible; calendar left unset\n");
+-  return;
+- }
+- clock_set_calendar_microtime((clock_sec_t)secs, 0);
++ bool good = (ctrl & 0x80) && secs >= 1577836800ULL;	/* enabled, after 2020 */
++ snprintf(ri_rtc_note, sizeof(ri_rtc_note), "RIVER RTC: ctrl %#x raw %u offset %d -> %llu%s",
++     ctrl & 0xff, b, off, secs, good ? "" : " (not plausible; calendar left unset)");
++ printf("%s\n", ri_rtc_note);
++ if (good) *out = (clock_sec_t)secs;
++ return good;
+ }
+ void
+ river_input_init(void)
+@@ -270,7 +278,6 @@ river_input_init(void)
+  int enabled=0;
+  if(ri_started) return;
+  ri_started=true;
+- river_rtc_init();
+  if(!PE_parse_boot_argn("riverinput",&enabled,sizeof(enabled)) || enabled!=1) return;
+  thread_t t;
+  if(kernel_thread_start(ri_thread,NULL,&t)==KERN_SUCCESS)thread_deallocate(t);
+diff --git a/iokit/Kernel/IOStartIOKit.cpp b/iokit/Kernel/IOStartIOKit.cpp
+--- a/iokit/Kernel/IOStartIOKit.cpp
++++ b/iokit/Kernel/IOStartIOKit.cpp
+@@ -69,6 +69,10 @@
+ #include <kern/clock.h>
+ #include <sys/time.h>
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET) && defined(RIVER)
++extern "C" bool river_rtc_utc(clock_sec_t *secs);	/* bsd/dev/sweet_keys.c */
++#endif
++
+ void
+ IOKitInitializeTime( void )
+ {
+@@ -77,6 +81,20 @@
+ 	t.tv_sec = 30;
+ 	t.tv_nsec = 0;
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET) && defined(RIVER)
++	/*
++	 * River has no IORTC service, so waiting for one only stalled every boot
++	 * for 30 s, and clock_initialize_calendar() then took 0 (1970) from the
++	 * platform expert. Initialise, then set the calendar from the PM8953 RTC.
++	 */
++	clock_initialize_calendar();
++	clock_sec_t rtc;
++	if (river_rtc_utc(&rtc)) {
++		clock_set_calendar_microtime(rtc, 0);
++	}
++	(void)t;
++	return;
++#endif
+ // RTC is not present on this target
+ #ifndef BCM2837
+ 	IOService::waitForService(
