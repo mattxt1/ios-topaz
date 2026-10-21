@@ -1109,3 +1109,17 @@ asynchronous bus error. The clamp does sit on the GPU domain's interfaces.
 0158 follows mainline order: no GFX LDO writes, RCG configured without
 forcing the root, CX on, clamp released immediately before GX, clamp
 re-asserted if GX does not power on, branch clocks only after both GDSCs.
+
+### r36 (0158 mainline order; CI build of c92f820): **GPU powered and clocked**, register read SErrors (photo IMG_0362)
+`GX powered, clamp_io 0x1101 -> 0x1100`; after power-on GDSC gx 0xa0282800,
+cx 0xa0282800 (both PWR_ON); GFX3D RCG cmd 0 cfg 0x505 (root running,
+133.33 MHz); CBCR gfx3d 0x4f01, ahb 0x20008001, bimc_gfx 0x4111, bimc_gpu /
+timer / aon 0x1 (all running); GFX LDO untouched, status 0x3 (BHS acks, under
+GDSC control). Then the first Adreno register read (RBBM_STATUS at
+0x1c013d4, Device mapping) -> `panic(cpu 1): Unhandled implementation
+specific error` (SError). Mainline msm8953 has no GPU BCR reset; downstream
+a5xx_regulator_enable() for A506 just writes RBBM_CLOCK_CNTL after
+power/clocks, so registers should be accessible in this state. Unknown
+difference (candidates: bus/NoC votes via RPM/msm-bus, TZ XPU/secure
+access, clamp bits 8/12 in 0x5b00c, timing). Next: capture Linux's
+working register state in recovery (kgsl force_rail/clk/bus_on + devmem).
