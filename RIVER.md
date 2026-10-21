@@ -1416,3 +1416,10 @@ repeatedly: topaz 0138's registration landed inside AppleCLCD::start's
 User report on r48: home screen reached; swiping into the App Library works
 better with no visual glitches, and the keyboard now works and draws fully:
 the imported SweetSurface fixes (0171-0177, 0179) help the CPU renderer too.
+
+### r49 (0181): empty IOAcceleratorES published on river: ~38 s faster boot
+Measured from iOS log timestamps (first launchd line -> first SpringBoard
+log line): r39-r48 boots 118-142 s (typ. ~135 s), each with 302
+`IOAcceleratorES -> 0 found` polls; r49 97 s with none (backboardd finds it
+at once, then looks it up again per CA context: 293 quick `matching1`
+lookups). User stopwatch, first boot line to lock screen: 1:49.
