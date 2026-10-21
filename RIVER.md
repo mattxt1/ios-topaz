@@ -829,3 +829,13 @@ routing discovery. Not in r14-r16. Suspected eMMC multi-block data errors
 (or an SMP race); r18 (0140, rivermmcverify=1) tests that.
 Usage notes: wake with a short Power press, then swipe within ~5 s; set
 Auto-Lock to Never once unlocked.
+
+### r18 (0140, rivermmcverify=1): no eMMC read errors
+`river-r18-boot.img` sha256 078fb462...ff84e, RAM-booted 16:40:41. Every
+multi-block read re-read block by block: **0 bad blocks in 14,336 multi
+reads** by +410 s (SpringBoard exec +100 s with verify on). No SpringBoard
+crash in this run (only the usual driverkitd). The r17 heap-execution
+crashes are therefore not explained by eMMC multi-block data errors; next
+suspects are an SMP race (test: same kernel with cpus=1, payload rebuild
+only) or a rare userland issue. r16 (0 SpringBoard crashes) and r17 (2)
+used identical eMMC code.
