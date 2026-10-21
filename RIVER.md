@@ -1043,3 +1043,20 @@ screen; App Store remains at loading. `MobileSlideShow` and `AppStore`
 executed without a logged crash, so these are separate app issues, not
 the heap-execution signature. User returned to fastboot for a repeat
 of the same diagnostic image.
+
+### Heap-branch crash captured with 0151 context (r29-diag-4c repeat, r19-live-19.txt)
+locationd[61] SIGBUS code 2, pc == far 0x1e76d84e0 (malloc tag 35 region
+0x1e6000000-0x1e8000000), ESR 0x8200000f; LR-4 insn 0x94004e9e = `bl`
+(direct call, i.e. into objc_msgSend). x0 receiver 0x11a973760 whose isa
+0x0000a5a1e76d7e55 -> class 0x1e76d7e50 (= x15): **the class object itself
+is in the malloc heap** (runtime-created class, e.g. KVO/Swift metadata).
+x11 0x3f00011a01d400 = cache mask 0x3f, buckets 0x11a01d400; x12 0x3c,
+x13 0x11a01d7a0 = probed bucket; x1 = x9 = SEL 0x187df590e. Branch target
+x16 = x17 = 0x1e76d84e0, 0x690 bytes after the class, and its memory holds
+pointers (data, not code). With the non-PAC IMP ^ class encoding the stored
+value would be ~0xfab0, not a valid encoded IMP: the **method-cache bucket
+content is wrong** (or read with the wrong encoding/format for this class).
+Next: dump the bucket at x13 (and x10 buckets / class cache_t) on the next
+occurrence; check objc4 (iOS 16) cache formats (preoptimized vs dynamic,
+CACHE_IMP_ENCODING, bucket write ordering) against anything in our kernel
+that could make another core see a stale bucket (or a stale page).
