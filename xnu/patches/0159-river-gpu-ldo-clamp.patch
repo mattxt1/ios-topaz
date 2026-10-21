@@ -1,0 +1,44 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index a5825a9..3709361 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -188,7 +188,30 @@ river_gpu_power_on(vm_offset_t g, vm_offset_t ldo)
+   * (GCC+0x5b00c bit 0) immediately before gdsc_oxili_gx and re-assert it if
+   * GX does not power on. Clocks only after both domains are on.
+   */
+- (void)ldo;
++ /*
++  * r36 left the GFX LDO untouched (PWRSWITCH_CTL 0x80000038: LDO_CLAMP_IO
++  * set): GX powered but the first GPU register read SErrored. Linux with the
++  * GPU powered (recovery, kgsl force_rail/clk_on) shows 0x20000038: its probe
++  * clears CLAMP_IO, sets EN_LDOAP_CTRL_CPR and writes msm8953_ldo_config, and
++  * enable_bhs_mode hands the head switch to the GDSC. Do the same first.
++  */
++ uint32_t ctl = ri_rd(ldo, 0x1c);
++ ctl &= ~(1u << 31);				/* LDO_CLAMP_IO */
++ ctl |= (1u << 29);				/* EN_LDOAP_CTRL_CPR */
++ ri_wr(ldo, 0x1c, ctl);
++ ri_wr(ldo, 0x00, 0x00000203);			/* msm8953_ldo_config */
++ ri_wr(ldo, 0x04, 0x05008600);
++ ri_wr(ldo, 0x08, 0x00000000);
++ ri_wr(ldo, 0x0c, 0x0000c3fc);
++ ri_wr(ldo, 0x14, 0x004b1102);
++ ctl = ri_rd(ldo, 0x1c);			/* enable_bhs_mode */
++ ctl |= (1u << 4); ri_wr(ldo, 0x1c, ctl);
++ ctl &= ~(1u << 9); ri_wr(ldo, 0x1c, ctl);
++ ctl &= ~(1u << 30); ri_wr(ldo, 0x1c, ctl);
++ ctl &= ~(1u << 1); ri_wr(ldo, 0x1c, ctl);
++ ctl &= ~(1u << 2); ri_wr(ldo, 0x1c, ctl);
++ ctl &= ~(1u << 0); ri_wr(ldo, 0x1c, ctl);
++ printf("RIVER GPU: LDO clamp off, BHS to GDSC, ctrl %#x (Linux 0x20000038)\n", ri_rd(ldo, 0x1c));
+  ri_wr(g, 0x04, (5u << 8) | 5u);		/* GFX3D CFG: src 5, div 3 */
+  ri_wr(g, 0x00, ri_rd(g, 0x00) | 1u);		/* update */
+  for (unsigned i = 0; i < 1000 && (ri_rd(g, 0x00) & 1u); i++) delay(1);
+@@ -203,6 +226,7 @@ river_gpu_power_on(vm_offset_t g, vm_offset_t ldo)
+  }
+  printf("RIVER GPU: GX powered, clamp_io %#x -> %#x\n", clamp, ri_rd(g, 0x200c));
+  (void)river_cbcr_on(g, 0x28, "oxili_ahb");
++ ri_wr(g, 0x20, ri_rd(g, 0x20) | (1u << 13));	/* FORCE_MEM_PERIPH_ON (Linux 0x6f01) */
+  (void)river_cbcr_on(g, 0x20, "gfx3d");
+  (void)river_cbcr_on(g, 0x34, "bimc_gfx");
+  (void)river_cbcr_on(g, 0x30, "bimc_gpu");

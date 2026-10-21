@@ -1123,3 +1123,17 @@ power/clocks, so registers should be accessible in this state. Unknown
 difference (candidates: bus/NoC votes via RPM/msm-bus, TZ XPU/secure
 access, clamp bits 8/12 in 0x5b00c, timing). Next: capture Linux's
 working register state in recovery (kgsl force_rail/clk/bus_on + devmem).
+
+### Linux reference in recovery (kgsl force_rail/clk/bus_on, debugfs)
+Recovery kernel 4.9.337 has kgsl ("Adreno506v1", 320 MHz). Idle values
+match our survey; VDD_CX (pm8953_s2_level) is at RPM level 256 (nominal).
+With the GPU forced on (firmware load failed: /vendor not mounted):
+GFX3D CMD 0 CFG 0x104 (320 MHz); CBCR gfx3d **0x6f01** (ours 0x4f01),
+ahb 0x20008001, bimc_gfx 0x4111, bimc_gpu/timer/aon 0x1 (= ours); both
+GDSC regulators enabled; GFX LDO mode BHS, corner 3, **PWRSWITCH_CTL
+0x20000038** (ours in r36: 0x80000038, LDO_CLAMP_IO still set),
+PWRSWITCH_STATUS 0x3, CFG0 0x5008600, CFG2 0xc3fc, VREF_TEST 0x4b1102,
+ATEST 0x203. Firmware copied privately to device-private/gpu-firmware
+(vendor_b: a530_pm4.fw, a530_pfp.fw; modem_b /image: a506_zap.mdt/.b00-.b02).
+0159: LDO probe init (clamp off, EN_LDOAP, init table) + enable_bhs_mode
+before the r36 order, and gfx3d CBCR bit 13 as Linux.
