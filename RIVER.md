@@ -1137,3 +1137,18 @@ ATEST 0x203. Firmware copied privately to device-private/gpu-firmware
 (vendor_b: a530_pm4.fw, a530_pfp.fw; modem_b /image: a506_zap.mdt/.b00-.b02).
 0159: LDO probe init (clamp off, EN_LDOAP, init table) + enable_bhs_mode
 before the r36 order, and gfx3d CBCR bit 13 as Linux.
+
+### r37 (0159; CI build of 248894b, console-visible rerun): same SError (photo IMG_0363)
+`LDO clamp off, BHS to GDSC, ctrl 0x20000038`, `GX powered, clamp_io 0x1101
+-> 0x1100`, after power-on: gx/cx 0xa0282800, RCG cmd 0 cfg 0x505, CBCR
+gfx3d 0x6f01, ahb 0x20008001, bimc_gfx 0x4111, bimc_gpu/timer/aon 0x1, LDO
+ctrl 0x20000038 status 0x3 — every GCC/LDO value we can see now matches
+Linux with kgsl forced on. The first GPU register read (0x1c013d4) still
+SErrors (`panic(cpu 2): Unhandled implementation specific error`). So the
+missing condition is outside these registers. Candidates: msm-bus / RPM
+bandwidth votes (kgsl votes the GPU path on power-up), TZ XPU / secure
+access to the GPU register space, remaining clamp bits 8/12 in GCC+0x5b00c.
+Next: in recovery, start kgsl fully (firmware available) and inspect
+msm-bus-dbg / rpm_master_stats / tzdbg while the GPU runs; and test reads
+of other GPU-side addresses (GPU SMMU 0x1c40000) to see if the whole
+region faults.
