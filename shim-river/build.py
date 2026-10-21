@@ -151,11 +151,16 @@ def main():
     ap.add_argument('--payload', help='SWEETXNU payload from tools/mkpayload.py')
     ap.add_argument('--no-gold-clk', action='store_true',
                     help='leave the Gold cluster clock at its reset source (pre-r15 behaviour)')
+    ap.add_argument('--gold-mhz', type=int, choices=(800, 1401), default=1401,
+                    help='Gold clock: 800 = GPLL0 only (r15-r21), 1401 = APCS C1 PLL at 1401.6 MHz')
     ap.add_argument('-o', '--output', default=os.path.join(HERE, 'out', 'river-shim-boot.img'))
     args = ap.parse_args()
     out = os.path.join(HERE, 'out')
     os.makedirs(out, exist_ok=True)
-    image = build_image(out, ['-DRIVER_NO_GOLD_CLK'] if args.no_gold_clk else [])
+    extra = ['-DRIVER_NO_GOLD_CLK'] if args.no_gold_clk else []
+    if args.gold_mhz == 800:
+        extra.append('-DRIVER_GOLD_GPLL0_ONLY')
+    image = build_image(out, extra)
     if args.payload:
         ramdisk = open(args.payload, 'rb').read()
         assert ramdisk[:8] == b'SWEETXNU', 'payload magic'

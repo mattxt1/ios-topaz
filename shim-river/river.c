@@ -116,6 +116,132 @@ static void gold_clock_gpll0(void)
 #endif
 }
 
+/*
+ * Gold at 1401.6 MHz (corner c4) from its own APCS C1 PLL. The shared APC
+ * rail (PM8953 S5) stays as ABL left it: r21 read 870 mV, above the c4 CPR
+ * ceiling of 865 mV in river's DT, so no voltage change is needed. Sequence
+ * and values from Linux clock-cpu-sdm632.c / clock-pll.c (variable-rate PLL
+ * init, set_rate, software enable), then the mux to source 5 (PLL main),
+ * divider 1. On a lock failure the PLL goes back into reset and Gold stays
+ * on GPLL0 800 MHz. Build with --gold-mhz 800 to skip this.
+ */
+#define APCS_C1_PLL		0x0b016000UL
+#define PLL_MODE		0x00
+#define PLL_L_VAL		0x08
+#define PLL_ALPHA		0x10
+#define PLL_USER_CTL		0x18
+#define PLL_CFG_CTL_LO		0x20
+#define PLL_CFG_CTL_HI		0x24
+#define PLL_TEST_CTL_LO		0x30
+#define PLL_TEST_CTL_HI		0x34
+#define PLL_OUTCTRL		(1U << 0)
+#define PLL_BYPASSNL		(1U << 1)
+#define PLL_RESET_N		(1U << 2)
+#define PLL_LOCKED		(1U << 31)
+#define GOLD_PLL_L		73U			/* 73 x 19.2 MHz = 1401.6 MHz */
+#define RCG_PLL_MAIN_DIV1	((5U << 8) | 1U)
+
+static void __attribute__((unused)) delay_us(unsigned us)
+{
+	isb();
+	uint64_t end = rsr("cntpct_el0") + rsr("cntfrq_el0") * us / 1000000;
+	while (rsr("cntpct_el0") < end)
+		isb();
+}
+
+static int rcg_switch(uint32_t cfg)
+{
+	wr32(APCS_ALIAS1_CFG_RCGR, cfg);
+	dsb();
+	wr32(APCS_ALIAS1_CMD_RCGR, rd32(APCS_ALIAS1_CMD_RCGR) | 1U);
+	dsb();
+	uint64_t end = rsr("cntpct_el0") + rsr("cntfrq_el0") / 1000;
+	while ((rd32(APCS_ALIAS1_CMD_RCGR) & 1U) && rsr("cntpct_el0") < end)
+		isb();
+	return (rd32(APCS_ALIAS1_CMD_RCGR) & 1U) ? -1 : 0;
+}
+
+static volatile uint32_t gold_mhz_target = 800;
+
+static void gold_clock_pll(void)
+{
+#if !defined(RIVER_NO_GOLD_CLK) && !defined(RIVER_GOLD_GPLL0_ONLY)
+	uintptr_t p = APCS_C1_PLL;
+	if (rd32(p + PLL_MODE) & PLL_OUTCTRL) {
+		con_hex("C1PLL", rd32(p + PLL_MODE));
+		con_str("C1PLL", "already running; left alone");
+		return;
+	}
+	/* __variable_rate_pll_init */
+	wr32(p + PLL_USER_CTL, rd32(p + PLL_USER_CTL) | (1U << 0) | (1U << 3));
+	wr32(p + PLL_ALPHA, 0);
+	wr32(p + PLL_CFG_CTL_LO, 0x200D4828U);
+	wr32(p + PLL_CFG_CTL_HI, 0x00000006U);
+	wr32(p + PLL_TEST_CTL_LO, 0x1C000000U);
+	wr32(p + PLL_TEST_CTL_HI, 0x00004000U);
+	/* variable_rate_pll_set_rate */
+	wr32(p + PLL_L_VAL, GOLD_PLL_L);
+	dsb();
+	/* variable_rate_pll_clk_enable (test_ctl_dbg set: no debug bits) */
+	uint32_t mode = rd32(p + PLL_MODE);
+	mode |= PLL_BYPASSNL;
+	wr32(p + PLL_MODE, mode);
+	dsb();
+	delay_us(10);
+	mode |= PLL_RESET_N;
+	wr32(p + PLL_MODE, mode);
+	dsb();
+	delay_us(200);
+	int locked = 0;
+	for (int i = 0; i < 200 && !locked; i++) {
+		if (rd32(p + PLL_MODE) & PLL_LOCKED) {
+			delay_us(1);
+			locked = (rd32(p + PLL_MODE) & PLL_LOCKED) != 0;	/* not a transient */
+		}
+		if (!locked)
+			delay_us(1);
+	}
+	if (!locked) {
+		con_hex2("C1PLL", "mode=", rd32(p + PLL_MODE), "L=", rd32(p + PLL_L_VAL));
+		wr32(p + PLL_MODE, 0);	/* back into reset/bypass */
+		dsb();
+		con_str("C1PLL", "no lock: Gold stays on GPLL0 800 MHz");
+		return;
+	}
+	wr32(p + PLL_MODE, mode | PLL_OUTCTRL);
+	dsb();
+	if (rcg_switch(RCG_PLL_MAIN_DIV1)) {
+		(void)rcg_switch(RCG_GPLL0_DIV1);
+		con_str("C1PLL", "mux update stuck: back to GPLL0 800 MHz");
+		return;
+	}
+	gold_mhz_target = 1401;
+	con_hex2("C1PLL", "mode=", rd32(p + PLL_MODE), "cfg=", rd32(APCS_ALIAS1_CFG_RCGR));
+	con_str("C1PLL", "Gold on PLL 1401.6 MHz");
+#endif
+}
+
+/*
+ * Integrity check for the new clock: Silver computes this at its known-good
+ * 800 MHz before CPU_ON; Gold recomputes it at the new clock and falls back
+ * to GPLL0 on any difference (multiply, shift and load/store paths).
+ */
+static uint64_t clock_check(void)
+{
+	static uint64_t buf[512];
+	uint64_t x = 0x9e3779b97f4a7c15ULL, acc = 0;
+	for (uint32_t i = 0; i < 512; i++)
+		buf[i] = i * 0x100000001b3ULL;
+	for (uint32_t i = 0; i < (1U << 20); i++) {
+		x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+		uint32_t k = (uint32_t)(x >> 55);
+		buf[k] = buf[k] * 0xff51afd7ed558ccdULL + x;
+		acc += buf[(k + i) & 511] ^ (x * 0xc4ceb9fe1a85ec53ULL);
+	}
+	return acc;
+}
+static volatile uint64_t gold_ref;
+
 static void report_cpu(const char *label)
 {
 	uint64_t mmfr0 = rsr("id_aa64mmfr0_el1");
@@ -143,6 +269,19 @@ void secondary_main(uint64_t idx)
 	stage = "gold";
 	con_skip();
 	report_cpu("GOLD");
+	if (gold_mhz_target != 800) {
+		/* Three passes at the new clock must match Silver's 800 MHz result. */
+		int bad = 0;
+		for (int i = 0; i < 3; i++)
+			bad |= clock_check() != gold_ref;
+		if (bad) {
+			(void)rcg_switch(RCG_GPLL0_DIV1);
+			con_str("C1CHECK", "MISMATCH at 1401.6 MHz: Gold back on GPLL0 800 MHz");
+		} else {
+			con_str("C1CHECK", "3/3 checks match at 1401.6 MHz");
+		}
+		con_hex(" spin MHz", spin_mhz());
+	}
 	if (!gold_dtb)
 		hold_and_reset("gold woke without a handoff");
 	if (((rsr("id_aa64mmfr0_el1") >> 20) & 0xf) == 0)
@@ -176,6 +315,9 @@ void shim_main(uint64_t dtb)
 
 	stage = "gold_clk";
 	gold_clock_gpll0();
+	gold_clock_pll();
+	gold_ref = clock_check();
+	dsb();
 
 	stage = "cpu_on";
 	gold_dtb = dtb;
