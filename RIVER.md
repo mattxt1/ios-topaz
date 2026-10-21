@@ -1475,3 +1475,16 @@ console markers around context setup, built and signed. Diagnostic RAM image:
 Next: when phone is in fastboot, RAM-boot this image with the receiver already
 running, inspect the last `RIVER DIAG` marker, fix the actual fault, remove
 temporary markers, then rerun the clear test.
+
+Diagnostic boots with the USB receiver running:
+- `r49-gallium-live-3.txt`: process enters `fd5_context_create`, then SIGSEGV.
+- `r49-gallium-live-4.txt`: allocation and draw/compute/GMEM/texture init
+  pass; SIGSEGV during `fd5_prog_init`.
+- `r49-gallium-live-5.txt`: `ir3_cache_create` and `ir3_prog_init` pass;
+  SIGSEGV during `fd_prog_init` (built-in shader creation). These are observed
+  last markers, not yet a proven exact instruction.
+- A fourth diagnostic image with markers around TGSI parsing, NIR conversion,
+  and shader creation is ready at
+  `shim-river/out/river-r49-gallium-diag4-boot.img` (SHA256
+  d9724b240bb94ecc5855a814ae0495194681dd888eede2e53c8b6049cd59e4c6).
+  Waiting for the phone to return to fastboot; no fourth diagnostic boot yet.

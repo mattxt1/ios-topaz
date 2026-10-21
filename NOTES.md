@@ -14,6 +14,12 @@ Phone needs to return to fastboot; USB receiver is running. Boot the
 diagnostic image with `fastboot boot` only, inspect last `RIVER DIAG` marker,
 fix the fault, remove markers, and rerun. Details in RIVER.md r49g.
 
+Update: three diagnostic logs now narrow the SIGSEGV to `fd_prog_init`
+after `ir3_cache_create` and `ir3_prog_init` succeed. A finer signed image
+is prepared at `shim-river/out/river-r49-gallium-diag4-boot.img` (SHA256
+d9724b240bb94ecc5855a814ae0495194681dd888eede2e53c8b6049cd59e4c6).
+Boot it RAM-only once the phone is back in fastboot. USB receiver is running.
+
 ## River status (2026-10-21) — current
 
 River boots iOS 16.7.16 to an interactive home screen in ~70 s (r28; see
