@@ -1322,3 +1322,15 @@ TCR 0x80802020, TCR2 0x38002, MAIR0 0xf404ff44, PTE 0xe43 (RO 0xec3), ASID
 64 KiB GPU buffer is mapped at GPU VA 0x01000000 (microcode read-only) and
 the CP gets GPU addresses only. Last test: CP_MEM_WRITE to unmapped
 0x02000000 should fault in CB0 (FSR.TF, FAR).
+
+### r45 (0167): **GPU runs on our page tables; translation enforced** (r39-live-9.txt)
+`GPU SMMU CB0 translating: TTBR0 0xa4f2c000 SCTLR 0x1067 TCR 0x80802020`;
+the whole r44 sequence (ME_INIT, scratch register, memory write, zap, secure
+mode off, memory write) now runs with the CP fetching microcode and ring and
+writing memory through GPU VAs. `unmapped write consumed: CB0 FSR 0x202 FAR
+0x02000000 FSYNR0 0x12`: translation fault (TF) at exactly the unmapped GPU
+address, FSYNR0 WNR (write), terminated without stalling; the CP kept going
+(RBBM_STATUS 0x1). The GPU can no longer reach arbitrary physical memory.
+Next (kernel GPU service): GPU memory objects with a GPU VA allocator, a
+submission path with fences (CP_EVENT_WRITE / CACHE_FLUSH_TS) and the GPU
+IRQ (SPI 33) instead of polling, then the /dev/rivergpu interface for Mesa.
