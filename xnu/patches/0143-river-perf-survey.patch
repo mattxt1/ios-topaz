@@ -1,0 +1,142 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 202bdb3..3348d41 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -21,6 +21,7 @@ static uint32_t ri_pon_off;
+ static bool ri_started, ri_pon_ok, ri_touch_ok;
+ static int ri_chan;
+ static char ri_rtc_note[96] = "RIVER RTC: not read";
++static char ri_perf_note[1024];
+ /* ml_io_map uses an 8 MiB permanent submap, almost filled by splash RAM.
+  * Map only the needed 16 KiB register pages through kernel_map instead.
+  * The returned pointer preserves the physical offset within that page. */
+@@ -152,6 +153,7 @@ ri_probe(void)
+   uint8_t pon = 0; bool ok = ri_pon(&pon);
+   printf("RIVER INPUT: PON read=%d value=%#x observer=%#x\n", ok, pon,ri_pon_off);
+   printf("%s (repeated for the live log)\n", ri_rtc_note);
++  if (ri_perf_note[0]) printf("%s(repeated for the live log)\n", ri_perf_note);
+  }
+  if (!ri_tlmm || !ri_touch || !ri_key) return;
+  printf("RIVER INPUT: GPIO10=%#x GPIO11=%#x reset64=%#x/%#x irq65=%#x/%#x vol85=%#x/%#x\n",ri_rd(ri_tlmm,0x2000),ri_rd(ri_tlmm,0x3000),ri_rd(ri_touch,0),ri_rd(ri_touch,4),ri_rd(ri_touch,0x1000),ri_rd(ri_touch,0x1004),ri_rd(ri_key,0x1000),ri_rd(ri_key,0x1004));
+@@ -272,6 +274,101 @@ river_rtc_utc(clock_sec_t *out)
+  if (good) *out = (clock_sec_t)secs;
+  return good;
+ }
++/*
++ * Boot-arg riverperf=1: read-only performance survey, run once from
++ * IOKitInitializeTime() while the other CPUs are idle. CPU spin rate,
++ * memory bandwidth, APCS clock muxes/PLLs (Gold, Silver, CCI), the shared
++ * APC rail PM8953 S5 (SID1 0x2000) and TSENS temperatures. Nothing is written
++ * except the SPMI observer command registers used for reads.
++ */
++static vm_offset_t
++ri_spmi_obs(vm_offset_t core, unsigned ppid)
++{
++ for (unsigned i = 0; i < 256; i++) {
++  if (((ri_rd(core, 0x800 + i*4) >> 8) & 0xfff) == ppid) return ri_map(0x02c00000 + i*0x8000);
++ }
++ return 0;
++}
++static uint64_t
++ri_ns_since(uint64_t t0)
++{
++ uint64_t ns;
++ absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
++ return ns ? ns : 1;
++}
++#define RP(...) do { size_t _l = strlen(ri_perf_note); \
++ snprintf(ri_perf_note + _l, sizeof(ri_perf_note) - _l, __VA_ARGS__); } while (0)
++void river_perf_probe(void);
++void
++river_perf_probe(void)
++{
++ int on = 0;
++ if (!PE_parse_boot_argn("riverperf", &on, sizeof(on)) || on != 1) return;
++ ri_perf_note[0] = 0;
++ /* CPU: 10^7 iterations of a 1-cycle dependent loop. */
++ uint64_t n = 10000000, t0 = mach_absolute_time();
++ __asm__ volatile("1: subs %0, %0, #1\n b.ne 1b" : "+r"(n) :: "cc");
++ RP("RIVER PERF: spin %llu MHz on cpu %d\n", 10000000ULL * 1000 / ri_ns_since(t0), cpu_number());
++ /* Memory: 16 MiB buffers (well beyond the 1 MiB L2), and 64 KiB in cache. */
++ const size_t big = 16u << 20, small = 64u << 10;
++ uint8_t *a = kalloc_data(big, Z_WAITOK), *b = kalloc_data(big, Z_WAITOK);
++ if (a && b) {
++  memset(a, 1, big); memset(b, 2, big);
++  t0 = mach_absolute_time();
++  for (int i = 0; i < 4; i++) memcpy(b, a, big);
++  uint64_t cp = 4ULL * big * 1000 / ri_ns_since(t0);
++  t0 = mach_absolute_time();
++  for (int i = 0; i < 4; i++) memset(a, i, big);
++  uint64_t wr = 4ULL * big * 1000 / ri_ns_since(t0);
++  volatile uint64_t sum = 0;
++  t0 = mach_absolute_time();
++  for (int i = 0; i < 4; i++) { const uint64_t *q = (const uint64_t *)b; uint64_t s2 = 0;
++   for (size_t j = 0; j < big / 8; j += 4) s2 += q[j] + q[j+1] + q[j+2] + q[j+3]; sum += s2; }
++  uint64_t rd = 4ULL * big * 1000 / ri_ns_since(t0);
++  t0 = mach_absolute_time();
++  for (int i = 0; i < 1024; i++) memcpy(b, a, small);
++  uint64_t l2 = 1024ULL * small * 1000 / ri_ns_since(t0);
++  RP("RIVER PERF: DRAM copy %llu MB/s write %llu MB/s read %llu MB/s; 64K cached copy %llu MB/s\n",
++     cp, wr, rd, l2);
++ }
++ if (a) kfree_data(a, big);
++ if (b) kfree_data(b, big);
++ /* Clock muxes (CMD_RCGR, CFG_RCGR) and PLL MODE/L_VAL: freq = L * 19.2 MHz. */
++ vm_offset_t c1 = ri_map(0x0b011050), c0 = ri_map(0x0b111050), cci = ri_map(0x0b1d1050);
++ vm_offset_t p1 = ri_map(0x0b016000), p0 = ri_map(0x0b116000), pc = ri_map(0x0b1d0000);
++ if (c1 && c0 && cci && p1 && p0 && pc) {
++  RP("RIVER PERF: RCG gold %#x/%#x silver %#x/%#x cci %#x/%#x\n", ri_rd(c1,0), ri_rd(c1,4),
++     ri_rd(c0,0), ri_rd(c0,4), ri_rd(cci,0), ri_rd(cci,4));
++  RP("RIVER PERF: PLL gold mode %#x L %u | silver mode %#x L %u | cci mode %#x w1 %#x w2 %#x w3 %#x\n",
++     ri_rd(p1,0), ri_rd(p1,8) & 0xff, ri_rd(p0,0), ri_rd(p0,8) & 0xff,
++     ri_rd(pc,0), ri_rd(pc,4), ri_rd(pc,8), ri_rd(pc,0xc));
++ }
++ /* PM8953 S5 (APC rail shared by both clusters): subtype, range, setpoint. */
++ vm_offset_t core = ri_map(0x0200f000), s5 = core ? ri_spmi_obs(core, 0x120) : 0;
++ uint32_t sub = 0, rng = 0, vset = 0, mode = 0;
++ if (s5 && ri_spmi_read(s5, 0x05, 1, &sub) && ri_spmi_read(s5, 0x40, 1, &rng) &&
++     ri_spmi_read(s5, 0x41, 1, &vset) && ri_spmi_read(s5, 0x45, 1, &mode)) {
++  /* spm-regulator.c FTS2.5: range 0 = 80 mV + 5 mV steps, range 1 = 160 mV + 10 mV. */
++  unsigned uv = (rng & 1) ? 160000 + (vset & 0xff) * 10000 : 80000 + (vset & 0xff) * 5000;
++  RP("RIVER PERF: S5 subtype %#x range %#x vset %#x mode %#x (if FTS2.5: %u uV)\n",
++     sub & 0xff, rng & 0xff, vset & 0xff, mode & 0xff, uv);
++ } else {
++  RP("RIVER PERF: S5 not readable\n");
++ }
++ /* TSENS: 16 sensors, signed 12-bit tenths of a degree, valid bit 21. */
++ vm_offset_t tm = ri_map(0x004a9000);
++ if (tm) {
++  RP("RIVER PERF: TSENS C");
++  for (unsigned i = 0; i < 16; i++) {
++   uint32_t v = ri_rd(tm, 0xa0 + 4*i);
++   int t = (int)(v & 0xfff); if (t & 0x800) t -= 0x1000;
++   if (v & (1u << 21)) RP(" s%u=%d.%d", i, t / 10, (t < 0 ? -t : t) % 10);
++  }
++  RP("\n");
++ }
++ printf("%s", ri_perf_note);
++}
++
+ void
+ river_input_init(void)
+ {
+diff --git a/iokit/Kernel/IOStartIOKit.cpp b/iokit/Kernel/IOStartIOKit.cpp
+index 924c1b1..c2f8033 100644
+--- a/iokit/Kernel/IOStartIOKit.cpp
++++ b/iokit/Kernel/IOStartIOKit.cpp
+@@ -71,6 +71,7 @@ SECURITY_READ_ONLY_LATE(static IOPlatformExpertDevice*) gRootNub;
+ 
+ #if defined(ARM64_BOARD_CONFIG_SWEET) && defined(RIVER)
+ extern "C" bool river_rtc_utc(clock_sec_t *secs);	/* bsd/dev/sweet_keys.c */
++extern "C" void river_perf_probe(void);
+ #endif
+ 
+ void
+@@ -87,6 +88,7 @@ IOKitInitializeTime( void )
+ 	 * for 30 s, and clock_initialize_calendar() then took 0 (1970) from the
+ 	 * platform expert. Initialise, then set the calendar from the PM8953 RTC.
+ 	 */
++	river_perf_probe();
+ 	clock_initialize_calendar();
+ 	clock_sec_t rtc;
+ 	if (river_rtc_utc(&rtc)) {
