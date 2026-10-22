@@ -1857,3 +1857,15 @@ cached because the write-combined user mapping did not take; render
 targets need cleaning for a reason not yet found), or making them truly
 uncached (e.g. IOBufferMemoryDescriptor with a write-combined cache mode,
 for both the kernel and the user mapping).
+
+### r63 (0192; CI 39734801191; rivergpuflush=1) (r49-gallium-live-35.txt): correct, 5-7 fps
+User: **no flicker; blur and transparency right.** Mesa's own buffers now
+have uncached pages (`write-combined bo ...: page wimg 0x6`) and are never
+cleaned. Per frame while scrolling: 5-7 frames/s (r62 4-6), 15-17 submits,
+kernel SUBMIT ~7.5-8 ms each (r62 ~11 ms): Mesa's buffers were about a
+quarter to a third of the cleaning cost; the rest is cleaning the imported
+IOSurfaces (large render targets) on every submit, which so far is what
+keeps the screen correct. **Current correct image: `shim-river/out/river-r63-boot.img`**
+(k-r63 kernel, boot-arg rivergpuflush=1, sweetgl with uncached buffers and
+the in-batch barrier). Next: cut submits per frame, or find the CPU writer of
+render targets so they can skip cleaning.
