@@ -802,6 +802,54 @@ index e8f01b8..c69c1e1 100644
    subdir('drm')
  endif
  
+diff --git a/src/gallium/drivers/freedreno/a5xx/fd5_context.c b/src/gallium/drivers/freedreno/a5xx/fd5_context.c
+index 3fda7cb..08fb2a8 100644
+--- a/src/gallium/drivers/freedreno/a5xx/fd5_context.c
++++ b/src/gallium/drivers/freedreno/a5xx/fd5_context.c
+@@ -39,6 +39,33 @@ fd5_context_destroy(struct pipe_context *pctx) in_dt
+    free(fd5_ctx);
+ }
+ 
++/*
++ * river: with sysmem rendering forced (FD_MESA_DEBUG=sysmem, as sweetgl sets),
++ * a texture barrier only needs the color/depth caches written back and the
++ * texture cache invalidated between the draws, not a whole batch flush and
++ * submit (fd_texture_barrier). CoreAnimation hits several per frame
++ * (framebuffer fetch for blend modes), each a separate kernel submit.
++ */
++static void (*fd5_flush_texture_barrier)(struct pipe_context *pctx, unsigned flags);
++
++static void
++fd5_texture_barrier(struct pipe_context *pctx, unsigned flags) in_dt
++{
++   struct fd_context *ctx = fd_context(pctx);
++
++   if (!FD_DBG(SYSMEM)) {
++      fd5_flush_texture_barrier(pctx, flags);
++      return;
++   }
++
++   struct fd_batch *batch = fd_context_batch(ctx);
++   struct fd_ringbuffer *ring = batch->draw;
++   fd5_event_write(batch, ring, PC_CCU_FLUSH_COLOR_TS, true);
++   fd5_event_write(batch, ring, PC_CCU_FLUSH_DEPTH_TS, true);
++   fd5_cache_flush(batch, ring);
++   fd_batch_reference(&batch, NULL);
++}
++
+ struct pipe_context *
+ fd5_context_create(struct pipe_screen *pscreen, void *priv,
+                    unsigned flags) disable_thread_safety_analysis
+@@ -83,6 +110,9 @@ fd5_context_create(struct pipe_screen *pscreen, void *priv,
+ 
+    util_blitter_set_texture_multisample(fd5_ctx->base.blitter, true);
+ 
++   fd5_flush_texture_barrier = pctx->texture_barrier;
++   pctx->texture_barrier = fd5_texture_barrier;
++
+    fd5_ctx->vsc_size_mem =
+       fd_bo_new(screen->dev, 0x1000, 0, "vsc_size");
+ 
 diff --git a/src/gallium/drivers/freedreno/meson.build b/src/gallium/drivers/freedreno/meson.build
 index b04379b..6f10d6b 100644
 --- a/src/gallium/drivers/freedreno/meson.build

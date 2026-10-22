@@ -1827,3 +1827,18 @@ the imported surfaces it used; before the panel copy reads a GPU-drawn
 surface it waits for that fence (50 ms max). Every 10 s it logs copies, how
 many found the GPU still busy (timeouts, time waited), and how many saw the
 invalidate change sampled data (stale cache lines).
+
+### r61 (0191) (r49-gallium-live-33.txt): panel copy is not the cause
+Still flickers. Panel-copy diagnostics every 10 s: `0 found GPU busy`,
+`0 saw stale cache` (e.g. 188 GPU-surface copies). So the copy shows what
+the GPU rendered; the flicker is in the rendered frames: the GPU reads
+something not written back from the CPU cache. Only per-submit cleaning of
+render targets (flush-all) has removed it, which suggests CPU writes to
+surfaces CA also attaches. (The stale-line check cannot see dirty lines.)
+Flush-all ran at only 3-6 frames/s (live-28) because it cleans every buffer
+on each of 13-31 submits per frame. The Pixel port also cleans every listed
+buffer on every submit (its 0151) and still reaches 15-35 fps.
+New approach (r62): clean everything per submit (r61 kernel with
+rivergpuflush=1: correct by construction) and cut the submits: Mesa a5xx
+texture barrier with forced sysmem now emits PC_CCU_FLUSH_COLOR/DEPTH_TS +
+UCHE invalidate + WFI in the current batch instead of a whole context flush.
