@@ -705,10 +705,10 @@ index e8f01b8..c69c1e1 100644
  endif
  
 diff --git a/src/gallium/drivers/freedreno/meson.build b/src/gallium/drivers/freedreno/meson.build
-index b04379b..bbdba6e 100644
+index b04379b..e45f8d0 100644
 --- a/src/gallium/drivers/freedreno/meson.build
 +++ b/src/gallium/drivers/freedreno/meson.build
-@@ -295,6 +295,68 @@ driver_freedreno = declare_dependency(
+@@ -295,6 +295,81 @@ driver_freedreno = declare_dependency(
    ],
  )
  
@@ -740,10 +740,10 @@ index b04379b..bbdba6e 100644
 +    install : false,
 +  )
 +
-+  river_gles_test = executable(
-+    'river_gles_test',
++  river_gl_runtime = shared_library(
++    'rivergl',
 +    [
-+      'river_gles_test.c',
++      'river_gl_runtime.c',
 +      freedreno_tracepoints[1],
 +      freedreno_xml_header_files,
 +    ],
@@ -757,7 +757,6 @@ index b04379b..bbdba6e 100644
 +    ],
 +    link_with : [
 +      libmesa,
-+      libglapi_bridge,
 +      libglapi,
 +      libglsl,
 +      libcompiler,
@@ -769,6 +768,20 @@ index b04379b..bbdba6e 100644
 +      libgallium,
 +      libfreedreno_perfcntrs,
 +    ],
++    link_whole : libglapi_bridge,
++    link_language : 'cpp',
++    link_args : ['-Wl,-install_name,/usr/local/lib/librivergl.dylib'],
++    install : false,
++  )
++
++  river_gles_test = executable(
++    'river_gles_test',
++    'river_gles_test.c',
++    include_directories : [freedreno_includes, inc_mesa],
++    dependencies : [
++      dependency('appleframeworks', modules : ['IOKit', 'CoreFoundation']),
++    ],
++    link_with : river_gl_runtime,
 +    link_language : 'cpp',
 +    install : false,
 +  )
@@ -949,12 +962,137 @@ index 0000000..2405b74
 +   for (;;)
 +      sleep(3600);
 +}
+diff --git a/src/gallium/drivers/freedreno/river_gl_runtime.c b/src/gallium/drivers/freedreno/river_gl_runtime.c
+new file mode 100644
+index 0000000..1486612
+--- /dev/null
++++ b/src/gallium/drivers/freedreno/river_gl_runtime.c
+@@ -0,0 +1,96 @@
++/*
++ * Copyright © 2026 river bring-up contributors
++ * SPDX-License-Identifier: MIT
++ *
++ * Minimal surfaceless Mesa GLES frontend for RiverGPU. This separates
++ * context ownership from the PID 1 test so a future EAGL bridge can use it.
++ */
++#include <fcntl.h>
++#include <stdlib.h>
++#include <unistd.h>
++
++#include "frontend/api.h"
++#include "state_tracker/st_context.h"
++#include "util/driconf.h"
++#include "freedreno_screen.h"
++#include "river_gl_runtime.h"
++
++static const driOptionDescription fd_driconf[] = {
++#include "driinfo_freedreno.h"
++};
++
++struct river_gl_context {
++   struct pipe_screen *screen;
++   struct pipe_frontend_screen frontend;
++   struct st_context *state_tracker;
++};
++
++static int
++frontend_get_param(struct pipe_frontend_screen *frontend,
++                   enum st_manager_param param)
++{
++   (void)frontend;
++   (void)param;
++   return 0;
++}
++
++struct river_gl_context *
++river_gl_create_context(unsigned major, unsigned minor)
++{
++   struct river_gl_context *context = calloc(1, sizeof(*context));
++   if (!context)
++      return NULL;
++
++   driOptionCache info = {0}, cache = {0};
++   driParseOptionInfo(&info, fd_driconf, ARRAY_SIZE(fd_driconf));
++   struct pipe_screen_config config = {
++      .options = &cache,
++      .options_info = &info,
++   };
++   int fd = open("/dev/null", O_RDWR);
++   if (fd < 0) {
++      free(context);
++      return NULL;
++   }
++   context->screen = fd_screen_create(fd, &config, NULL);
++   if (!context->screen) {
++      close(fd);
++      free(context);
++      return NULL;
++   }
++
++   context->frontend.screen = context->screen;
++   context->frontend.get_param = frontend_get_param;
++   struct st_context_attribs attribs = {
++      .profile = API_OPENGLES2,
++      .major = major,
++      .minor = minor,
++   };
++   enum st_context_error error = ST_CONTEXT_SUCCESS;
++   context->state_tracker = st_api_create_context(&context->frontend,
++                                                   &attribs, &error, NULL);
++   if (!context->state_tracker) {
++      context->screen->destroy(context->screen);
++      free(context);
++      return NULL;
++   }
++   return context;
++}
++
++bool
++river_gl_make_current(struct river_gl_context *context)
++{
++   return st_api_make_current(context ? context->state_tracker : NULL,
++                              NULL, NULL);
++}
++
++void
++river_gl_destroy_context(struct river_gl_context *context)
++{
++   if (!context)
++      return;
++   st_api_make_current(NULL, NULL, NULL);
++   st_destroy_context(context->state_tracker);
++   context->screen->destroy(context->screen);
++   free(context);
++}
+diff --git a/src/gallium/drivers/freedreno/river_gl_runtime.h b/src/gallium/drivers/freedreno/river_gl_runtime.h
+new file mode 100644
+index 0000000..c5411dc
+--- /dev/null
++++ b/src/gallium/drivers/freedreno/river_gl_runtime.h
+@@ -0,0 +1,17 @@
++/*
++ * Copyright © 2026 river bring-up contributors
++ * SPDX-License-Identifier: MIT
++ */
++#ifndef RIVER_GL_RUNTIME_H
++#define RIVER_GL_RUNTIME_H
++
++#include <stdbool.h>
++
++struct river_gl_context;
++
++struct river_gl_context *river_gl_create_context(unsigned major,
++                                                  unsigned minor);
++bool river_gl_make_current(struct river_gl_context *context);
++void river_gl_destroy_context(struct river_gl_context *context);
++
++#endif
 diff --git a/src/gallium/drivers/freedreno/river_gles_test.c b/src/gallium/drivers/freedreno/river_gles_test.c
 new file mode 100644
-index 0000000..3f50e84
+index 0000000..cf65e75
 --- /dev/null
 +++ b/src/gallium/drivers/freedreno/river_gles_test.c
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,151 @@
 +/*
 + * Copyright © 2026 river bring-up contributors
 + * SPDX-License-Identifier: MIT
@@ -970,25 +1108,9 @@ index 0000000..3f50e84
 +#include <IOKit/IOKitLib.h>
 +#include <GLES3/gl3.h>
 +
-+#include "frontend/api.h"
-+#include "state_tracker/st_context.h"
-+#include "util/driconf.h"
-+#include "freedreno_screen.h"
-+
-+static const driOptionDescription fd_driconf[] = {
-+#include "driinfo_freedreno.h"
-+};
++#include "river_gl_runtime.h"
 +
 +static io_connect_t log_conn;
-+
-+static int
-+frontend_get_param(struct pipe_frontend_screen *frontend,
-+                   enum st_manager_param param)
-+{
-+   (void)frontend;
-+   (void)param;
-+   return 0;
-+}
 +
 +static void
 +report(const char *fmt, ...)
@@ -1026,30 +1148,10 @@ index 0000000..3f50e84
 +static void
 +run(void)
 +{
-+   driOptionCache info = {0}, cache = {0};
-+   driParseOptionInfo(&info, fd_driconf, ARRAY_SIZE(fd_driconf));
-+   struct pipe_screen_config config = { .options = &cache, .options_info = &info };
-+   struct pipe_screen *screen = fd_screen_create(open("/dev/null", O_RDWR), &config, NULL);
-+   if (!screen) {
-+      report("freedreno screen creation failed");
-+      return;
-+   }
-+   report("screen %s by %s", screen->get_name(screen), screen->get_vendor(screen));
-+
-+   struct pipe_frontend_screen frontend = {
-+      .screen = screen,
-+      .get_param = frontend_get_param,
-+   };
-+   struct st_context_attribs attribs = {
-+      .profile = API_OPENGLES2,
-+      .major = 3,
-+      .minor = 0,
-+   };
-+   enum st_context_error context_error = ST_CONTEXT_SUCCESS;
-+   struct st_context *context = st_api_create_context(&frontend, &attribs,
-+                                                      &context_error, NULL);
-+   if (!context || !st_api_make_current(context, NULL, NULL)) {
-+      report("GLES context creation failed: %d", context_error);
++   struct river_gl_context *context = river_gl_create_context(3, 0);
++   if (!context || !river_gl_make_current(context)) {
++      report("GLES context creation failed");
++      river_gl_destroy_context(context);
 +      return;
 +   }
 +   report("GL_VERSION %s; GL_RENDERER %s", glGetString(GL_VERSION),
@@ -1114,9 +1216,7 @@ index 0000000..3f50e84
 +          fb_status, linked, gl_error, near[0], near[1], near[2], near[3],
 +          far[0], far[1], far[2], far[3], passed ? "PASS" : "FAIL");
 +
-+   st_api_make_current(NULL, NULL, NULL);
-+   st_destroy_context(context);
-+   screen->destroy(screen);
++   river_gl_destroy_context(context);
 +}
 +
 +int

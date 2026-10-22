@@ -11,11 +11,11 @@ Gallium harness, fixed with `glsl_type_singleton_init_or_ref()` and decref.
 The successful RAM image is
 `shim-river/out/river-r49-gallium-glslinit-boot.img` (SHA256
 1e991677a99a4487d1944f0f29671db96222304ed886fa9cb74823ca1daba10f).
-Next work: GLES state tracker and CoreAnimation EAGL/GLI bridge. The public
+Next work: CoreAnimation EAGL/GLI bridge. The public
 Pixel 1 port's `tools/sweetgl` is a useful reference for that bridge and
 IOSurface handling. Temporary Mesa trace markers have been removed.
 
-GLES next step: Mesa's GLES state tracker and a separate
+Mesa's GLES state tracker and a separate
 `river_gles_test` now build for iOS arm64. First RAM boot made an FD506
 screen but PID 1 crashed during `st_api_create_context` (private USB log
 `r49-gallium-live-12.txt`). The test now supplies the frontend `get_param`
@@ -27,6 +27,16 @@ diagnostic RAM image is at
 9b19b4585068f92986a45112c6419c66f75f48320a54070067a79923d787ac0a).
 Next: EAGL/GLI bridge and IOSurface imports for CoreAnimation in backboardd.
 See mesa/README.md.
+
+The GLES frontend is now a signed dynamic library
+`/usr/local/lib/librivergl.dylib`, loaded by a small `river_gles_test`.
+RAM-only r49 boot of the pair passed the same GLES 3.1 / FD506 shader draw
+and pixel check (private `r49-gallium-live-14.txt`). Image:
+`shim-river/out/river-r49-gles-dylib-boot.img`, SHA256
+`db4dbf379ce6412a95c3206a3935fc46253efd217f3a77dc67fe3a6de3bc4674`.
+Next: connect the library to CoreAnimation's EAGL/GLI calls and IOSurfaces,
+then load it in backboardd. The home screen is still on its existing CPU
+renderer; this test only exercised an offscreen FBO.
 
 Historical diagnosis follows.
 

@@ -1558,3 +1558,17 @@ pixels: near `ff4000ff`, far `0000ffff`, framebuffer complete, GL error 0,
 Next: a GLES dylib for backboardd, the CoreAnimation EAGL/GLI bridge, and
 IOSurface imports. The Pixel port injects its dylib with a boot-arg selected
 `DYLD_INSERT_LIBRARIES`; River needs a comparable controlled injection path.
+
+### r49 GLES shared library: dynamic load and draw pass
+Refactored the working Mesa state tracker frontend into an iOS arm64
+`librivergl.dylib` with context create/bind/destroy exports, and linked the
+GLES triangle test against it. The dylib carries Mesa's GL dispatch entry
+points and has install name `/usr/local/lib/librivergl.dylib`. Both files
+were ad-hoc signed and installed from RiverFiles in a RAM-only image:
+`shim-river/out/river-r49-gles-dylib-boot.img` (SHA256
+`db4dbf379ce6412a95c3206a3935fc46253efd217f3a77dc67fe3a6de3bc4674`).
+Private `r49-gallium-live-14.txt` shows PID 1 loaded the library, made a
+GLES 3.1 context on FD506, linked shaders, and rendered the expected two
+pixel colors into its FBO with GL error 0 and `PASS`. This is a dynamic
+linking and offscreen rendering result; CoreAnimation has not been hooked
+yet. Next: EAGL/GLI adapter, IOSurface sharing, and backboardd injection.

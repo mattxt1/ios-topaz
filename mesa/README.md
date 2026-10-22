@@ -67,9 +67,22 @@ RAM image with context setup markers is at
 `9b19b4585068f92986a45112c6419c66f75f48320a54070067a79923d787ac0a`).
 The clean source builds; temporary markers are only in that image.
 
-Next: wrap the working GLES state tracker in a dylib, provide CoreAnimation's
-EAGL and GLI calls, and import IOSurfaces as GPU resources. The Pixel port's
+For CoreAnimation, the Pixel port's
 `tools/sweetgl/eagl.c` describes the EAGL entry points and GL dispatch
 layout; its boot args inject the dylib into backboardd with
 `DYLD_INSERT_LIBRARIES`. River currently has no equivalent environment boot
 arg, so a controlled injection mechanism is needed before UI integration.
+
+The GLES frontend has now been factored into `river_gl_runtime.c` and linked
+as `/usr/local/lib/librivergl.dylib`; `river_gles_test` is a small executable
+linked against it. Mesa's `libglapi_bridge` is linked whole into the dylib
+so it exports GL entry points to callers. Both were ad-hoc signed, packed as
+RiverFiles, and RAM-booted with r49. Private USB log
+`../logs-private/r49-gallium-live-14.txt` shows dyld loaded the library,
+reported GLES 3.1 / FD506, and rendered the same triangle with the expected
+pixels (`PASS`). The ignored boot image is
+`shim-river/out/river-r49-gles-dylib-boot.img` (SHA256
+`db4dbf379ce6412a95c3206a3935fc46253efd217f3a77dc67fe3a6de3bc4674`).
+This validates dynamic loading; CoreAnimation is not using it yet. Next is
+an EAGL/GLI adapter and IOSurface resource import, then controlled injection
+into backboardd.
