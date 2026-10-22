@@ -7646,10 +7646,10 @@ index 0000000..7b46bec
 +#endif
 diff --git a/src/gallium/drivers/freedreno/sweetgl/sweetgl.c b/src/gallium/drivers/freedreno/sweetgl/sweetgl.c
 new file mode 100644
-index 0000000..9ccbca2
+index 0000000..ccf1163
 --- /dev/null
 +++ b/src/gallium/drivers/freedreno/sweetgl/sweetgl.c
-@@ -0,0 +1,293 @@
+@@ -0,0 +1,303 @@
 +/*
 + * sweetgl: Mesa (gallium freedreno + GLES) as a library for iOS processes.
 + *
@@ -7712,6 +7712,15 @@ index 0000000..9ccbca2
 +	int api;
 +};
 +
++/* Mesa 26 calls this from st_api_create_context; NULL crashed (r52). */
++static int
++sweetgl_get_param(struct pipe_frontend_screen *fs, enum st_manager_param param)
++{
++	(void)fs;
++	(void)param;
++	return 0;
++}
++
 +static pthread_mutex_t init_lock = PTHREAD_MUTEX_INITIALIZER;
 +static struct pipe_frontend_screen *fscreen;
 +static driOptionCache opt_info, opts;
@@ -7745,6 +7754,7 @@ index 0000000..9ccbca2
 +			} else {
 +				fscreen = calloc(1, sizeof(*fscreen));
 +				fscreen->screen = screen;
++				fscreen->get_param = sweetgl_get_param;
 +				sweetgl_image_hooks(fscreen);  /* before any context: st checks them at creation */
 +				sweet_drm_log("sweetgl: screen %s (%s)", screen->get_name(screen),
 +				    screen->get_vendor(screen));
