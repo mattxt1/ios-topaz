@@ -1,5 +1,11 @@
 # ios-topaz
 
+> **River handoff:** This README describes the older Redmi Note 12 4G
+> (`topaz`) port and its dated roadmap. For the Moto G7 (`river`) status,
+> read `../HANDOFF.md`, then `RIVER.md` from “r31 GPU survey” onward.
+> Statements below such as “no GPU” refer to topaz or their original date,
+> not the current river Adreno 506 result.
+
 **Apple's iOS 16 running on a Redmi Note 12 4G.**
 
 This is a port of [dipa-studio/ios-sweet](https://github.com/dipa-studio/ios-sweet) (Apple's open-source XNU kernel, xnu-8796, on a Redmi Note 10 Pro) to the Xiaomi **Redmi Note 12 4G** (`topaz` / `tapas`, Qualcomm **SM6225 "khaje"** / Snapdragon 685). On top of it runs the **unmodified iOS 16.7.16 (20H392) userland of the iPhone X**: launchd, the system daemons, backboardd and SpringBoard.
