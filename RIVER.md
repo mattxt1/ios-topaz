@@ -1,12 +1,15 @@
 # Moto G7 river bring-up (local branch)
 
-Started 19 October 2026. This branch borrows the topaz XNU work as a starting
-point. River now runs iOS 16.7.16 services from userdata and displays the
-iOS lock screen (photo IMG_0351); touch and unlocking remain unimplemented. Device dumps, photos,
-logs, Apple artifacts and boot images stay in the adjacent private handoff
-folders or ignored output directories.
+Started 19 October 2026. This is a chronological evidence log, not the
+current action plan. Read `../HANDOFF.md` for the current r49 status. River
+now boots iOS 16.7.16 to an interactive home screen; the Adreno 506 passed
+Gallium and offscreen GLES tests, but CoreAnimation still uses its CPU
+renderer. Older sections below retain observations and proposed next steps
+from their dates; those proposals are historical. Device dumps, photos,
+logs, Apple artifacts and boot images stay in adjacent private folders or
+ignored output directories.
 
-## Direct device observations
+## Early direct device observations (historical)
 
 - XT1962-1, SDM632, LineageOS 22.2 (Android 15), unlocked fastboot, slot b.
 - Silver MIDR `0x51af8014`, MPIDR `0`–`3`; Gold MIDR `0x51af8002`,
@@ -28,7 +31,9 @@ folders or ignored output directories.
   `0x013ff000` is visibly scanned out after temporary boot. Android fb0 is
   1080×2270, 32 bpp, stride 4352; bootloader splash pixel layout differs.
 - Boot image uses Android header v1 and 2048-byte packing, gzip ARM64 Image
-  with a base DTB, plus separate DTBO partition. No partition has been flashed.
+  with a base DTB, plus separate DTBO partition. The early diagnostic boots
+  used RAM images only; later work wrote an iOS root to storage as recorded
+  in the dated sections below. Current test boots remain RAM-only.
 
 ## Added code
 

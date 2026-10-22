@@ -2,43 +2,19 @@
 
 ## River GPU active handoff (2026-10-21)
 
-Mesa freedreno now runs a complete GPU clear on river. The signed
-`river_gallium_test` reached `FD506` screen and context creation, compiled
-ir3 shaders, submitted a clear, waited for the GPU fence, and read back
-4096/4096 correct pixels in 34.42 ms (`../logs-private/r49-gallium-live-11.txt`).
-The preceding crash was an uninitialized Mesa GLSL type cache in our direct
-Gallium harness, fixed with `glsl_type_singleton_init_or_ref()` and decref.
-The successful RAM image is
-`shim-river/out/river-r49-gallium-glslinit-boot.img` (SHA256
-1e991677a99a4487d1944f0f29671db96222304ed886fa9cb74823ca1daba10f).
-Next work: CoreAnimation EAGL/GLI bridge. The public
-Pixel 1 port's `tools/sweetgl` is a useful reference for that bridge and
-IOSurface handling. Temporary Mesa trace markers have been removed.
+Current entry point: `../HANDOFF.md`. It records the verified Gallium GPU
+clear, Mesa GLES 3.1 draw and dynamically loaded `librivergl.dylib` draw;
+CoreAnimation still uses the CPU renderer. Code milestone `d38e817` holds
+the validated shared library; check `git status` for later documentation
+commits. Next: EAGL/GLI adapter, IOSurface sharing and a
+controlled backboardd library-load probe. See `mesa/README.md` for build
+details and `RIVER.md` for the boot-by-boot evidence.
 
-Mesa's GLES state tracker and a separate
-`river_gles_test` now build for iOS arm64. First RAM boot made an FD506
-screen but PID 1 crashed during `st_api_create_context` (private USB log
-`r49-gallium-live-12.txt`). The test now supplies the frontend `get_param`
-callback required by Mesa 26.2.5. The second RAM boot passed: OpenGL ES 3.1
-on FD506, shader program linked, offscreen triangle and clear colors read
-back correctly with GL error 0 (`r49-gallium-live-13.txt`). The signed
-diagnostic RAM image is at
-`shim-river/out/river-r49-gles-diag1-boot.img` (SHA256
-9b19b4585068f92986a45112c6419c66f75f48320a54070067a79923d787ac0a).
-Next: EAGL/GLI bridge and IOSurface imports for CoreAnimation in backboardd.
-See mesa/README.md.
+## Archived GPU diagnostics (earlier 2026-10-21 boots)
 
-The GLES frontend is now a signed dynamic library
-`/usr/local/lib/librivergl.dylib`, loaded by a small `river_gles_test`.
-RAM-only r49 boot of the pair passed the same GLES 3.1 / FD506 shader draw
-and pixel check (private `r49-gallium-live-14.txt`). Image:
-`shim-river/out/river-r49-gles-dylib-boot.img`, SHA256
-`db4dbf379ce6412a95c3206a3935fc46253efd217f3a77dc67fe3a6de3bc4674`.
-Next: connect the library to CoreAnimation's EAGL/GLI calls and IOSurfaces,
-then load it in backboardd. The home screen is still on its existing CPU
-renderer; this test only exercised an offscreen FBO.
-
-Historical diagnosis follows.
+The following was written during diagnosis before the passing r49 tests.
+Its proposed images and "next" actions are historical; do not execute them
+as the current plan.
 
 Mesa's signed `river_gallium_test` RAM-booted on r49. RiverGPU and freedreno
 screen creation worked (`FD506`, 32.5 ms); PID 1 then SIGSEGV'd before the
@@ -65,7 +41,7 @@ fragment shader. An image with markers inside that NIR pass is ready at
 17e897cfd1a880d380ec8350dbe8849c04d1ec8d3739d6350935b21991a8aa94).
 It has not been booted. Phone needs fastboot; receiver is running.
 
-## River status (2026-10-21) — current
+## Archived river status (2026-10-21, before GPU bring-up)
 
 River boots iOS 16.7.16 to an interactive home screen in ~70 s (r28; see
 RIVER.md from "r14 live USB, Gold clock fix" onward and the handoff folder's
