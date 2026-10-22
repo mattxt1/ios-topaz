@@ -1971,3 +1971,18 @@ riverblit=1 riverfbinv=0, sweetgl with uncached buffers + in-batch barrier).
 Next: frame rate (CA at 12-15 fps; GPU clock still 133 MHz, 0185's
 rivergpuclk= unbooted; blits queue behind CA's GPU work), and the
 Snapintosh mismatched-alias finding for any remaining CPU readers.
+
+### Kernel CI moved to macos-15 / Xcode 16.4 (0200; CI 39852569331)
+GitHub retires the macos-14 image (the last with Xcode 15) on 2026-11-02;
+its brownouts run 23-31 Oct, and on 22 Oct its queue gave no runner (0199's
+build was cancelled twice). Xcode 16's iig generates kernel code reading
+IORPC.kernelContent, which xnu-8796 lacks. Patch 0200 adds
+`IORPCMessage * kernelContent` under KERNEL to both IORPC.h copies, exactly
+as xnu-10063 declares it, and sets it to the decoded message at the two
+IORPC construction sites in IOUserServer.cpp. `.github/workflows/xnu.yml`
+now runs on macos-15 and selects /Applications/Xcode_16.4.app. First run:
+success (runner at once). Kernel (k-r70, includes 0199): `RIVER GIC` present,
+xnu-8796.141.3; global symbols identical to the macos-14 build except a new
+`_iBoot_Stage_2_version`; ~540 KB larger, local-symbol differences only from
+different inlining. Not yet booted. Images: `river-r70-check-boot.img` (r69
+config on the new kernel) and `river-r70-migrate-boot.img` (+ riverdm=1).
