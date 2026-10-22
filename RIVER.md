@@ -1895,3 +1895,17 @@ would be missed. Next diagnostic, if pursued: compare a whole render target
 (uncached vs cached, line by line, every few seconds) and log the dirty
 rows' bounding box plus the surface's mappers, to locate the writer.
 Safe baseline stays r63 (rivergpuflush=1, 5-7 fps, no flicker).
+
+### r66 (0195 full-surface scan) (r49-gallium-live-38.txt): **CPU never writes render targets**
+Scrolling Settings, home screen, a couple of apps: 132 render targets scanned
+in full (every cache line, uncached memory vs cached view, after waiting for
+the surface's GPU fence, just before its clean): **0 with CPU-dirty lines**.
+So per-submit cleaning of render targets is not needed to write CPU data
+back. Its only remaining effect is dropping stale clean lines: some CPU
+reader reads a render target through a cached mapping after the GPU wrote
+it and gets old pixels. The kernel panel copy is not that reader (r61/r65
+made no difference), so it is in user space (backboardd/CoreAnimation or
+Mesa) or another kernel path. Proposed fix: give render-target pages an
+uncached (write-combined) cache attribute when sweetgl marks them, like 0192
+for Mesa buffers, so no CPU cache can hold their lines; cost: slower CPU
+reads of them (panel copy).
