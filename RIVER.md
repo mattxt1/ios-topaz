@@ -1882,3 +1882,16 @@ so it does not. (Two sig 9 kills: driverkitd, Preferences after a tap; looks
 like closing Settings, not a crash.)
 0194: boot-arg riverfbinv=0 disables that panel-copy invalidate. r65 tests
 the fast path (no rivergpuflush) with riverfbinv=0.
+
+### r65 (0194, fast path, riverfbinv=0) (r49-gallium-live-37.txt): still flickers
+Panel-copy invalidate confirmed OFF; render targets skipped, other imports
+cleaned, Mesa buffers uncached; 4-14 frames/s while scrolling. Flicker
+unchanged, so the panel-copy invalidate is not the cause.
+So the only difference between flicker-free r63 and flickering r65 is
+cleaning render-target imports on every submit. r64's 0/168 is weak
+evidence against CPU writes: 32 sampled cache lines are ~0.02% of a screen
+surface, so a CPU write to a small region (a text caret, a progress bar)
+would be missed. Next diagnostic, if pursued: compare a whole render target
+(uncached vs cached, line by line, every few seconds) and log the dirty
+rows' bounding box plus the surface's mappers, to locate the writer.
+Safe baseline stays r63 (rivergpuflush=1, 5-7 fps, no flicker).
