@@ -1,0 +1,65 @@
+diff --git a/bsd/dev/river_files.c b/bsd/dev/river_files.c
+index f527032..ec8cd0d 100644
+--- a/bsd/dev/river_files.c
++++ b/bsd/dev/river_files.c
+@@ -14,6 +14,12 @@
+  * then runs once (installs /private/var/staged_system_apps and does the
+  * first-boot setup River's root image skips) and removes it itself.
+  * riverdm=2 removes the sentinel (rescue if a migration keeps repeating).
++ *
++ * riverls=UUID (0201) removes the LaunchServices databases
++ * com.apple.LaunchServices-4035-v2.csstore and its SystemDataOnly- twin from
++ * /private/var/mobile/Containers/Data/InternalDaemon/UUID/Library/Caches/ so
++ * lsd rebuilds them from scratch this boot (River's database has the apps but
++ * almost no app extensions, so PosterBoard finds no wallpaper providers).
+  */
+ #include <sys/param.h>
+ #include <sys/systm.h>
+@@ -131,6 +137,39 @@ river_dm_trigger(void)
+ 	vnode_close(vp, FWRITE, ctx);
+ 	printf("RIVER DM: created " RIVER_DM_SENTINEL " (mobile:staff 0644): %d\n", err);
+ }
++
++#define RIVER_LS_DIR "/private/var/mobile/Containers/Data/InternalDaemon/"
++#define RIVER_LS_STORE "com.apple.LaunchServices-4035-v2.csstore"
++
++static void
++river_ls_reset(void)
++{
++	char uuid[40];
++	if (!PE_parse_boot_argn("riverls", uuid, sizeof(uuid))) {
++		return;
++	}
++	if (strlen(uuid) != 36) {
++		printf("RIVER LS: riverls=%s is not a container UUID\n", uuid);
++		return;
++	}
++	for (int i = 0; i < 36; i++) {
++		char c = uuid[i];
++		bool dash = i == 8 || i == 13 || i == 18 || i == 23;
++		if (dash ? c != '-' : !((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F'))) {
++			printf("RIVER LS: riverls=%s is not a container UUID\n", uuid);
++			return;
++		}
++	}
++	static const char *const prefixes[] = { "", "SystemDataOnly-" };
++	vfs_context_t ctx = vfs_context_kernel();
++	char path[200];
++	for (unsigned i = 0; i < sizeof(prefixes) / sizeof(prefixes[0]); i++) {
++		snprintf(path, sizeof(path), RIVER_LS_DIR "%s/Library/Caches/%s" RIVER_LS_STORE,
++		    uuid, prefixes[i]);
++		int err = unlink1(ctx, NULLVP, CAST_USER_ADDR_T(path), UIO_SYSSPACE, 0);
++		printf("RIVER LS: remove %s: %d\n", path, err);
++	}
++}
+ #endif
+ 
+ void
+@@ -138,6 +177,7 @@ river_files_install(void)
+ {
+ #if defined(RIVER)
+ 	river_dm_trigger();
++	river_ls_reset();
+ 	DTEntry mm;
+ 	void const *prop;
+ 	unsigned int psize;
