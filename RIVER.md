@@ -1603,3 +1603,42 @@ the layer the EAGL/GLI adapter must replace. SpringBoard started and no
 backboardd exit was logged. Home screen not yet checked visually.
 Next: EAGL/GLI adapter in a River-written dylib (log first calls, fall back
 to the original EAGL), then IOSurface import or copy.
+
+### r51 / r51b: EAGL observer in backboardd (r49-gallium-live-16/17.txt)
+r51 (`tools/river-eagl`, hooks installed from an `objc_addLoadImageFunc`
+callback) crashed backboardd with SIGTRAP right after the constructor's first
+log line, before any class was hooked; launchd restarted it nine times and the
+UI never came up. Cause not symbolicated; the callback is the suspect. r51b
+links OpenGLES and hooks in the constructor: no crash, SpringBoard started.
+Image `shim-river/out/river-r51b-eagl2-boot.img` (r50 kernel, SHA256
+9e38f65f3e4f4bb4fb91d3710f1fc00f7fcd67b0e00ce068a5bcffb8fec8f7d4).
+
+Interface observed on 16.7.16 (type encodings logged at runtime):
+- EAGLContext: +setCurrentContext: `B24@0:8@16`, +currentContext; 25 instance
+  methods incl. initWithAPI:properties: `@32@0:8Q16@24`,
+  commonInitWithAPI:properties:, initWithAPI:sharegroup:,
+  initWithAPI:sharedWithCompute:, getMacroContextPrivate and
+  GetMacroContextPrivate `^{EAGLMacroContext=}16@0:8`,
+  texImageIOSurface:target:internalFormat:width:height:format:type:plane:
+  [invert:] (`B68...`/`B72...`), attachImage:toCoreSurface:invertedRender:
+  `B36@0:8Q16^{__IOSurface=}24B32`, renderbufferStorage:fromDrawable:,
+  presentRenderbuffer:[atTime:|afterMinimumDuration:], setParameter:to: /
+  getParameter:to: `Q28@0:8I16^i20`, setBlockFence:onQueue:, API,
+  sharegroup, setMultiThreaded:/isMultiThreaded, debugLabel.
+- EAGLSharegroup: initWithAPI:[sharedWithCompute:], getGLIShared
+  `^{__GLISharedRec=}16@0:8`, loadGLIPlugin:sharedWithCompute:
+  (`^{__GLDPixelFormatRec=...}`), APIs, debugLabel.
+
+Observed calls: CoreAnimation calls `-[EAGLContext initWithAPI:properties:]`
+with API 3 (GLES3) then API 2 (GLES2); each goes through
+commonInitWithAPI:properties: and EAGLSharegroup initWithAPI:sharedWithCompute:,
+then the sharegroup and context are deallocated at once (init fails, returns
+nil). This repeats on one thread more than 1000 times in about 2 minutes. No
+getMacroContextPrivate, present, IOSurface or currentContext calls ever happen.
+So Apple's GLEngine cannot create a context on river, and CA stays on its CPU
+renderer while retrying. The GLI dispatch table could not be measured from
+Apple's object because none is created.
+Next (stage 2): for API 2/3, make initWithAPI:properties: produce a context
+backed by librivergl (Mesa) and give CA an EAGLMacroContext whose GLI dispatch
+table calls Mesa. The table layout must match this build's GLEngine (Pixel
+port reference: 1036 slots for the same 16.7.16 userland; verify independently).
