@@ -1909,3 +1909,28 @@ Mesa) or another kernel path. Proposed fix: give render-target pages an
 uncached (write-combined) cache attribute when sweetgl marks them, like 0192
 for Mesa buffers, so no CPU cache can hold their lines; cost: slower CPU
 reads of them (panel copy).
+
+### r67 (0196 uncached render targets, fast path, riverfbinv=0) (r49-gallium-live-39.txt): worse
+Render targets switched to wimg 0x6 (surfaces 2 and 4: 1125x2436 BGRA,
+mapped only by backboardd). User: different kinds of flickering/glitching
+on scroll, worse. Kernel SUBMIT now only ~1.5-2 ms per frame, but the panel
+copy reads ~10 MB of uncached memory per present: **73 ms per present**
+(was ~20 ms), 3-9 frames/s, and CoreAnimation renders the next frames into
+the same surfaces while a copy is still running (tearing). Do not use 0196's
+uncached render targets with the CPU panel copy.
+
+### Coherency/speed summary (r55-r67)
+- Correct: cleaning every imported surface on every submit (`rivergpuflush=1`)
+  with Mesa buffers uncached (0192): **r63, 5-7 fps, no flicker.**
+- Measured: render targets are never written by the CPU (r66, full scans);
+  Mesa buffers needed real uncached pages (0192); the panel copy never
+  found the GPU busy (r61); the panel-copy invalidate is not the flicker
+  cause (r65); render targets are mapped only by backboardd (r67).
+- Not found: why skipping render-target cleans flickers. Remaining suspect:
+  the CPU panel copy itself (it reads render targets through cached
+  kernel mappings while CA reuses them).
+- Likely real fix: stop reading render targets with the CPU. Present with
+  the GPU (blit the swapped surface into the panel buffer) or let the MDP
+  scan the surface (riverzc, topaz saw half-drawn frames without sync).
+  That removes the 20 ms CPU copy, any stale-read risk, and lets render
+  targets skip cleaning.
