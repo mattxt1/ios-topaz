@@ -2,7 +2,7 @@
  * River EAGL adapter, stage 1: observe only.
  *
  * Injected into backboardd with riverenv=backboardd:DYLD_INSERT_LIBRARIES=
- * (kernel patch 0182). When OpenGLES's classes are loaded it logs, through
+ * (kernel patch 0182). Linked to OpenGLES; at load it logs, through
  * RiverGPU's LOG selector (the USB log):
  *  - every method of EAGLContext and EAGLSharegroup with its type encoding;
  *  - calls to each of those methods (the first three, then at 10, 100, ...)
@@ -232,25 +232,6 @@ hook_named(const char *name)
 	hook_class(cls, '-', name);
 }
 
-static _Atomic int hooked;
-
-static void
-image_loaded(const struct mach_header *mh)
-{
-	Dl_info info;
-	if (atomic_load(&hooked) || !dladdr(mh, &info) || info.dli_fname == NULL ||
-	    strcmp(info.dli_fname, "/System/Library/Frameworks/OpenGLES.framework/OpenGLES") != 0) {
-		return;
-	}
-	if (atomic_exchange(&hooked, 1)) {
-		return;
-	}
-	hook_named("EAGLContext");
-	hook_named("EAGLSharegroup");
-	say("eagl: %d methods hooked (observe only)%s", nhooks,
-	    macro_orig ? ", getMacroContextPrivate wrapped" : ", getMacroContextPrivate NOT wrapped");
-}
-
 __attribute__((constructor))
 static void
 river_eagl_init(void)
@@ -266,7 +247,9 @@ river_eagl_init(void)
 		return;
 	}
 	say("eagl: stage 1 (observe) loaded in %s pid %d", getprogname(), getpid());
-	/* Called for loaded images now and each later one, after objc has
-	 * set up its classes. */
-	objc_addLoadImageFunc(image_loaded);
+	/* OpenGLES is linked, so its classes are set up before this runs. */
+	hook_named("EAGLContext");
+	hook_named("EAGLSharegroup");
+	say("eagl: %d methods hooked (observe only)%s", nhooks,
+	    macro_orig ? ", getMacroContextPrivate wrapped" : ", getMacroContextPrivate NOT wrapped");
 }
