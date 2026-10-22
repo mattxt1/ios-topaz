@@ -1642,3 +1642,19 @@ Next (stage 2): for API 2/3, make initWithAPI:properties: produce a context
 backed by librivergl (Mesa) and give CA an EAGLMacroContext whose GLI dispatch
 table calls Mesa. The table layout must match this build's GLEngine (Pixel
 port reference: 1036 slots for the same 16.7.16 userland; verify independently).
+
+### r52 / r52b (0183 kernel, CI 39712501994; sweetgl from the Pixel port) (r49-gallium-live-19/20.txt)
+Switched to the Pixel 1 port's tools/sweetgl (EAGL shim, GLI dispatch, IOSurface
+handling), built inside our Mesa tree as /usr/local/lib/sweetgl.dylib and
+injected with riverenv. River glue river_drm.c replaces its msm emulation;
+kernel 0183 adds RiverGPU BO_IMPORT (IOSurface pages as a GPU buffer) and
+BO_INFO. r52: sweetgl installed and created screen FD506 in backboardd, then
+SIGSEGV at pc 0 in st_api_create_context (Mesa 26 calls the frontend
+get_param; sweetgl left it NULL), 9 backboardd restarts. r52b with a
+get_param callback: **no crash; CoreAnimation's EAGLContext API 3 runs on
+Mesa** (`EAGLContext ... API 3 on Mesa (GLI ...)`), GL flushes/finishes reach
+the GPU (finish 14-44 ms), no GPU faults or error IRQs. QuartzCore texture-
+function fixes refused (code did not match their expectation). Four small
+texImageIOSurface textures (A008 438x79, LA08 23x23, RGhA 256x1 x2) failed
+kernel import (reason not logged). r52c: those fall back to a CPU copy, and
+import failures log their reason. Screen output of r52b not yet reported.
