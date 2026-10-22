@@ -1,0 +1,229 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index 2fa188f..f6a7da8 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -1229,6 +1229,135 @@ river_gpu_fence_done(uint32_t fence)
+ 	return rgpu_fence_done(fence);
+ }
+ 
++/*
++ * 0197: GPU present. Copy a w x h rectangle of 32-bit pixels from a surface
++ * (physical pages pa[], pixel (0,0) at byte start of the first page, row
++ * pitch src_pitch) at (sx, sy) to a physically contiguous buffer (the panel's
++ * back buffer, pitch dst_pitch) at (dx, dy), with the A5xx 2D blitter, as
++ * Mesa's fd5_blitter emit_setup + emit_blit (BLIT_OP_COPY, R8G8B8A8, linear,
++ * WZYX: the bytes are copied unchanged). Both are mapped into fixed GPU
++ * windows above the buffer heap for the call. The CPU never reads the
++ * surface. Returns 0, or an errno.
++ */
++#define RGPU_BLIT_DST_VA	0xf0000000ULL	/* <= 16 MiB */
++#define RGPU_BLIT_SRC_VA	0xf1000000ULL	/* <= 48 MiB */
++#define REG_A5XX_RB_RENDER_CNTL		0xe141
++#define REG_A5XX_RB_2D_BLIT_CNTL	0x2100
++#define REG_A5XX_GRAS_2D_BLIT_CNTL	0x2180
++#define REG_A5XX_UNKNOWN_2184		0x2184
++#define REG_A5XX_RB_CNTL		0xe140
++#define REG_A5XX_RB_MODE_CNTL		0x0cc6
++#define REG_A5XX_SP_MODE_CNTL		0x0ec2
++#define REG_A5XX_TPL1_MODE_CNTL		0x0f02
++#define REG_A5XX_HLSQ_MODE_CNTL		0x0e06
++#define REG_A5XX_GRAS_CL_CNTL		0xe000
++#define REG_A5XX_RB_2D_SRC_INFO		0x2107
++#define REG_A5XX_RB_2D_DST_INFO		0x2110
++#define REG_A5XX_GRAS_2D_SRC_INFO	0x2181
++#define REG_A5XX_GRAS_2D_DST_INFO	0x2182
++#define CP_WAIT_FOR_IDLE		38
++#define CP_SET_RENDER_MODE		108
++#define CP_BLIT				44
++#define RENDER_MODE_BLIT2D		5
++#define RENDER_MODE_END2D		8
++#define BLIT_OP_COPY			1
++#define RB5_R8G8B8A8_UNORM		48
++
++static int rgpu_blit_slot = -1;
++
++int river_gpu_blit(const uint64_t *pa, uint32_t npages, uint64_t start, uint32_t src_pitch, uint32_t sx, uint32_t sy,
++    uint64_t dst_pa, uint64_t dst_size, uint32_t dst_pitch, uint32_t dx, uint32_t dy, uint32_t w, uint32_t h,
++    uint32_t timeout_ms);
++int
++river_gpu_blit(const uint64_t *pa, uint32_t npages, uint64_t start, uint32_t src_pitch, uint32_t sx, uint32_t sy,
++    uint64_t dst_pa, uint64_t dst_size, uint32_t dst_pitch, uint32_t dx, uint32_t dy, uint32_t w, uint32_t h,
++    uint32_t timeout_ms)
++{
++	uint64_t src_bytes = (uint64_t)npages * PAGE_SIZE;
++	uint64_t dst_bytes = (dst_size + 0xfff) & ~0xfffULL;
++	if (!rgpu_up || w == 0 || h == 0 || w > 16383 || h > 16383 || (src_pitch & 63) || (dst_pitch & 63) ||
++	    (dst_pa & 63) || src_bytes > 48ULL * 1024 * 1024 || dst_bytes > 16ULL * 1024 * 1024) {
++		return EINVAL;
++	}
++	if (rgpu_blit_slot < 0) {
++		rgpu_blit_slot = rgpu_bo_alloc(PAGE_SIZE);	/* the command buffer, kept */
++		if (rgpu_blit_slot < 0) {
++			return ENOMEM;
++		}
++	}
++	/* pixel (0,0) must be 64-byte aligned: move the misalignment into x */
++	uint64_t src_base = RGPU_BLIT_SRC_VA + (start & ~63ULL);
++	sx += (uint32_t)((start & 63) / 4);
++	if (sx + w - 1 > 16383) {
++		return EINVAL;
++	}
++
++	lck_mtx_lock(rgpu_lock);
++	bool ok = gmmu_map(RGPU_BLIT_DST_VA, dst_pa & ~0xfffULL, dst_bytes, false);
++	for (uint32_t p = 0; ok && p < npages; p++) {
++		ok = gmmu_map(RGPU_BLIT_SRC_VA + (uint64_t)p * PAGE_SIZE, pa[p], PAGE_SIZE, true);
++	}
++	gmmu_sync();
++	lck_mtx_unlock(rgpu_lock);
++	uint64_t dst_base = RGPU_BLIT_DST_VA + (dst_pa & 0xfffULL);
++
++	struct rgpu_bo *ibo = &rgpu_bos[rgpu_blit_slot];
++	uint32_t *c = (uint32_t *)ibo->va, n = 0;
++#define B(v) (c[n++] = (v))
++	B(pkt4(REG_A5XX_RB_RENDER_CNTL, 1)); B(0x00000008);
++	B(pkt4(REG_A5XX_RB_2D_BLIT_CNTL, 1)); B(0x86000000);
++	B(pkt4(REG_A5XX_GRAS_2D_BLIT_CNTL, 1)); B(0x86000000);
++	B(pkt4(REG_A5XX_UNKNOWN_2184, 1)); B(0x00000009);
++	B(pkt4(REG_A5XX_RB_CNTL, 1)); B(0x00020000);		/* BYPASS */
++	B(pkt4(REG_A5XX_RB_MODE_CNTL, 1)); B(0x00000004);
++	B(pkt4(REG_A5XX_SP_MODE_CNTL, 1)); B(0x0000000c);
++	B(pkt4(REG_A5XX_TPL1_MODE_CNTL, 1)); B(0x00000344);
++	B(pkt4(REG_A5XX_HLSQ_MODE_CNTL, 1)); B(0x00000002);
++	B(pkt4(REG_A5XX_GRAS_CL_CNTL, 1)); B(0x00000181);
++	B(pkt7(CP_SET_RENDER_MODE, 1)); B(RENDER_MODE_BLIT2D);
++	B(pkt4(REG_A5XX_RB_2D_SRC_INFO, 9));
++	B(RB5_R8G8B8A8_UNORM);					/* linear, WZYX */
++	B((uint32_t)src_base); B((uint32_t)(src_base >> 32));
++	B(src_pitch >> 6);					/* ARRAY_PITCH 0: one layer */
++	B(0); B(0); B(0); B(0); B(0);
++	B(pkt4(REG_A5XX_GRAS_2D_SRC_INFO, 1)); B(RB5_R8G8B8A8_UNORM);
++	B(pkt4(REG_A5XX_RB_2D_DST_INFO, 9));
++	B(RB5_R8G8B8A8_UNORM);
++	B((uint32_t)dst_base); B((uint32_t)(dst_base >> 32));
++	B(dst_pitch >> 6);
++	B(0); B(0); B(0); B(0); B(0);
++	B(pkt4(REG_A5XX_GRAS_2D_DST_INFO, 1)); B(RB5_R8G8B8A8_UNORM);
++	B(pkt7(CP_BLIT, 5));
++	B(BLIT_OP_COPY);
++	B(sx | (sy << 16));
++	B((sx + w - 1) | ((sy + h - 1) << 16));
++	B(dx | (dy << 16));
++	B((dx + w - 1) | ((dy + h - 1) << 16));
++	B(pkt7(CP_SET_RENDER_MODE, 1)); B(RENDER_MODE_END2D);
++	B(pkt7(CP_WAIT_FOR_IDLE, 0));
++#undef B
++	flush_dcache64((addr64_t)ibo->va, n * 4, FALSE);
++
++	int err = 0;
++	if (!ok) {
++		err = ENOMEM;
++	} else {
++		uint64_t ib = ibo->gpuva;
++		uint32_t seq = rgpu_submit(&ib, &n, 1);
++		if (!rgpu_wait(seq, timeout_ms)) {
++			err = ETIMEDOUT;
++		}
++	}
++	if (err != ETIMEDOUT) {		/* a GPU still blitting keeps its mapping */
++		lck_mtx_lock(rgpu_lock);
++		gmmu_unmap(RGPU_BLIT_DST_VA, dst_bytes);
++		gmmu_unmap(RGPU_BLIT_SRC_VA, src_bytes);
++		gmmu_sync();
++		lck_mtx_unlock(rgpu_lock);
++	}
++	return err;
++}
++
+ int river_gpu_wait(uint32_t fence, uint32_t ms);
+ int
+ river_gpu_wait(uint32_t fence, uint32_t ms)
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 941a541..3fd2b33 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -77,6 +77,14 @@ static uint64_t river_flip_hash[2][RIVER_FB_ROWS];
+ static bool river_flip_valid[2];
+ static uint64_t river_present_ns, river_present_rows, river_presents, river_direct;
+ static int river_zc;	/* boot-arg riverzc=1: scan iOS's scanout-pool surface directly */
++static int river_blit = -1;	/* boot-arg riverblit=1: present with the GPU 2D blitter (0197) */
++static bool river_blit_flushed;
++static uint32_t river_blit_ok, river_blit_fail;
++static uint64_t river_blit_ns, river_blit_report;
++extern "C" int river_gpu_blit(const uint64_t *pa, uint32_t npages, uint64_t start, uint32_t src_pitch, uint32_t sx,
++    uint32_t sy, uint64_t dst_pa, uint64_t dst_size, uint32_t dst_pitch, uint32_t dx, uint32_t dy, uint32_t w,
++    uint32_t h, uint32_t timeout_ms);
++extern "C" void flush_dcache64(addr64_t addr, unsigned count, int phys);
+ #endif
+ /* iOS's display power state (RequestPowerChange), for touch-to-wake in SweetHID. */
+ static volatile bool sweet_fb_off;
+@@ -1149,6 +1157,69 @@ AppleCLCD::present(const uint8_t *rec)
+ 			src = 0;
+ 		}
+ #if defined(RIVER)
++		/*
++		 * 0197: a full-screen 32-bit layer goes to the back buffer by the GPU's
++		 * 2D blitter; the CPU never reads it (no copy, nothing to go stale).
++		 */
++		if (river_blit < 0) {
++			river_blit = 0;
++			PE_parse_boot_argn("riverblit", &river_blit, sizeof(river_blit));
++			IOLog("RIVER FB: GPU present %s\n", river_blit ? "on (riverblit=1)" : "off");
++		}
++		if (river_blit && src != 0 && bpe == 4 && fFlip[0] != NULL && dx == 0 && dy == 0 &&
++		    w == (int32_t)fWidth && h == (int32_t)fHeight) {
++			uint32_t back = fFlipIdx ^ 1;
++			if (!river_blit_flushed) {
++				/* no CPU lines of the flip buffers may later land on GPU pixels */
++				for (int i = 0; i < 2; i++) {
++					flush_dcache64((addr64_t)(uintptr_t)fFlip[i]->getBytesNoCopy(),
++					    (unsigned)fFlip[i]->getLength(), FALSE);
++				}
++				river_blit_flushed = true;
++			}
++			IOByteCount seg = 0;
++			uint64_t first = s->memory->getPhysicalSegment(0, &seg, kIOMemoryMapperNone);
++			uint64_t start = (first & PAGE_MASK) + s->offset;
++			uint32_t npages = (uint32_t)((start + s->memory->getLength() + PAGE_MASK) / PAGE_SIZE);
++			uint64_t *pa = first ? (uint64_t *)IOMallocData(npages * sizeof(uint64_t)) : NULL;
++			bool have = pa != NULL;
++			for (uint32_t p = 0; have && p < npages; p++) {
++				uint64_t at = p == 0 ? 0 : (uint64_t)p * PAGE_SIZE - (first & PAGE_MASK);
++				uint64_t phys = s->memory->getPhysicalSegment(at, &seg, kIOMemoryMapperNone);
++				pa[p] = phys & ~(uint64_t)PAGE_MASK;
++				have = phys != 0;
++			}
++			uint64_t t0 = mach_absolute_time();
++			int err = have ? river_gpu_blit(pa, npages, start, s->bytesPerRow, (uint32_t)sx, (uint32_t)sy,
++			    fFlipPhys[back], fFlip[back]->getLength(), fRowBytes, 0, 0, (uint32_t)w, (uint32_t)h, 50) : ENOMEM;
++			uint64_t t1 = mach_absolute_time(), ns;
++			if (pa != NULL) {
++				IOFreeData(pa, npages * sizeof(uint64_t));
++			}
++			absolutetime_to_nanoseconds(t1 - t0, &ns);
++			if (err == 0) {
++				river_blit_ok++;
++				river_blit_ns += ns;
++			} else if (river_blit_fail++ < 5) {
++				IOLog("RIVER FB: GPU present failed (%d), CPU copy instead\n", err);
++			}
++			absolutetime_to_nanoseconds(t1 - river_blit_report, &ns);
++			if (ns >= 10000000000ULL) {
++				if (river_blit_report != 0) {
++					IOLog("RIVER FB: 10 s: %u GPU presents (avg %llu us), %u fell back\n", river_blit_ok,
++					    river_blit_ok ? river_blit_ns / river_blit_ok / 1000 : 0, river_blit_fail);
++				}
++				river_blit_report = t1;
++				river_blit_ok = river_blit_fail = 0;
++				river_blit_ns = 0;
++			}
++			if (err == 0) {
++				river_flip_valid[back] = false;	/* the CPU row hashes no longer match */
++				fBackClean = true;		/* GPU wrote memory: nothing to clean */
++				s->release();
++				continue;
++			}
++		}
+ 		/* GPU-rendered (sweetgl): submits no longer drop CPU cache lines (0186) */
+ 		if (src != 0) {
+ 			river_surface_cpu_read(s, src + s->offset + (uint64_t)sy * s->bytesPerRow,
