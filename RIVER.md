@@ -1842,3 +1842,18 @@ New approach (r62): clean everything per submit (r61 kernel with
 rivergpuflush=1: correct by construction) and cut the submits: Mesa a5xx
 texture barrier with forced sysmem now emits PC_CCU_FLUSH_COLOR/DEPTH_TS +
 UCHE invalidate + WFI in the current batch instead of a whole context flush.
+
+### r62 (r61 kernel + rivergpuflush=1, in-batch a5xx barrier) (r49-gallium-live-34.txt)
+User: **no flicker; blur and transparency right.** So the in-batch texture
+barrier (PC_CCU_FLUSH_COLOR/DEPTH_TS + UCHE invalidate + WFI) renders
+correctly, and barriers now cost ~15-60 us per frame instead of flushes.
+But speed stays at 4-6 frames/s: still 6-18 GPU submits per frame (so most
+submits were never barriers: CA flushes/fences, and freedreno flushing a
+batch when a later draw samples what it rendered), each ~11 ms in the
+kernel cleaning ~20 listed buffers (65-195 ms per frame).
+State: correct baseline = r62. Fast but flickering = r56 (14-27 fps).
+Open: which buffers really need per-submit cleaning (Mesa's own buffers are
+cached because the write-combined user mapping did not take; render
+targets need cleaning for a reason not yet found), or making them truly
+uncached (e.g. IOBufferMemoryDescriptor with a write-combined cache mode,
+for both the kernel and the user mapping).
