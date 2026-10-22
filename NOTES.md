@@ -58,7 +58,7 @@ failure. Patch 0151's expanded SIGBUS `pc==far` logger passed CI
 Current normal four-core diagnostic boot is `river-r29-diag-4c-boot.img`,
 live log `logs-private/r19-live-18.txt`; user testing. See RIVER.md r29.
 
-## River side port handoff (2026-10-19)
+## Archived river side port handoff (2026-10-19)
 
 This `river-bringup` branch is the Moto G7 river port. The handoff folder's
 `HANDOFF.md` (one level up) is the entry point for a new session; then read
@@ -147,9 +147,9 @@ User requested handoff before phone testing. Receiver stopped, no host USB
 IP configured, phone verified root ADB recovery (ro.bootmode misleadingly
 says normal). Next: prepared r14 USB test; see RIVER.md image hashes.
 
-## Agent handoff / active work (2026-10-15, latest)
+## Archived agent handoff (2026-10-15; superseded)
 
-### >>> UPDATE 2026-10-18 (read first, then the 10-17 handoff below) <<<
+### Update 2026-10-18 (historical)
 
 **LIVE LOG over USB (0077, boot 0077s): no more recovery round-trips.** Boot an image with `sweetusb=2`, run `tools/sweet-usbnet.sh logs/live-NAME.txt` on the PC: it waits for the phone's CDC-ECM interface, sets 192.168.7.1/24 (sudo) and prints/saves the kernel console the phone streams every 100 ms as UDP to 192.168.7.1:5140 (starts with the last 64 KiB). `ping 192.168.7.2` checks the link. Current image: `shim/out/shim-boot-0077s.img` (kernel 0077, ADT sweet-0069hi, cpus=6, sweetfb_noconsole=1, sweetfb_hz=30, sweetusb=2). The recovery pull (`tools/sweet-log-pull.sh`) is still the way after a panic/hang before USB comes up.
 
@@ -171,7 +171,7 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
 - **0061** (CI 39117078444): red status bar "rdar:45025538" = UIKit "No status bar visual provider for screen" (360x800 pt is no real iPhone). AppleCLCD now presents **1125x2436** (iPhone X) and shows the centered 1080x2400; touch mapped the same; ADT canvas 1125x2436. `sweetfb_native=1` reverts.
 - Images: `shim/out/shim-boot-0060b.img` (0060 + /buttons ADT `sweet-0060hi.adt`). Next: 0061 image with ADT from current mkadt.
 
-### >>> HANDOFF 2026-10-17 late (read this first) <<<
+### Handoff 2026-10-17 late (historical)
 
 **STATE: iOS 16.7 Setup.app "Hello" screen is ON THE PHONE** (boot `shim/out/shim-boot-0057u.img` on image v12). Photo `/run/media/dipa/android/ios-sweet-work/MILESTONE-setup-hello-2026-10-17.jpg`. SpringBoard + backboardd + Setup run; nothing crashes in the GUI path. Remaining crash/relaunch loops: installcoordinationd (should be fixed by 0057, unverified), mediaserverd (VirtualAudio removed in v12, unverified), mobileactivationd (~100/boot, not analysed), bluetoothd + fairplayd.H2 relaunch constantly (no hardware).
 
