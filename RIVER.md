@@ -1692,3 +1692,25 @@ User check on r53: screen looks right (labels, icons, blur, transparency).
 Known gaps: QuartzCore texture-function fixes refused (address check fails
 on this cache), LA08 small-stride layout, ~0.1-4 flushes/s and 10-45 ms GPU
 finishes (no FPS measurement yet), GPU clock still conservative.
+
+### r53 frame timing (r49-gallium-live-22.txt): **CPU-bound, not GPU-bound**
+sweetgl logs per 10 s window: flushes/s (CA renders one flush per frame;
+sweetgl turns each flush into glFinish), time blocked in glFinish (GPU), CPU
+time between frames. The user scrolled Settings continuously for ~30 s:
+
+| window | frames/s | GPU wait avg (max) | CPU between frames |
+| --- | --- | --- | --- |
+| scroll | 4.4 | 17.4 ms (23.8) | 208 ms |
+| scroll | 4.3 | 17.1 ms (22.5) | 215 ms |
+| scroll | 4.3 | 16.6 ms (21.6) | 218 ms |
+| scroll | 5.7 | 11.1 ms (21.4) | 164 ms |
+| scroll | 4.0 | 17.4 ms (22.5) | 235 ms |
+| scroll | 4.3 | 18.1 ms (25.4) | 213 ms |
+
+GPU (at 133 MHz) is ~8% of a frame; ~92% is CPU work in backboardd between
+frames (CoreAnimation + Mesa/freedreno CPU + sweetgl). Even a free GPU gives
+~5-6 fps, so raising the GPU clock is not worth it yet. Kernel panel copy
+(`RIVER FB`): ~21 ms per present, ~1700 rows, at sweetfb_hz=30 (CPU).
+0185 (rivergpuclk=133|200|266|320, default 133; CI 39717137089, kernel in
+k-r54) is built but NOT booted. Next: profile backboardd's CPU time per frame
+(split CA vs Mesa vs sweetgl); also CPU clock is still capped at 1.4 GHz.
