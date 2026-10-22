@@ -1768,3 +1768,11 @@ cleared the mark while the GPU could still be drawing the next frame into it,
 so later copies read stale cached lines; also writers that skip the seed.
 0187: the invalidate before the panel copy is sticky (any surface the GPU
 ever used), and imports <= 1 MiB are always cleaned before GPU use.
+
+### r56 (0187; CI 39724110440) (r49-gallium-live-27.txt): fast, still flickers
+User: still flickers. Speed kept: 14-27 frames/s while scrolling, kernel
+SUBMIT ~0.6-2.6 ms per frame (~0.1 ms each), 2-10 barriers ~0.6-2.6 ms.
+So the once-per-mark invalidate race was not (only) the cause. Next: boot
+`river-r56-flushall-boot.img` (same kernel, rivergpuflush=1) to tell a
+cache problem (e.g. app backing stores written without a seed bump) from a
+timing problem (GPU vs the 30 Hz panel copy).
