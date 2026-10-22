@@ -1,0 +1,255 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index 9eba4dc..0dd4d38 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -543,7 +543,15 @@ struct rgpu_bo {
+ 	void *import;		/* imported memory (retained SweetSurface), not ours to free */
+ 	uint64_t *pa;		/* imports: physical page of each PAGE_SIZE step */
+ 	uint32_t npages;
++	bool wc;		/* client maps it write-combined: no CPU cache maintenance */
++	bool cleaned;		/* imports: seed below is the surface's at the last clean */
++	uint32_t seed;
+ };
++/* RiverGPU.cpp: a surface's write seed, and "the GPU may have written it" */
++extern uint32_t river_gpu_import_seed(void *import);
++extern void river_gpu_import_touched(void *import);
++/* rivergpuflush=1: clean every buffer of every submit (before 0186) */
++static int rgpu_flush_all;
+ extern boolean_t pmap_valid_page(ppnum_t pn);
+ extern void river_gpu_import_release(void *import);	/* RiverGPU.cpp */
+ static struct rgpu_bo rgpu_bos[RGPU_MAX_BO];
+@@ -651,6 +659,10 @@ rgpu_bo_free(int slot)
+ 			river_gpu_import_release(b->import);
+ 			kfree_data(b->pa, b->npages * sizeof(uint64_t));
+ 		} else {
++			if (b->wc) {
++				/* the client wrote memory past this cached alias: drop its lines */
++				flush_dcache64((addr64_t)b->va, (unsigned)b->size, FALSE);
++			}
+ 			kmem_free(kernel_map, b->va, b->size);
+ 		}
+ 		*b = (struct rgpu_bo){ 0 };
+@@ -770,6 +782,7 @@ rgpu_service_test(vm_offset_t buf, uint64_t pa, uint64_t gva)
+ 	    again >= 0 ? rgpu_bos[again].gpuva : 0ULL, again >= 0 && rgpu_bos[again].gpuva == RGPU_HEAP_BASE ? "ok" : "unexpected");
+ 	if (again >= 0) rgpu_bo_free(again);
+ 	if (done && good == N) {
++		PE_parse_boot_argn("rivergpuflush", &rgpu_flush_all, sizeof(rgpu_flush_all));
+ 		rgpu_up = true;
+ 		river_gpu_publish();
+ 		printf("RIVER GPU: RiverGPUReady published for user clients\n");
+@@ -820,14 +833,16 @@ rgpu_bo_get(void *owner, uint32_t handle)
+ 	return b->used && b->owner == owner ? b : NULL;
+ }
+ 
+-uint32_t river_gpu_bo_new(void *owner, uint64_t size, uint64_t *gpuva, uint64_t *rsize);
++/* flags bit 0: the client maps it write-combined (no cache maintenance for it) */
++uint32_t river_gpu_bo_new(void *owner, uint64_t size, uint32_t flags, uint64_t *gpuva, uint64_t *rsize);
+ uint32_t
+-river_gpu_bo_new(void *owner, uint64_t size, uint64_t *gpuva, uint64_t *rsize)
++river_gpu_bo_new(void *owner, uint64_t size, uint32_t flags, uint64_t *gpuva, uint64_t *rsize)
+ {
+ 	if (!rgpu_up || size == 0 || size > 256ULL * 1024 * 1024) return 0;
+ 	int slot = rgpu_bo_alloc((vm_size_t)size);
+ 	if (slot < 0) return 0;
+ 	rgpu_bos[slot].owner = owner;
++	rgpu_bos[slot].wc = (flags & 1) != 0;
+ 	*gpuva = rgpu_bos[slot].gpuva;
+ 	*rsize = rgpu_bos[slot].size;
+ 	return (uint32_t)slot + 1;
+@@ -936,6 +951,35 @@ rgpu_bo_flush(struct rgpu_bo *b)
+ 	}
+ }
+ 
++/*
++ * Before the GPU uses a buffer: write-combined client buffers need nothing;
++ * an imported surface is cleaned only when the CPU wrote it since the last
++ * clean (its seed moves on every writable unlock) and is marked as possibly
++ * GPU-written for CPU readers (the panel copy invalidates before reading).
++ */
++static void
++rgpu_bo_prepare_gpu(struct rgpu_bo *b)
++{
++	if (rgpu_flush_all) {
++		rgpu_bo_flush(b);
++		return;
++	}
++	if (b->wc) {
++		return;
++	}
++	if (b->import != NULL) {
++		uint32_t seed = river_gpu_import_seed(b->import);
++		if (!b->cleaned || seed != b->seed) {
++			rgpu_bo_flush(b);
++			b->seed = seed;
++			b->cleaned = true;
++		}
++		river_gpu_import_touched(b->import);
++		return;
++	}
++	rgpu_bo_flush(b);
++}
++
+ int river_gpu_submit(void *owner, const struct river_gpu_cmd *cmd, uint32_t ncmd,
+     const uint32_t *bos, uint32_t nbos, uint32_t *fence);
+ int
+@@ -957,10 +1001,10 @@ river_gpu_submit(void *owner, const struct river_gpu_cmd *cmd, uint32_t ncmd,
+ 	for (uint32_t i = 0; i < nbos; i++)
+ 		if (!rgpu_bo_get(owner, bos[i])) return EINVAL;
+ 	for (uint32_t i = 0; i < ncmd; i++) {
+-		rgpu_bo_flush(rgpu_bo_get(owner, cmd[i].handle));
++		rgpu_bo_prepare_gpu(rgpu_bo_get(owner, cmd[i].handle));
+ 	}
+ 	for (uint32_t i = 0; i < nbos; i++) {
+-		rgpu_bo_flush(rgpu_bo_get(owner, bos[i]));
++		rgpu_bo_prepare_gpu(rgpu_bo_get(owner, bos[i]));
+ 	}
+ 	uint32_t seq = rgpu_submit(ib, dw, ncmd);
+ 	for (uint32_t i = 0; i < ncmd; i++) rgpu_bo_get(owner, cmd[i].handle)->fence = seq;
+@@ -983,7 +1027,9 @@ river_gpu_cpu_prep(void *owner, uint32_t handle, uint32_t ms)
+ 	struct rgpu_bo *b = rgpu_bo_get(owner, handle);
+ 	if (!b) return EINVAL;
+ 	if (!rgpu_fence_done(b->fence) && !rgpu_wait(b->fence, ms)) return ETIMEDOUT;
+-	rgpu_bo_flush(b);
++	if (!b->wc || rgpu_flush_all) {
++		rgpu_bo_flush(b);
++	}
+ 	return 0;
+ }
+ 
+diff --git a/iokit/Kernel/arm/RiverGPU.cpp b/iokit/Kernel/arm/RiverGPU.cpp
+index 9d04388..d3c3086 100644
+--- a/iokit/Kernel/arm/RiverGPU.cpp
++++ b/iokit/Kernel/arm/RiverGPU.cpp
+@@ -7,7 +7,9 @@
+  * self-test passed). Clients open it with IOServiceOpen(type 0) and use:
+  *
+  *   0 GET_PARAM   scalar in  { param }               out { value }
+- *   1 BO_NEW      scalar in  { size }                out { handle, gpuva, size }
++ *   1 BO_NEW      scalar in  { size [, flags] }      out { handle, gpuva, size }
++ *                 (flags bit 0: the caller maps it write-combined, so the
++ *                 kernel does no CPU cache maintenance for it)
+  *   2 BO_FREE     scalar in  { handle }
+  *   3 SUBMIT      struct in  { u32 ncmd, u32 nbos,
+  *                              ncmd x { u32 handle, u32 offset, u32 size_dw },
+@@ -41,7 +43,9 @@ struct river_gpu_cmd {
+ };
+ bool river_gpu_is_ready(void);
+ uint64_t river_gpu_param(uint32_t param);
+-uint32_t river_gpu_bo_new(void *owner, uint64_t size, uint64_t *gpuva, uint64_t *rsize);
++uint32_t river_gpu_bo_new(void *owner, uint64_t size, uint32_t flags, uint64_t *gpuva, uint64_t *rsize);
++uint32_t river_gpu_import_seed(void *import);
++void river_gpu_import_touched(void *import);
+ int river_gpu_bo_kva(void *owner, uint32_t handle, vm_offset_t *kva, uint64_t *size);
+ int river_gpu_bo_free(void *owner, uint32_t handle);
+ int river_gpu_submit(void *owner, const struct river_gpu_cmd *cmd, uint32_t ncmd,
+@@ -57,6 +61,18 @@ int river_gpu_bo_info(void *owner, uint32_t handle, uint64_t *gpuva, uint64_t *s
+ void river_gpu_import_release(void *import);
+ }
+ 
++uint32_t
++river_gpu_import_seed(void *import)
++{
++	return sweet_surface_seed_value((SweetSurface *)import);
++}
++
++void
++river_gpu_import_touched(void *import)
++{
++	((SweetSurface *)import)->gpuTouched = true;
++}
++
+ /* Undo BO_IMPORT's hold on a surface: its memory was prepared (wired). */
+ void
+ river_gpu_import_release(void *import)
+@@ -144,11 +160,11 @@ RiverGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
+ 		args->scalarOutputCount = 1;
+ 		return kIOReturnSuccess;
+ 	case 1: {	/* BO_NEW */
+-		if (nin != 1 || nout < 3) {
++		if (nin < 1 || nin > 2 || nout < 3) {
+ 			return kIOReturnBadArgument;
+ 		}
+ 		uint64_t gpuva = 0, size = 0;
+-		uint32_t h = river_gpu_bo_new(this, in[0], &gpuva, &size);
++		uint32_t h = river_gpu_bo_new(this, in[0], nin > 1 ? (uint32_t)in[1] : 0, &gpuva, &size);
+ 		if (h == 0) {
+ 			return kIOReturnNoMemory;
+ 		}
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index ccc0be5..941a541 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -1148,6 +1148,13 @@ AppleCLCD::present(const uint8_t *rec)
+ 		    s->memory == NULL || last > s->memory->getLength()) {
+ 			src = 0;
+ 		}
++#if defined(RIVER)
++		/* GPU-rendered (sweetgl): submits no longer drop CPU cache lines (0186) */
++		if (src != 0) {
++			river_surface_cpu_read(s, src + s->offset + (uint64_t)sy * s->bytesPerRow,
++			    (uint64_t)h * s->bytesPerRow);
++		}
++#endif
+ #if defined(RIVER)
+ 		if (src != 0 && bpe == 4 && fFlip[0] != NULL && dx == 0 && dy == 0 &&
+ 		    w == (int32_t)fWidth && h == (int32_t)fHeight && fHeight <= RIVER_FB_ROWS &&
+diff --git a/iokit/Kernel/arm/SweetSurface.cpp b/iokit/Kernel/arm/SweetSurface.cpp
+index bab2da8..14317ac 100644
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -200,6 +200,25 @@ sweet_surface_seed(SweetSurface *s)
+ 	return (uint32_t *)((uint8_t *)s->state->getBytesNoCopy() + SWEET_SURFACE_STATE_SEED);
+ }
+ 
++uint32_t
++sweet_surface_seed_value(SweetSurface *s)
++{
++	return *(volatile uint32_t *)sweet_surface_seed(s);
++}
++
++#if defined(RIVER)
++extern "C" void flush_dcache64(addr64_t addr, unsigned count, int phys);
++
++void
++river_surface_cpu_read(SweetSurface *s, uintptr_t va, uint64_t len)
++{
++	if (s->gpuTouched && s->scanoutPhys == 0 && va != 0 && len != 0) {
++		s->gpuTouched = false;
++		flush_dcache64((addr64_t)va, (unsigned)len, FALSE);
++	}
++}
++#endif
++
+ /*
+  * Give the surface an id and a table slot; the table holds one retain and a
+  * user count (creators, client mappings, kernel holders). Lock held.
+diff --git a/iokit/Kernel/arm/SweetSurface.h b/iokit/Kernel/arm/SweetSurface.h
+index a9d3732..6be95b5 100644
+--- a/iokit/Kernel/arm/SweetSurface.h
++++ b/iokit/Kernel/arm/SweetSurface.h
+@@ -45,8 +45,9 @@ public:
+ 	uint32_t                  purgeable;    /* IOSurfaceSetPurgeable state */
+ 	uint32_t                  wrapDelta;    /* wrapped client memory: where it starts in its first page */
+ 	bool                      wrapped;      /* memory is a prepared range of a task (IOSurfaceWrapClient*) */
++	bool                      gpuTouched;   /* river: used by a GPU submit since CPU caches were last dropped */
+ 
+-	bool init() APPLE_KEXT_OVERRIDE { scanoutPhys = 0; scanoutSlot = -1; values = NULL; purgeable = 0; wrapDelta = 0; wrapped = false; return OSObject::init(); }
++	bool init() APPLE_KEXT_OVERRIDE { scanoutPhys = 0; scanoutSlot = -1; values = NULL; purgeable = 0; wrapDelta = 0; wrapped = false; gpuTouched = false; return OSObject::init(); }
+ 	void free() APPLE_KEXT_OVERRIDE;
+ 
+ 	/* Kernel address of the pixels (mapped on first use), or 0. */
+@@ -56,6 +57,14 @@ public:
+ /* Retained surface for an id, or NULL. */
+ SweetSurface *sweet_surface_copy(uint32_t id);
+ 
++/* The surface's write seed (moves on every writable unlock). */
++uint32_t sweet_surface_seed_value(SweetSurface *s);
++
++#if defined(RIVER)
++/* Before a CPU read of [offset, offset + len): drop stale CPU cache lines if the GPU may have written it. */
++void river_surface_cpu_read(SweetSurface *s, uintptr_t va, uint64_t len);
++#endif
++
+ /*
+  * Publish physical memory (the panel framebuffer) as a surface. Returns a
+  * retained surface that stays in the id table until released by the caller

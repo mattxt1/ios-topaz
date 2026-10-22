@@ -188,17 +188,18 @@ index d2baf58..b6fde47 100644
    'virtio/virtio_bo.c',
 diff --git a/src/freedreno/drm/river/river_bo.c b/src/freedreno/drm/river/river_bo.c
 new file mode 100644
-index 0000000..bd0eaa8
+index 0000000..1dc499f
 --- /dev/null
 +++ b/src/freedreno/drm/river/river_bo.c
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,147 @@
 +/*
 + * Copyright © 2026 river bring-up contributors
 + * SPDX-License-Identifier: MIT
 + *
-+ * Buffers are cached in the CPU and not coherent with the GPU; the kernel
-+ * cleans every buffer named in a submit and RIVER_CPU_PREP waits for the
-+ * buffer's last fence and invalidates it before the CPU reads.
++ * Our own buffers are mapped write-combined, as msm's default MSM_BO_WC, so
++ * the kernel does no CPU cache maintenance for them (BO_NEW flag 1, kernel
++ * 0186). Imported IOSurfaces stay cached: the kernel cleans them when their
++ * seed shows a CPU write. RIVER_CPU_PREP waits for the buffer's last fence.
 + */
 +#include "river_priv.h"
 +
@@ -215,9 +216,10 @@ index 0000000..bd0eaa8
 +{
 +   mach_vm_address_t addr = 0;
 +   mach_vm_size_t size = 0;
++   IOOptionBits cache = to_river_bo(bo)->imported ? 0 : kIOMapWriteCombineCache;
 +   kern_return_t kr = IOConnectMapMemory64(river_conn(bo->dev), bo->handle,
 +                                           mach_task_self(), &addr, &size,
-+                                           kIOMapAnywhere);
++                                           kIOMapAnywhere | cache);
 +   if (kr) {
 +      ERROR_MSG("map of bo %u failed: %#x", bo->handle, kr);
 +      return NULL;
@@ -266,10 +268,10 @@ index 0000000..bd0eaa8
 +struct fd_bo *
 +river_bo_new(struct fd_device *dev, uint32_t size, uint32_t flags)
 +{
-+   uint64_t in = size, out[3];
++   uint64_t in[2] = { size, 1 /* write-combined: no kernel cache maintenance */ }, out[3];
 +   uint32_t n = 3;
 +   kern_return_t kr = IOConnectCallScalarMethod(river_conn(dev), RIVER_BO_NEW,
-+                                                &in, 1, out, &n);
++                                                in, 2, out, &n);
 +   if (kr || n < 3) {
 +      ERROR_MSG("bo_new(%u) failed: %#x", size, kr);
 +      return NULL;
@@ -312,6 +314,7 @@ index 0000000..bd0eaa8
 +
 +   struct fd_bo *bo = &river_bo->base;
 +   river_bo->gpuva = out[0];
++   river_bo->imported = true;
 +   bo->size = size ? size : (uint32_t)out[1];
 +   bo->handle = handle;
 +   bo->funcs = &funcs;
@@ -549,10 +552,10 @@ index 0000000..001b1a0
 +}
 diff --git a/src/freedreno/drm/river/river_priv.h b/src/freedreno/drm/river/river_priv.h
 new file mode 100644
-index 0000000..b2e85c4
+index 0000000..a906e1f
 --- /dev/null
 +++ b/src/freedreno/drm/river/river_priv.h
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,100 @@
 +/*
 + * Copyright © 2026 river bring-up contributors
 + * SPDX-License-Identifier: MIT
@@ -630,6 +633,7 @@ index 0000000..b2e85c4
 +struct river_bo {
 +   struct fd_bo base;
 +   uint64_t gpuva;
++   bool imported;       /* an IOSurface (BO_IMPORT): mapped cached, the kernel tracks writes */
 +};
 +FD_DEFINE_CAST(fd_bo, river_bo);
 +

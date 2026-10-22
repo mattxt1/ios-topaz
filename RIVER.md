@@ -1740,3 +1740,18 @@ freedreno's fd_texture_barrier is a full fd_context_flush, i.e. a GPU
 submit (kernel cleans every listed buffer's cache, including ~10 MB
 screen surfaces). r54r counts and times barriers and River submits
 (count, kernel SUBMIT time, buffers per submit) per frame.
+
+### r54r barriers and submits (r49-gallium-live-25.txt): **kernel SUBMIT ~10 ms each**
+Continuous scroll, per frame (~2-4 frames/s): 4-9 texture barriers (each a
+full fd_context_flush) costing ~70-180 ms; 13-31 GPU submits; ~130-325 ms
+inside the kernel SUBMIT call, i.e. ~10 ms per submit (the r49t round trip
+was 0.12 ms), 15-19 buffers per submit. Cause: river_gpu_submit cleans and
+invalidates every listed buffer whole, including ~10 MB screen IOSurfaces,
+on every submit. That dominates the frame (and shows up in both sweetgl's
+draw_prep, via barriers, and Mesa's draws, via flushes).
+0186: Mesa's own buffers are allocated with BO_NEW flag 1 and mapped
+write-combined (msm's default): no cache maintenance; the kernel alias is
+invalidated once at free. Imported IOSurfaces are cleaned only when their
+seed (bumped on every writable unlock) changed since the last clean, and are
+marked gpuTouched; the panel copy invalidates a gpuTouched source before
+reading it. rivergpuflush=1 restores clean-everything-per-submit.
