@@ -1,0 +1,22 @@
+diff --git a/iokit/Kernel/arm/SweetSurface.cpp b/iokit/Kernel/arm/SweetSurface.cpp
+index 3c4f3b5..c2d5160 100644
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -233,7 +233,16 @@ river_rd_sample(uintptr_t va, uint64_t len)
+ void
+ river_surface_cpu_read(SweetSurface *s, uintptr_t va, uint64_t len)
+ {
+-	if (!s->gpuTouched || s->scanoutPhys != 0 || va == 0 || len == 0) {
++	static int inv = -1;
++	if (inv < 0) {
++		/* riverfbinv=0: no cache operation before the panel copy (r64 found no
++		 * CPU-dirty render targets; test whether this invalidate causes the
++		 * fast-mode flicker) */
++		inv = 1;
++		PE_parse_boot_argn("riverfbinv", &inv, sizeof(inv));
++		IOLog("RIVER FB: panel-copy invalidate of GPU surfaces %s\n", inv ? "on" : "OFF (riverfbinv=0)");
++	}
++	if (!inv || !s->gpuTouched || s->scanoutPhys != 0 || va == 0 || len == 0) {
+ 		return;
+ 	}
+ 	/*

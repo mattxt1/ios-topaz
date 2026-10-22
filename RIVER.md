@@ -1869,3 +1869,16 @@ keeps the screen correct. **Current correct image: `shim-river/out/river-r63-boo
 (k-r63 kernel, boot-arg rivergpuflush=1, sweetgl with uncached buffers and
 the in-batch barrier). Next: cut submits per frame, or find the CPU writer of
 render targets so they can skip cleaning.
+
+### r64 (0193 diagnostics) (r49-gallium-live-36.txt): render targets are not CPU-dirty
+Scrolling Settings and opening apps: 168 render-target samples (32 cache
+lines each, uncached vs cached view, just before the clean), **0 with
+CPU-dirty lines**. So no CPU writer of render targets was found; cleaning
+them in flush-all mode is not needed to write CPU data back. Remaining
+difference between fast modes (flicker) and flush-all (none): in the fast
+modes the panel copy cleans+invalidates every GPU-touched surface at each
+present (0186/0187); in flush-all mode surfaces are never marked GPU-touched,
+so it does not. (Two sig 9 kills: driverkitd, Preferences after a tap; looks
+like closing Settings, not a crash.)
+0194: boot-arg riverfbinv=0 disables that panel-copy invalidate. r65 tests
+the fast path (no rivergpuflush) with riverfbinv=0.
