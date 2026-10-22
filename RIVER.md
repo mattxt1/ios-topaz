@@ -1728,3 +1728,15 @@ figures (the render thread changed between reports). glDrawElements is a
 sweetgl hand-written slot (draw_prep: texture-unit shadowing, copy_refresh
 re-uploads of copied IOSurfaces, fbfetch emulation) before Mesa's draw, so
 r54q splits sweetgl prep / texture re-copies / Mesa draw.
+
+### r54q draw split (r49-gallium-live-24.txt)
+Continuous scroll, busiest window 4.9 frames/s, per frame: sweetgl
+draw_prep ~94 ms (texture re-copies 0), Mesa draw calls ~82 ms,
+CoreAnimation ~21 ms, GPU wait ~19 ms; backboardd 115% of a core. Other
+windows ~94-101 ms prep / ~52-87 ms Mesa draw. Suspect: draw_prep calls
+_mesa_TextureBarrierNV before every fbfetch draw (CA blend modes /
+vibrancy) and every draw that samples its own render target, and
+freedreno's fd_texture_barrier is a full fd_context_flush, i.e. a GPU
+submit (kernel cleans every listed buffer's cache, including ~10 MB
+screen surfaces). r54r counts and times barriers and River submits
+(count, kernel SUBMIT time, buffers per submit) per frame.

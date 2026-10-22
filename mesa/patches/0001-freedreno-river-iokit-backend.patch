@@ -549,10 +549,10 @@ index 0000000..001b1a0
 +}
 diff --git a/src/freedreno/drm/river/river_priv.h b/src/freedreno/drm/river/river_priv.h
 new file mode 100644
-index 0000000..29f7e62
+index 0000000..b2e85c4
 --- /dev/null
 +++ b/src/freedreno/drm/river/river_priv.h
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,99 @@
 +/*
 + * Copyright © 2026 river bring-up contributors
 + * SPDX-License-Identifier: MIT
@@ -595,6 +595,12 @@ index 0000000..29f7e62
 +   RIVER_PARAM_VA_SIZE = 5,
 +   RIVER_PARAM_FENCE = 6,
 +};
++
++/* profiling counters (river_ringbuffer_sp.c); mach_absolute_time ticks */
++struct river_submit_stats {
++   uint64_t count, ticks, bos;
++};
++extern struct river_submit_stats river_submit_stats;
 +
 +/* RIVER_SUBMIT limits (bsd/dev/river_gpu.c) */
 +#define RIVER_MAX_CMDS 64
@@ -648,10 +654,10 @@ index 0000000..29f7e62
 +#endif /* RIVER_PRIV_H_ */
 diff --git a/src/freedreno/drm/river/river_ringbuffer_sp.c b/src/freedreno/drm/river/river_ringbuffer_sp.c
 new file mode 100644
-index 0000000..1421b38
+index 0000000..e912056
 --- /dev/null
 +++ b/src/freedreno/drm/river/river_ringbuffer_sp.c
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,103 @@
 +/*
 + * Copyright © 2026 river bring-up contributors
 + * SPDX-License-Identifier: MIT
@@ -662,7 +668,13 @@ index 0000000..1421b38
 +#include <assert.h>
 +
 +#include "drm/freedreno_ringbuffer_sp.h"
++#include <mach/mach_time.h>
++
++#include "util/u_atomic.h"
 +#include "river_priv.h"
++
++/* submissions and the time spent in the kernel SUBMIT call (profiling) */
++struct river_submit_stats river_submit_stats;
 +
 +static int
 +flush_submit_list(struct list_head *submit_list)
@@ -721,9 +733,13 @@ index 0000000..1421b38
 +
 +   uint64_t fence = 0;
 +   uint32_t nout = 1;
++   uint64_t t0 = mach_absolute_time();
 +   kern_return_t kr = IOConnectCallMethod(river_conn(pipe->dev), RIVER_SUBMIT,
 +                                          NULL, 0, req, len, &fence, &nout,
 +                                          NULL, NULL);
++   p_atomic_add(&river_submit_stats.ticks, mach_absolute_time() - t0);
++   p_atomic_inc(&river_submit_stats.count);
++   p_atomic_add(&river_submit_stats.bos, fd_submit->nr_bos);
 +   free(req);
 +
 +   if (fd_submit->in_fence_fd != -1)
@@ -4487,10 +4503,10 @@ index 0000000..70f02af
 +};
 diff --git a/src/gallium/drivers/freedreno/sweetgl/eagl.c b/src/gallium/drivers/freedreno/sweetgl/eagl.c
 new file mode 100644
-index 0000000..064b1c3
+index 0000000..257bf42
 --- /dev/null
 +++ b/src/gallium/drivers/freedreno/sweetgl/eagl.c
-@@ -0,0 +1,2372 @@
+@@ -0,0 +1,2397 @@
 +/*
 + * EAGL on sweetgl: QuartzCore's GLES renderer (CA::OGL::GLESContext) on
 + * Mesa instead of Apple's Metal-backed GLEngine.
@@ -4532,6 +4548,11 @@ index 0000000..064b1c3
 +#include "drm-uapi/drm_fourcc.h"
 +
 +#include "sweet_drm.h"
++/* river backend submit counters (src/freedreno/drm/river/river_priv.h) */
++struct river_submit_stats {
++	uint64_t count, ticks, bos;
++};
++extern struct river_submit_stats river_submit_stats;
 +#include "sweetgl.h"
 +
 +/* not in the GL bridge (ES-only): Mesa's implementation */
@@ -5102,6 +5123,19 @@ index 0000000..064b1c3
 +/* river profile: draw split (see prof_report) */
 +static _Atomic uint64_t prof_prep_t, prof_draw_t, prof_refresh_t, prof_refresh_n;
 +
++extern void _mesa_TextureBarrierNV(void);
++static _Atomic uint64_t prof_barrier_t, prof_barrier_n;
++
++/* freedreno's texture barrier is a whole context flush (fd_texture_barrier) */
++static void
++sgl_barrier(void)
++{
++	uint64_t t0 = mach_absolute_time();
++	_mesa_TextureBarrierNV();
++	atomic_fetch_add(&prof_barrier_t, mach_absolute_time() - t0);
++	atomic_fetch_add(&prof_barrier_n, 1);
++}
++
 +static void
 +copy_refresh(int u, int *active)
 +{
@@ -5156,7 +5190,6 @@ index 0000000..064b1c3
 +	}
 +}
 +
-+extern void _mesa_TextureBarrierNV(void);
 +
 +/*
 + * CA reads the destination by sampling the texture it is rendering into
@@ -5205,7 +5238,7 @@ index 0000000..064b1c3
 +	for (int u = 0; u < 15; u++) {
 +		if ((prog_units[prog] & 1u << u) && unit_held[u] == (GLuint)att) {
 +			WTRACE("feedback: prog %d samples fb %d's texture %d on unit %d: barrier", prog, fb, att, u);
-+			_mesa_TextureBarrierNV();
++			sgl_barrier();
 +			return;
 +		}
 +	}
@@ -5492,7 +5525,7 @@ index 0000000..064b1c3
 +	if (fbfetch_scale[prog] > 0) {
 +		glUniform2f(fbfetch_scale[prog] - 1, w > 0 ? 1.0f / (GLfloat)w : 1.0f, h > 0 ? 1.0f / (GLfloat)h : 1.0f);
 +	}
-+	_mesa_TextureBarrierNV();
++	sgl_barrier();
 +	/* SWEETGL_TRACE: the first draws of each fbfetch program, wherever they happen */
 +	static uint8_t traced[PROG_MAX];
 +	if (trace_left > 0 && win_left == 0 && traced[prog] < 12) {
@@ -5880,6 +5913,11 @@ index 0000000..064b1c3
 +	}
 +	uint64_t surf = atomic_exchange(&prof_surf_t, 0) * tb.numer / tb.denom, surfn = atomic_exchange(&prof_surf_n, 0);
 +	uint64_t prep = atomic_exchange(&prof_prep_t, 0) * tb.numer / tb.denom;
++	uint64_t bar = atomic_exchange(&prof_barrier_t, 0) * tb.numer / tb.denom, barn = atomic_exchange(&prof_barrier_n, 0);
++	static struct river_submit_stats sub0;
++	struct river_submit_stats sub = river_submit_stats;
++	uint64_t subn = sub.count - sub0.count, subt = (sub.ticks - sub0.ticks) * tb.numer / tb.denom, subb = sub.bos - sub0.bos;
++	sub0 = sub;
 +	uint64_t mdraw = atomic_exchange(&prof_draw_t, 0) * tb.numer / tb.denom;
 +	uint64_t refresh = atomic_exchange(&prof_refresh_t, 0) * tb.numer / tb.denom, refreshn = atomic_exchange(&prof_refresh_n, 0);
 +	if (frames == 0 || dthread == 0) {
@@ -5894,6 +5932,9 @@ index 0000000..064b1c3
 +	    calls / frames, surfn / frames);
 +	(void)glwait;
 +	if (frames > 0) {
++		sweet_drm_log("sweetgl prof: per frame: %llu texture barriers (= context flushes) %llu us; %llu GPU submits, "
++		    "kernel SUBMIT %llu us, %llu buffers per submit", barn / frames, bar / frames / 1000, subn / frames,
++		    subt / frames / 1000, subn ? subb / subn : 0);
 +		sweet_drm_log("sweetgl prof: draws per frame (us): sweetgl draw_prep %llu (of which texture re-copies %llu, %llu copies), "
 +		    "Mesa draw call %llu; backboardd CPU %.0f%% of a core", prep / frames / 1000, refresh / frames / 1000,
 +		    refreshn / frames, mdraw / frames / 1000, span_ns ? 100.0 * (double)dproc / (double)span_ns : 0.0);
