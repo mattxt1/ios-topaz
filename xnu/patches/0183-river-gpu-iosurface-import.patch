@@ -1,0 +1,224 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index 6be5b82..485b969 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -540,7 +540,9 @@ struct rgpu_bo {
+ 	bool used;
+ 	void *owner;		/* RiverGPUUserClient, NULL for kernel buffers */
+ 	uint32_t fence;		/* last submission that used it, 0 = none */
++	void *import;		/* imported memory (retained SweetSurface), not ours to free */
+ };
++extern void river_gpu_import_release(void *import);	/* RiverGPU.cpp */
+ static struct rgpu_bo rgpu_bos[RGPU_MAX_BO];
+ static lck_grp_t *rgpu_grp;
+ static lck_mtx_t *rgpu_lock;
+@@ -570,12 +572,10 @@ rgpu_fence_read(void)
+ 	return *(volatile uint32_t *)rgpu_fence_cpu;
+ }
+ 
+-/* Allocate a GPU buffer; returns its index or -1. */
+-static int
+-rgpu_bo_alloc(vm_size_t size)
++/* Lock held. A free BO slot and a free GPU VA range of size: false if none. */
++static bool
++rgpu_bo_place(vm_size_t size, int *slotOut, uint64_t *gpuvaOut)
+ {
+-	size = (size + PAGE_SIZE - 1) & ~(vm_size_t)PAGE_MASK;
+-	lck_mtx_lock(rgpu_lock);
+ 	int slot = -1;
+ 	for (int i = 0; i < RGPU_MAX_BO; i++) if (!rgpu_bos[i].used) { slot = i; break; }
+ 	uint64_t at = RGPU_HEAP_BASE;
+@@ -589,13 +589,15 @@ rgpu_bo_alloc(vm_size_t size)
+ 			}
+ 		}
+ 	}
+-	vm_offset_t va = 0;
+-	if (slot < 0 || at + size > RGPU_HEAP_END ||
+-	    kmem_alloc(kernel_map, &va, size, KMA_DATA | KMA_ZERO, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+-		lck_mtx_unlock(rgpu_lock);
+-		return -1;
+-	}
+-	flush_dcache64((addr64_t)va, (unsigned)size, FALSE);
++	*slotOut = slot;
++	*gpuvaOut = at;
++	return slot >= 0 && at + size <= RGPU_HEAP_END;
++}
++
++/* Lock held. Map the wired kernel range [va, va + size) at GPU address at. */
++static bool
++rgpu_map_kernel_range(vm_offset_t va, vm_size_t size, uint64_t at)
++{
+ 	bool ok = true;
+ 	for (vm_size_t o = 0; ok && o < size; o += PAGE_SIZE) {
+ 		ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)(va + o));
+@@ -603,12 +605,31 @@ rgpu_bo_alloc(vm_size_t size)
+ 	}
+ 	if (!ok) {
+ 		gmmu_unmap(at, size);
+-		gmmu_sync();
++	}
++	gmmu_sync();
++	return ok;
++}
++
++/* Allocate a GPU buffer; returns its index or -1. */
++static int
++rgpu_bo_alloc(vm_size_t size)
++{
++	size = (size + PAGE_SIZE - 1) & ~(vm_size_t)PAGE_MASK;
++	lck_mtx_lock(rgpu_lock);
++	int slot;
++	uint64_t at;
++	vm_offset_t va = 0;
++	if (!rgpu_bo_place(size, &slot, &at) ||
++	    kmem_alloc(kernel_map, &va, size, KMA_DATA | KMA_ZERO, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++		lck_mtx_unlock(rgpu_lock);
++		return -1;
++	}
++	flush_dcache64((addr64_t)va, (unsigned)size, FALSE);
++	if (!rgpu_map_kernel_range(va, size, at)) {
+ 		kmem_free(kernel_map, va, size);
+ 		lck_mtx_unlock(rgpu_lock);
+ 		return -1;
+ 	}
+-	gmmu_sync();
+ 	rgpu_bos[slot] = (struct rgpu_bo){ .va = va, .size = size, .gpuva = at, .used = true };
+ 	lck_mtx_unlock(rgpu_lock);
+ 	return slot;
+@@ -623,7 +644,11 @@ rgpu_bo_free(int slot)
+ 	if (b->used) {
+ 		gmmu_unmap(b->gpuva, b->size);
+ 		gmmu_sync();
+-		kmem_free(kernel_map, b->va, b->size);
++		if (b->import != NULL) {
++			river_gpu_import_release(b->import);
++		} else {
++			kmem_free(kernel_map, b->va, b->size);
++		}
+ 		*b = (struct rgpu_bo){ 0 };
+ 	}
+ 	lck_mtx_unlock(rgpu_lock);
+@@ -804,6 +829,41 @@ river_gpu_bo_new(void *owner, uint64_t size, uint64_t *gpuva, uint64_t *rsize)
+ 	return (uint32_t)slot + 1;
+ }
+ 
++/*
++ * Wrap memory that stays wired elsewhere (an IOSurface's pages, mapped at
++ * kernel address kva, page aligned) as a buffer of owner. import is released
++ * with river_gpu_import_release() when the buffer is freed.
++ */
++uint32_t river_gpu_bo_import(void *owner, vm_offset_t kva, uint64_t size, void *import, uint64_t *gpuva);
++uint32_t
++river_gpu_bo_import(void *owner, vm_offset_t kva, uint64_t size, void *import, uint64_t *gpuva)
++{
++	if (!rgpu_up || size == 0 || (kva & PAGE_MASK) || (size & PAGE_MASK) || size > 256ULL * 1024 * 1024) return 0;
++	lck_mtx_lock(rgpu_lock);
++	int slot;
++	uint64_t at;
++	if (!rgpu_bo_place((vm_size_t)size, &slot, &at) || !rgpu_map_kernel_range(kva, (vm_size_t)size, at)) {
++		lck_mtx_unlock(rgpu_lock);
++		return 0;
++	}
++	rgpu_bos[slot] = (struct rgpu_bo){ .va = kva, .size = (vm_size_t)size, .gpuva = at, .used = true,
++		.owner = owner, .import = import };
++	lck_mtx_unlock(rgpu_lock);
++	*gpuva = at;
++	return (uint32_t)slot + 1;
++}
++
++int river_gpu_bo_info(void *owner, uint32_t handle, uint64_t *gpuva, uint64_t *size);
++int
++river_gpu_bo_info(void *owner, uint32_t handle, uint64_t *gpuva, uint64_t *size)
++{
++	struct rgpu_bo *b = rgpu_bo_get(owner, handle);
++	if (!b) return EINVAL;
++	*gpuva = b->gpuva;
++	*size = b->size;
++	return 0;
++}
++
+ int river_gpu_bo_kva(void *owner, uint32_t handle, vm_offset_t *kva, uint64_t *size);
+ int
+ river_gpu_bo_kva(void *owner, uint32_t handle, vm_offset_t *kva, uint64_t *size)
+diff --git a/iokit/Kernel/arm/RiverGPU.cpp b/iokit/Kernel/arm/RiverGPU.cpp
+index f024d6a..e925ba1 100644
+--- a/iokit/Kernel/arm/RiverGPU.cpp
++++ b/iokit/Kernel/arm/RiverGPU.cpp
+@@ -15,6 +15,10 @@
+  *   4 WAIT        scalar in  { fence, timeout_ms }
+  *   5 CPU_PREP    scalar in  { handle, timeout_ms }
+  *   6 LOG         struct in  { text }  (to the kernel log, i.e. the USB live log)
++ *   7 BO_IMPORT   scalar in  { IOSurface id }      out { handle, gpuva, size, offset }
++ *                 (the surface's pages as a buffer; offset = where its pixels
++ *                 start in the first page; the surface stays retained)
++ *   8 BO_INFO     scalar in  { handle }            out { gpuva, size }
+  *
+  * IOConnectMapMemory64(type = handle) maps a buffer into the caller, cached
+  * (SUBMIT cleans every named buffer; CPU_PREP waits and invalidates). This
+@@ -28,6 +32,7 @@
+ #include <IOKit/IOKitKeys.h>
+ #include <sys/errno.h>
+ #include <sys/proc.h>
++#include "SweetSurface.h"
+ 
+ #if defined(RIVER)
+ extern "C" {
+@@ -45,6 +50,15 @@ int river_gpu_wait(uint32_t fence, uint32_t ms);
+ int river_gpu_cpu_prep(void *owner, uint32_t handle, uint32_t ms);
+ void river_gpu_owner_release(void *owner);
+ void river_gpu_publish(void);
++uint32_t river_gpu_bo_import(void *owner, vm_offset_t kva, uint64_t size, void *import, uint64_t *gpuva);
++int river_gpu_bo_info(void *owner, uint32_t handle, uint64_t *gpuva, uint64_t *size);
++void river_gpu_import_release(void *import);
++}
++
++void
++river_gpu_import_release(void *import)
++{
++	((SweetSurface *)import)->release();
+ }
+ 
+ void
+@@ -190,6 +204,42 @@ RiverGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
+ 		IOLog("RIVER GPU [%s]: %s\n", name, line);
+ 		return kIOReturnSuccess;
+ 	}
++	case 7: {	/* BO_IMPORT */
++		if (nin != 1 || nout < 4) {
++			return kIOReturnBadArgument;
++		}
++		SweetSurface *s = sweet_surface_copy((uint32_t)in[0]);
++		uintptr_t kva = (s != NULL && s->memory != NULL) ? s->kernelAddress() : 0;
++		if (kva == 0) {
++			OSSafeReleaseNULL(s);
++			return kIOReturnNotFound;
++		}
++		vm_offset_t base = kva & ~(uintptr_t)PAGE_MASK;
++		uint64_t size = ((kva + s->memory->getLength() + PAGE_MASK) & ~(uint64_t)PAGE_MASK) - base;
++		uint64_t gpuva = 0;
++		uint32_t h = river_gpu_bo_import(this, base, size, s, &gpuva);
++		if (h == 0) {
++			s->release();
++			return kIOReturnNoMemory;
++		}
++		args->scalarOutput[0] = h;
++		args->scalarOutput[1] = gpuva;
++		args->scalarOutput[2] = size;
++		args->scalarOutput[3] = kva - base;
++		args->scalarOutputCount = 4;
++		return kIOReturnSuccess;
++	}
++	case 8: {	/* BO_INFO */
++		if (nin != 1 || nout < 2) {
++			return kIOReturnBadArgument;
++		}
++		uint64_t gpuva = 0, size = 0;
++		IOReturn r = river_gpu_ioreturn(river_gpu_bo_info(this, (uint32_t)in[0], &gpuva, &size));
++		args->scalarOutput[0] = gpuva;
++		args->scalarOutput[1] = size;
++		args->scalarOutputCount = 2;
++		return r;
++	}
+ 	default:
+ 		return kIOReturnUnsupported;
+ 	}
