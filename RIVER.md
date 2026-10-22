@@ -1797,3 +1797,12 @@ imported surfaces written by the CPU without a seed change. 0188: large
 imports are also cleaned when their last clean is older than 16 ms (about
 once per displayed frame), and the kernel logs every 10 s how many import
 cleans were small / by seed / by age / skipped.
+
+### r58 (0188) (r49-gallium-live-30.txt): seeds never move
+Still a little flicker; 6-8 frames/s; kernel SUBMIT 43-108 ms per frame. The
+import counters were `0 by seed` in every 10 s window (hundreds by age): apps
+write IOSurfaces without the kernel unlock trap, so seed tracking is useless
+here. 0189: sweetgl marks every surface it binds as a render target
+(attachImage) GPU-only via new RiverGPU selector 9 BO_SET_FLAGS; the kernel
+never cleans GPU-only imports (still gpuTouched for the panel copy) and
+cleans every other import before each GPU use.

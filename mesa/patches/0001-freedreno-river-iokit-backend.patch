@@ -188,10 +188,10 @@ index d2baf58..b6fde47 100644
    'virtio/virtio_bo.c',
 diff --git a/src/freedreno/drm/river/river_bo.c b/src/freedreno/drm/river/river_bo.c
 new file mode 100644
-index 0000000..db62115
+index 0000000..c867658
 --- /dev/null
 +++ b/src/freedreno/drm/river/river_bo.c
-@@ -0,0 +1,156 @@
+@@ -0,0 +1,170 @@
 +/*
 + * Copyright © 2026 river bring-up contributors
 + * SPDX-License-Identifier: MIT
@@ -347,6 +347,20 @@ index 0000000..db62115
 +   *size = out[2];
 +   *offset = (uint32_t)out[3];
 +   return 0;
++}
++
++/* An imported render target: the CPU never writes it, so the kernel skips
++ * cleaning it on submit (BO_SET_FLAGS bit 0, kernel 0189). */
++int river_bo_set_gpu_only(struct fd_bo *bo);
++int
++river_bo_set_gpu_only(struct fd_bo *bo)
++{
++   if (!to_river_bo(bo)->imported)
++      return -EINVAL;
++   uint64_t in[2] = { bo->handle, 1 };
++   kern_return_t kr = IOConnectCallScalarMethod(river_conn(bo->dev), RIVER_BO_SET_FLAGS,
++                                                in, 2, NULL, NULL);
++   return kr ? -EINVAL : 0;
 +}
 diff --git a/src/freedreno/drm/river/river_device.c b/src/freedreno/drm/river/river_device.c
 new file mode 100644
@@ -561,10 +575,10 @@ index 0000000..001b1a0
 +}
 diff --git a/src/freedreno/drm/river/river_priv.h b/src/freedreno/drm/river/river_priv.h
 new file mode 100644
-index 0000000..a906e1f
+index 0000000..69ca79c
 --- /dev/null
 +++ b/src/freedreno/drm/river/river_priv.h
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,101 @@
 +/*
 + * Copyright © 2026 river bring-up contributors
 + * SPDX-License-Identifier: MIT
@@ -595,6 +609,7 @@ index 0000000..a906e1f
 +   RIVER_LOG = 6,
 +   RIVER_BO_IMPORT = 7,
 +   RIVER_BO_INFO = 8,
++   RIVER_BO_SET_FLAGS = 9,
 +};
 +
 +/* RIVER_GET_PARAM */
@@ -4516,10 +4531,10 @@ index 0000000..70f02af
 +};
 diff --git a/src/gallium/drivers/freedreno/sweetgl/eagl.c b/src/gallium/drivers/freedreno/sweetgl/eagl.c
 new file mode 100644
-index 0000000..257bf42
+index 0000000..86fbaeb
 --- /dev/null
 +++ b/src/gallium/drivers/freedreno/sweetgl/eagl.c
-@@ -0,0 +1,2397 @@
+@@ -0,0 +1,2400 @@
 +/*
 + * EAGL on sweetgl: QuartzCore's GLES renderer (CA::OGL::GLESContext) on
 + * Mesa instead of Apple's Metal-backed GLEngine.
@@ -6371,6 +6386,9 @@ index 0000000..257bf42
 +		return false;
 +	}
 +	copy_forget(unit_held[active_unit()]);
++	if (strcmp(why, "attachImage") == 0) {
++		sweet_drm_mark_render_target(img.res);   /* river 0189 */
++	}
 +	_mesa_EGLImageTargetTexture2DOES(target, (GLeglImageOES)&img);
 +	GLenum e = glGetError();
 +	tex_size_bound(target, 0, (GLsizei)w, (GLsizei)h);
@@ -7758,10 +7776,10 @@ index 0000000..e7a2e3c
 +}
 diff --git a/src/gallium/drivers/freedreno/sweetgl/river_drm.c b/src/gallium/drivers/freedreno/sweetgl/river_drm.c
 new file mode 100644
-index 0000000..0376f26
+index 0000000..25ad271
 --- /dev/null
 +++ b/src/gallium/drivers/freedreno/sweetgl/river_drm.c
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,117 @@
 +/*
 + * sweetgl on river: what sweet_drm.c (msm DRM emulation over SweetGPU) did
 + * on the Pixel port. River's freedreno has a native RiverGPU backend
@@ -7777,12 +7795,14 @@ index 0000000..0376f26
 +#include <IOKit/IOKitLib.h>
 +
 +#include "util/u_inlines.h"
++#include "freedreno_resource.h"
 +#include "freedreno_screen.h"
 +#include "sweet_drm.h"
 +#include "sweetgl.h"
 +
 +int river_device_import_surface(struct fd_device *dev, uint32_t surface_id,
 +                                uint32_t *handle, uint64_t *size, uint32_t *offset);
++int river_bo_set_gpu_only(struct fd_bo *bo);
 +
 +static io_service_t
 +river_gpu_service(void)
@@ -7854,12 +7874,35 @@ index 0000000..0376f26
 +	}
 +	IOConnectCallMethod(log_conn, 6 /* LOG */, NULL, 0, line, (size_t)n, NULL, NULL, NULL, NULL);
 +}
++
++/*
++ * A surface CA renders into (attachImage): tell the kernel the CPU never
++ * writes it, so submits skip cleaning it (0189). Each buffer once.
++ */
++void
++sweet_drm_mark_render_target(struct pipe_resource *prsc)
++{
++	static struct fd_bo *marked[256];
++	static unsigned next;
++	struct fd_bo *bo = prsc ? fd_resource(prsc)->bo : NULL;
++	if (bo == NULL) {
++		return;
++	}
++	for (unsigned i = 0; i < 256; i++) {
++		if (marked[i] == bo) {
++			return;
++		}
++	}
++	if (river_bo_set_gpu_only(bo) == 0) {
++		marked[next++ % 256] = bo;
++	}
++}
 diff --git a/src/gallium/drivers/freedreno/sweetgl/sweet_drm.h b/src/gallium/drivers/freedreno/sweetgl/sweet_drm.h
 new file mode 100644
-index 0000000..7b46bec
+index 0000000..f11073a
 --- /dev/null
 +++ b/src/gallium/drivers/freedreno/sweetgl/sweet_drm.h
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,21 @@
 +/* sweetgl on river: RiverGPU glue (river_drm.c) and its log. */
 +#ifndef SWEET_DRM_H
 +#define SWEET_DRM_H
@@ -7872,6 +7915,10 @@ index 0000000..7b46bec
 +/* A buffer handle (of the screen's RiverGPU connection) for an IOSurface's
 + * memory: 0 or -errno. map is unused on river (the kernel finds the pages). */
 +int sweet_drm_import_iosurface(uint32_t surface_id, uint64_t map, uint32_t *handle, uint64_t *size);
++
++/* The resource is a render target the CPU never writes (kernel skips cleaning it). */
++struct pipe_resource;
++void sweet_drm_mark_render_target(struct pipe_resource *prsc);
 +
 +/* printf-style line to the kernel log (RiverGPU LOG, i.e. the USB live log). */
 +void sweet_drm_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));

@@ -1,0 +1,118 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index ad728bb..b3c9bf8 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -547,14 +547,12 @@ struct rgpu_bo {
+ 	bool cleaned;		/* imports: seed below is the surface's at the last clean */
+ 	uint32_t seed;
+ 	uint64_t cleaned_at;	/* imports: mach_absolute_time of the last clean */
++	bool gpu_only;		/* imports: the CPU never writes it (a render target) */
+ };
+ /* RiverGPU.cpp: a surface's write seed, and "the GPU may have written it" */
+ extern uint32_t river_gpu_import_seed(void *import);
+ extern void river_gpu_import_touched(void *import);
+ #define RGPU_IMPORT_ALWAYS_CLEAN	(1024 * 1024)
+-/* large imports: also cleaned when the last clean is older than this (ns) */
+-#define RGPU_IMPORT_MAX_AGE_NS		16000000ULL
+-static uint64_t rgpu_import_max_age;	/* in mach_absolute_time units */
+ static uint32_t rgpu_clean_seed, rgpu_clean_age, rgpu_clean_small, rgpu_clean_skip;
+ static uint64_t rgpu_clean_report;
+ /* rivergpuflush=1: clean every buffer of every submit (before 0186) */
+@@ -903,6 +901,17 @@ river_gpu_bo_import_of(void *owner, uint32_t handle)
+ 	return b ? b->import : NULL;
+ }
+ 
++/* flags bit 0: an imported buffer the CPU never writes (render target): no cleaning */
++int river_gpu_bo_set_flags(void *owner, uint32_t handle, uint32_t flags);
++int
++river_gpu_bo_set_flags(void *owner, uint32_t handle, uint32_t flags)
++{
++	struct rgpu_bo *b = rgpu_bo_get(owner, handle);
++	if (!b || b->import == NULL) return EINVAL;
++	b->gpu_only = (flags & 1) != 0;
++	return 0;
++}
++
+ int river_gpu_bo_info(void *owner, uint32_t handle, uint64_t *gpuva, uint64_t *size);
+ int
+ river_gpu_bo_info(void *owner, uint32_t handle, uint64_t *gpuva, uint64_t *size)
+@@ -978,35 +987,27 @@ rgpu_bo_prepare_gpu(struct rgpu_bo *b)
+ 		/* small surfaces (textures, glyph atlases) always: cheap, and safe
+ 		 * against writers that do not bump the seed; large ones by seed */
+ 		/*
+-		 * Large ones by seed, and at least once per ~frame: r57 still
+-		 * flickered a little with seed-only cleaning, so some CPU writers
+-		 * do not move the seed (0188).
++		 * r58: no import's seed ever moved (apps write IOSurfaces without the
++		 * kernel unlock), so seeds tell nothing. Render targets, marked
++		 * GPU-only by the client (BO_SET_FLAGS), are never cleaned; every
++		 * other import is cleaned before each GPU use (0189).
+ 		 */
+-		uint32_t seed = river_gpu_import_seed(b->import);
+ 		uint64_t now = mach_absolute_time();
+-		if (rgpu_import_max_age == 0) {
+-			nanoseconds_to_absolutetime(RGPU_IMPORT_MAX_AGE_NS, &rgpu_import_max_age);
+-		}
+-		bool small = b->size <= RGPU_IMPORT_ALWAYS_CLEAN;
+-		bool moved = !b->cleaned || seed != b->seed;
+-		bool old = now - b->cleaned_at > rgpu_import_max_age;
+-		if (small || moved || old) {
++		if (b->gpu_only) {
++			rgpu_clean_skip++;
++		} else {
+ 			rgpu_bo_flush(b);
+-			b->seed = seed;
+ 			b->cleaned = true;
+ 			b->cleaned_at = now;
+-			if (small) rgpu_clean_small++;
+-			else if (moved) rgpu_clean_seed++;
++			if (b->size <= RGPU_IMPORT_ALWAYS_CLEAN) rgpu_clean_small++;
+ 			else rgpu_clean_age++;
+-		} else {
+-			rgpu_clean_skip++;
+ 		}
+ 		uint64_t ns;
+ 		absolutetime_to_nanoseconds(now - rgpu_clean_report, &ns);
+ 		if (ns >= 10000000000ULL) {
+ 			if (rgpu_clean_report != 0) {
+-				printf("RIVER GPU: imports in 10 s: %u small cleans, %u by seed, %u by age, %u skipped\n",
+-				    rgpu_clean_small, rgpu_clean_seed, rgpu_clean_age, rgpu_clean_skip);
++				printf("RIVER GPU: imports in 10 s: %u small cleans, %u large cleans, %u render targets skipped\n",
++				    rgpu_clean_small, rgpu_clean_age, rgpu_clean_skip);
+ 			}
+ 			rgpu_clean_report = now;
+ 			rgpu_clean_small = rgpu_clean_seed = rgpu_clean_age = rgpu_clean_skip = 0;
+diff --git a/iokit/Kernel/arm/RiverGPU.cpp b/iokit/Kernel/arm/RiverGPU.cpp
+index d3c3086..596e810 100644
+--- a/iokit/Kernel/arm/RiverGPU.cpp
++++ b/iokit/Kernel/arm/RiverGPU.cpp
+@@ -21,6 +21,8 @@
+  *                 (the surface's pages, wired, as a buffer; offset = where its
+  *                 pixels start in the first page; the surface stays retained)
+  *   8 BO_INFO     scalar in  { handle }            out { gpuva, size }
++ *   9 BO_SET_FLAGS scalar in { handle, flags }     (imports; bit 0: render
++ *                 target the CPU never writes: no cache cleaning on submit)
+  *
+  * IOConnectMapMemory64(type = handle) maps a buffer into the caller, cached
+  * (SUBMIT cleans every named buffer; CPU_PREP waits and invalidates). This
+@@ -58,6 +60,7 @@ uint32_t river_gpu_bo_import_pages(void *owner, const uint64_t *pa, uint32_t npa
+     uint64_t *gpuva, uint64_t *size);
+ void *river_gpu_bo_import_of(void *owner, uint32_t handle);
+ int river_gpu_bo_info(void *owner, uint32_t handle, uint64_t *gpuva, uint64_t *size);
++int river_gpu_bo_set_flags(void *owner, uint32_t handle, uint32_t flags);
+ void river_gpu_import_release(void *import);
+ }
+ 
+@@ -282,6 +285,12 @@ RiverGPUUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
+ 		args->scalarOutputCount = 2;
+ 		return r;
+ 	}
++	case 9:		/* BO_SET_FLAGS */
++		if (nin != 2) {
++			return kIOReturnBadArgument;
++		}
++		args->scalarOutputCount = 0;
++		return river_gpu_ioreturn(river_gpu_bo_set_flags(this, (uint32_t)in[0], (uint32_t)in[1]));
+ 	default:
+ 		return kIOReturnUnsupported;
+ 	}
