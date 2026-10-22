@@ -44,3 +44,32 @@ imports, and CoreAnimation shader compatibility. Its `mesa.patch` only
 changes BO mmap and IOSurface pitch handling; it does not address our test's
 GLSL type cache initialization. River's KMD is already implemented in
 freedreno and can be used directly instead of its MSM DRM emulation.
+
+Initial GLES smoke test: `src/gallium/drivers/freedreno/river_gles_test.c`
+creates a Mesa ES 3 context through `st_api_create_context`, draws an
+offscreen triangle, and reads back pixels. The iOS Meson path now defines
+`BUILDING_MESA` like macOS, so Mesa's GL shader handles have the expected
+integer type. Build with Homebrew Bison ahead of `/usr/bin`:
+```
+PATH="$(brew --prefix bison)/bin:$PWD/../mesa-venv/bin:$PATH" \
+  ../mesa-venv/bin/ninja -j4 -C build-ios \
+  src/gallium/drivers/freedreno/river_gles_test
+```
+The 19 MB arm64 executable builds and signs. First RAM boot created an FD506
+screen, then PID 1 crashed during state tracker context creation (private
+`r49-gallium-live-12.txt`). Mesa's current `st_api_create_context` calls
+`fscreen->get_param`; the test now provides that callback. The second
+RAM boot passed: Mesa reported OpenGL ES 3.1 / FD506, linked both shaders,
+rendered to an FBO, and read back the expected triangle and clear colors
+with GL error 0 (private `r49-gallium-live-13.txt`). The signed diagnostic
+RAM image with context setup markers is at
+`shim-river/out/river-r49-gles-diag1-boot.img` (SHA256
+`9b19b4585068f92986a45112c6419c66f75f48320a54070067a79923d787ac0a`).
+The clean source builds; temporary markers are only in that image.
+
+Next: wrap the working GLES state tracker in a dylib, provide CoreAnimation's
+EAGL and GLI calls, and import IOSurfaces as GPU resources. The Pixel port's
+`tools/sweetgl/eagl.c` describes the EAGL entry points and GL dispatch
+layout; its boot args inject the dylib into backboardd with
+`DYLD_INSERT_LIBRARIES`. River currently has no equivalent environment boot
+arg, so a controlled injection mechanism is needed before UI integration.

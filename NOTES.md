@@ -15,6 +15,19 @@ Next work: GLES state tracker and CoreAnimation EAGL/GLI bridge. The public
 Pixel 1 port's `tools/sweetgl` is a useful reference for that bridge and
 IOSurface handling. Temporary Mesa trace markers have been removed.
 
+GLES next step: Mesa's GLES state tracker and a separate
+`river_gles_test` now build for iOS arm64. First RAM boot made an FD506
+screen but PID 1 crashed during `st_api_create_context` (private USB log
+`r49-gallium-live-12.txt`). The test now supplies the frontend `get_param`
+callback required by Mesa 26.2.5. The second RAM boot passed: OpenGL ES 3.1
+on FD506, shader program linked, offscreen triangle and clear colors read
+back correctly with GL error 0 (`r49-gallium-live-13.txt`). The signed
+diagnostic RAM image is at
+`shim-river/out/river-r49-gles-diag1-boot.img` (SHA256
+9b19b4585068f92986a45112c6419c66f75f48320a54070067a79923d787ac0a).
+Next: EAGL/GLI bridge and IOSurface imports for CoreAnimation in backboardd.
+See mesa/README.md.
+
 Historical diagnosis follows.
 
 Mesa's signed `river_gallium_test` RAM-booted on r49. RiverGPU and freedreno

@@ -1536,3 +1536,25 @@ https://github.com/joranv1/ios-sailfish/tree/main/tools/sweetgl . Its
 reuse the frontend concepts with its existing freedreno river KMD. The
 Pixel `mesa.patch` only adapts mmap and IOSurface pitch; it does not fix
 the direct Gallium test's GLSL cache issue.
+
+### r49 GLES state tracker: offscreen shader draw succeeds
+Built Mesa's GLES state tracker and a 19 MB iOS arm64
+`river_gles_test`. Mesa's iOS Meson path needed `BUILDING_MESA`, as the
+macOS path already sets, to compile Mesa's shader object handle types.
+The first RAM-only GLES image booted and created screen `FD506`; private
+`r49-gallium-live-12.txt` then shows PID 1 SIGSEGV during
+`st_api_create_context`, before GL calls. Mesa 26.2.5 calls the frontend
+`get_param` callback near the end of that function; our minimal frontend
+had left it null. The test now provides a zero-returning callback, and a
+signed second RAM image contains markers around context initialization:
+`shim-river/out/river-r49-gles-diag1-boot.img` (SHA256
+`9b19b4585068f92986a45112c6419c66f75f48320a54070067a79923d787ac0a`).
+The second RAM boot passed. Private `r49-gallium-live-13.txt` records all
+state tracker markers through `get_param completed`, then Mesa reports
+`OpenGL ES 3.1` with renderer `FD506`. The test linked its shaders, rendered
+an orange triangle on blue into a 64×64 FBO, and read back the expected
+pixels: near `ff4000ff`, far `0000ffff`, framebuffer complete, GL error 0,
+`PASS`. The source was cleaned of temporary markers after making that image.
+Next: a GLES dylib for backboardd, the CoreAnimation EAGL/GLI bridge, and
+IOSurface imports. The Pixel port injects its dylib with a boot-arg selected
+`DYLD_INSERT_LIBRARIES`; River needs a comparable controlled injection path.

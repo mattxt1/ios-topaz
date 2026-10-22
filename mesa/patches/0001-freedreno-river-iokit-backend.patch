@@ -74,9 +74,18 @@ index 0000000..926bd39
 +
 +#endif /* RIVER_XF86DRM_H */
 diff --git a/meson.build b/meson.build
-index 5f19ef9..77ee3c2 100644
+index 5f19ef9..b830e76 100644
 --- a/meson.build
 +++ b/meson.build
+@@ -415,7 +415,7 @@ endif
+ with_microsoft_clc = get_option('microsoft-clc').enabled()
+ with_spirv_to_dxil = get_option('spirv-to-dxil')
+ 
+-if host_machine.system() == 'darwin'
++if host_machine.system() == 'darwin' or host_machine.system() == 'ios'
+   with_dri_platform = 'apple'
+   pre_args += '-DBUILDING_MESA'
+ elif ['windows', 'cygwin'].contains(host_machine.system())
 @@ -1940,6 +1940,16 @@ if dep_libdrm.found()
    endif
  endif
@@ -696,10 +705,10 @@ index e8f01b8..c69c1e1 100644
  endif
  
 diff --git a/src/gallium/drivers/freedreno/meson.build b/src/gallium/drivers/freedreno/meson.build
-index b04379b..1c8f6ec 100644
+index b04379b..bbdba6e 100644
 --- a/src/gallium/drivers/freedreno/meson.build
 +++ b/src/gallium/drivers/freedreno/meson.build
-@@ -295,6 +295,35 @@ driver_freedreno = declare_dependency(
+@@ -295,6 +295,68 @@ driver_freedreno = declare_dependency(
    ],
  )
  
@@ -728,6 +737,39 @@ index b04379b..1c8f6ec 100644
 +      libgallium,
 +      libfreedreno_perfcntrs,
 +    ],
++    install : false,
++  )
++
++  river_gles_test = executable(
++    'river_gles_test',
++    [
++      'river_gles_test.c',
++      freedreno_tracepoints[1],
++      freedreno_xml_header_files,
++    ],
++    include_directories : [freedreno_includes, inc_mesa],
++    dependencies : [
++      idep_nir,
++      idep_mesautil,
++      idep_u_tracepoints,
++      idep_xmlconfig,
++      dependency('appleframeworks', modules : ['IOKit', 'CoreFoundation']),
++    ],
++    link_with : [
++      libmesa,
++      libglapi_bridge,
++      libglapi,
++      libglsl,
++      libcompiler,
++      libfreedreno,
++      libfreedreno_drm,
++      libfreedreno_ir2,
++      libfreedreno_ir3,
++      libfreedreno_layout,
++      libgallium,
++      libfreedreno_perfcntrs,
++    ],
++    link_language : 'cpp',
 +    install : false,
 +  )
 +endif
@@ -904,6 +946,201 @@ index 0000000..2405b74
 +      glsl_type_singleton_decref();
 +   }
 +
++   for (;;)
++      sleep(3600);
++}
+diff --git a/src/gallium/drivers/freedreno/river_gles_test.c b/src/gallium/drivers/freedreno/river_gles_test.c
+new file mode 100644
+index 0000000..3f50e84
+--- /dev/null
++++ b/src/gallium/drivers/freedreno/river_gles_test.c
+@@ -0,0 +1,189 @@
++/*
++ * Copyright © 2026 river bring-up contributors
++ * SPDX-License-Identifier: MIT
++ *
++ * Offscreen GLES check for Mesa's state tracker on RiverGPU. Runs as PID 1
++ * from a RAM-only boot image and reports through the kernel log selector.
++ */
++#include <fcntl.h>
++#include <stdarg.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <unistd.h>
++#include <IOKit/IOKitLib.h>
++#include <GLES3/gl3.h>
++
++#include "frontend/api.h"
++#include "state_tracker/st_context.h"
++#include "util/driconf.h"
++#include "freedreno_screen.h"
++
++static const driOptionDescription fd_driconf[] = {
++#include "driinfo_freedreno.h"
++};
++
++static io_connect_t log_conn;
++
++static int
++frontend_get_param(struct pipe_frontend_screen *frontend,
++                   enum st_manager_param param)
++{
++   (void)frontend;
++   (void)param;
++   return 0;
++}
++
++static void
++report(const char *fmt, ...)
++{
++   char line[512];
++   va_list args;
++   va_start(args, fmt);
++   int n = vsnprintf(line, sizeof(line), fmt, args);
++   va_end(args);
++   printf("river-gles-test: %s\n", line);
++   if (log_conn && n > 0)
++      IOConnectCallMethod(log_conn, 6, NULL, 0, line,
++                          (size_t)(n < (int)sizeof(line) ? n : (int)sizeof(line) - 1),
++                          NULL, NULL, NULL, NULL);
++}
++
++static GLuint
++compile_shader(GLenum kind, const char *source)
++{
++   GLuint shader = glCreateShader(kind);
++   glShaderSource(shader, 1, &source, NULL);
++   glCompileShader(shader);
++   GLint compiled = GL_FALSE;
++   glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
++   if (!compiled) {
++      char text[512] = {0};
++      glGetShaderInfoLog(shader, sizeof(text), NULL, text);
++      report("shader %x failed: %s", kind, text);
++      glDeleteShader(shader);
++      return 0;
++   }
++   return shader;
++}
++
++static void
++run(void)
++{
++   driOptionCache info = {0}, cache = {0};
++   driParseOptionInfo(&info, fd_driconf, ARRAY_SIZE(fd_driconf));
++   struct pipe_screen_config config = { .options = &cache, .options_info = &info };
++   struct pipe_screen *screen = fd_screen_create(open("/dev/null", O_RDWR), &config, NULL);
++   if (!screen) {
++      report("freedreno screen creation failed");
++      return;
++   }
++   report("screen %s by %s", screen->get_name(screen), screen->get_vendor(screen));
++
++   struct pipe_frontend_screen frontend = {
++      .screen = screen,
++      .get_param = frontend_get_param,
++   };
++   struct st_context_attribs attribs = {
++      .profile = API_OPENGLES2,
++      .major = 3,
++      .minor = 0,
++   };
++   enum st_context_error context_error = ST_CONTEXT_SUCCESS;
++   struct st_context *context = st_api_create_context(&frontend, &attribs,
++                                                      &context_error, NULL);
++   if (!context || !st_api_make_current(context, NULL, NULL)) {
++      report("GLES context creation failed: %d", context_error);
++      return;
++   }
++   report("GL_VERSION %s; GL_RENDERER %s", glGetString(GL_VERSION),
++          glGetString(GL_RENDERER));
++
++   GLuint texture = 0, framebuffer = 0;
++   glGenTextures(1, &texture);
++   glBindTexture(GL_TEXTURE_2D, texture);
++   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 64, 64, 0, GL_RGBA,
++                GL_UNSIGNED_BYTE, NULL);
++   glGenFramebuffers(1, &framebuffer);
++   glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
++   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
++                          texture, 0);
++   GLenum fb_status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
++
++   static const char vs_source[] =
++      "#version 300 es\n"
++      "layout(location=0) in vec2 xy;\n"
++      "void main() { gl_Position = vec4(xy, 0.0, 1.0); }\n";
++   static const char fs_source[] =
++      "#version 300 es\n"
++      "precision mediump float;\n"
++      "out vec4 color;\n"
++      "void main() { color = vec4(1.0, 0.25, 0.0, 1.0); }\n";
++   GLuint vs = compile_shader(GL_VERTEX_SHADER, vs_source);
++   GLuint fs = compile_shader(GL_FRAGMENT_SHADER, fs_source);
++   GLuint program = glCreateProgram();
++   if (vs && fs) {
++      glAttachShader(program, vs);
++      glAttachShader(program, fs);
++      glLinkProgram(program);
++   }
++   GLint linked = GL_FALSE;
++   glGetProgramiv(program, GL_LINK_STATUS, &linked);
++   if (linked)
++      glUseProgram(program);
++
++   const GLfloat points[] = { -1.0f, -1.0f, 1.0f, -1.0f, -1.0f, 1.0f };
++   GLuint vertices = 0;
++   glGenBuffers(1, &vertices);
++   glBindBuffer(GL_ARRAY_BUFFER, vertices);
++   glBufferData(GL_ARRAY_BUFFER, sizeof(points), points, GL_STATIC_DRAW);
++   glEnableVertexAttribArray(0);
++   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, 0);
++   glViewport(0, 0, 64, 64);
++   glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
++   glClear(GL_COLOR_BUFFER_BIT);
++   if (linked)
++      glDrawArrays(GL_TRIANGLES, 0, 3);
++
++   unsigned char pixels[64 * 64 * 4];
++   glReadPixels(0, 0, 64, 64, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
++   GLenum gl_error = glGetError();
++   const unsigned char *near = &pixels[(8 * 64 + 8) * 4];
++   const unsigned char *far = &pixels[(56 * 64 + 56) * 4];
++   bool passed = fb_status == GL_FRAMEBUFFER_COMPLETE && linked &&
++      gl_error == GL_NO_ERROR && near[0] == 255 &&
++      (near[1] == 63 || near[1] == 64) && near[2] == 0 && near[3] == 255 &&
++      far[0] == 0 && far[1] == 0 && far[2] == 255 && far[3] == 255;
++   report("GLES triangle: framebuffer %#x link %d error %#x, near %02x%02x%02x%02x far %02x%02x%02x%02x: %s",
++          fb_status, linked, gl_error, near[0], near[1], near[2], near[3],
++          far[0], far[1], far[2], far[3], passed ? "PASS" : "FAIL");
++
++   st_api_make_current(NULL, NULL, NULL);
++   st_destroy_context(context);
++   screen->destroy(screen);
++}
++
++int
++main(void)
++{
++   int console = open("/dev/console", O_RDWR);
++   if (console >= 0) {
++      dup2(console, 1);
++      dup2(console, 2);
++   }
++   setvbuf(stdout, NULL, _IONBF, 0);
++
++   io_service_t service = 0;
++   for (int i = 0; i < 60 && !service; i++) {
++      service = IOServiceGetMatchingService(kIOMainPortDefault,
++                                            IOServiceMatching("RiverGPU"));
++      if (!service)
++         sleep(1);
++   }
++   if (service && IOServiceOpen(service, mach_task_self(), 0, &log_conn))
++      log_conn = 0;
++   report("PID %d, RiverGPU %s", getpid(), service ? "found" : "NOT found");
++   if (service)
++      run();
 +   for (;;)
 +      sleep(3600);
 +}
