@@ -1,0 +1,62 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index 56175ff..2fa188f 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -549,6 +549,7 @@ struct rgpu_bo {
+ 	uint64_t cleaned_at;	/* imports: mach_absolute_time of the last clean */
+ 	bool gpu_only;		/* imports: the CPU never writes it (a render target) */
+ 	uint64_t sampled_at;	/* 0193: last CPU-dirty sample */
++	bool rt_uncached;	/* 0196: import pages switched to write-combined */
+ };
+ /* RiverGPU.cpp: a surface's write seed, and "the GPU may have written it" */
+ extern uint32_t river_gpu_import_seed(void *import);
+@@ -568,6 +569,18 @@ static void rgpu_bo_flush(struct rgpu_bo *b);
+ extern void pmap_set_cache_attributes(ppnum_t pn, unsigned int cacheattr);
+ extern unsigned int pmap_cache_attributes(ppnum_t pn);
+ 
++/* Set the cache attribute of an import's managed pages (all mappings follow). */
++static void
++rgpu_set_wimg_pages(const uint64_t *pa, uint32_t npages, unsigned int wimg)
++{
++	for (uint32_t p = 0; p < npages; p++) {
++		ppnum_t pn = (ppnum_t)atop_64(pa[p]);
++		if (pmap_valid_page(pn)) {
++			pmap_set_cache_attributes(pn, wimg);
++		}
++	}
++}
++
+ /* Set the cache attribute of every page of [va, va + size) (all mappings follow). */
+ static void
+ rgpu_set_wimg(vm_offset_t va, vm_size_t size, unsigned int wimg)
+@@ -682,6 +695,9 @@ rgpu_bo_free(int slot)
+ 		gmmu_unmap(b->gpuva, b->size);
+ 		gmmu_sync();
+ 		if (b->import != NULL) {
++			if (b->rt_uncached) {
++				rgpu_set_wimg_pages(b->pa, b->npages, VM_WIMG_DEFAULT);
++			}
+ 			river_gpu_import_release(b->import);
+ 			kfree_data(b->pa, b->npages * sizeof(uint64_t));
+ 		} else {
+@@ -953,6 +969,20 @@ river_gpu_bo_set_flags(void *owner, uint32_t handle, uint32_t flags)
+ 	bool gpu_only = (flags & 1) != 0;
+ 	if (gpu_only && !b->gpu_only) {
+ 		rgpu_bo_flush(b);	/* CPU writes before this point: once */
++		/*
++		 * 0196: r66 found no CPU writes to render targets, yet skipping their
++		 * cleans flickered: a CPU reader saw stale cached pixels. Uncached
++		 * pages leave nothing stale for any reader (CPU reads get slower).
++		 */
++		rgpu_set_wimg_pages(b->pa, b->npages, VM_WIMG_WCOMB);
++		b->rt_uncached = true;
++		static int logged;
++		if (logged++ < 3) {
++			char d[200];
++			river_gpu_import_describe(b->import, d, sizeof(d));
++			printf("RIVER GPU: render target uncached (page wimg %#x): %s\n",
++			    pmap_cache_attributes((ppnum_t)atop_64(b->pa[0])), d);
++		}
+ 	}
+ 	b->gpu_only = gpu_only;
+ 	return 0;
