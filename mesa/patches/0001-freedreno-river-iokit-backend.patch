@@ -4468,10 +4468,10 @@ index 0000000..ee4bbd5
 +};
 diff --git a/src/gallium/drivers/freedreno/sweetgl/eagl.c b/src/gallium/drivers/freedreno/sweetgl/eagl.c
 new file mode 100644
-index 0000000..adffca6
+index 0000000..7aa9538
 --- /dev/null
 +++ b/src/gallium/drivers/freedreno/sweetgl/eagl.c
-@@ -0,0 +1,2235 @@
+@@ -0,0 +1,2248 @@
 +/*
 + * EAGL on sweetgl: QuartzCore's GLES renderer (CA::OGL::GLESContext) on
 + * Mesa instead of Apple's Metal-backed GLEngine.
@@ -6161,6 +6161,19 @@ index 0000000..adffca6
 +		img.res = screen->resource_from_handle(screen, &templ, &wh, PIPE_HANDLE_USAGE_FRAMEBUFFER_WRITE);
 +		surf_res_put(&key, img.res);
 +	}
++	/* river: a texture whose pages could not be imported is copied instead */
++	if (img.res == NULL && !multi && strcmp(why, "texImageIOSurface") == 0) {
++		if (format == 0) {
++			upload_format(fourcc, IOSurfaceGetBytesPerElement(s), &format, &type);
++		}
++		if (format != 0) {
++			if (logged++ < 50) {
++				sweet_drm_log("sweetgl: %s: surface %u %c%c%c%c %zux%zu pitch %zu: %s failed, copying",
++				    why, IOSurfaceGetID(s), FCC(fourcc), w, h, pitch, step);
++			}
++			return copy_surface(s, target, format, type, w, h, pitch, why);
++		}
++	}
 +	if (img.res == NULL) {
 +		if (logged++ < 50) {
 +			sweet_drm_log("sweetgl: %s: surface %u %c%c%c%c %zux%zu pitch %zu plane %u: %s failed",
@@ -7531,10 +7544,10 @@ index 0000000..e7a2e3c
 +}
 diff --git a/src/gallium/drivers/freedreno/sweetgl/river_drm.c b/src/gallium/drivers/freedreno/sweetgl/river_drm.c
 new file mode 100644
-index 0000000..2a11489
+index 0000000..0376f26
 --- /dev/null
 +++ b/src/gallium/drivers/freedreno/sweetgl/river_drm.c
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,92 @@
 +/*
 + * sweetgl on river: what sweet_drm.c (msm DRM emulation over SweetGPU) did
 + * on the Pixel port. River's freedreno has a native RiverGPU backend
@@ -7583,7 +7596,13 @@ index 0000000..2a11489
 +		return -ENODEV;
 +	}
 +	uint32_t offset = 0;
-+	return river_device_import_surface(fd_screen(screen)->dev, surface_id, handle, size, &offset);
++	int ret = river_device_import_surface(fd_screen(screen)->dev, surface_id, handle, size, &offset);
++	static int logged;
++	if (ret != 0 && logged++ < 20) {
++		sweet_drm_log("sweetgl: BO_IMPORT of surface %u: %s", surface_id,
++		    ret == -ENOENT ? "no surface or no kernel mapping" : "no GPU mapping");
++	}
++	return ret;
 +}
 +
 +static pthread_once_t log_once = PTHREAD_ONCE_INIT;
