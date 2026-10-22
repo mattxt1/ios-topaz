@@ -1,0 +1,74 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index db039ef..7ddc511 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -560,6 +560,20 @@ static uint64_t rgpu_clean_report;
+ static int rgpu_flush_all;
+ extern boolean_t pmap_valid_page(ppnum_t pn);
+ static void rgpu_bo_flush(struct rgpu_bo *b);
++extern void pmap_set_cache_attributes(ppnum_t pn, unsigned int cacheattr);
++extern unsigned int pmap_cache_attributes(ppnum_t pn);
++
++/* Set the cache attribute of every page of [va, va + size) (all mappings follow). */
++static void
++rgpu_set_wimg(vm_offset_t va, vm_size_t size, unsigned int wimg)
++{
++	for (vm_size_t o = 0; o < size; o += PAGE_SIZE) {
++		ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)(va + o));
++		if (pn) {
++			pmap_set_cache_attributes(pn, wimg);
++		}
++	}
++}
+ extern void river_gpu_import_release(void *import);	/* RiverGPU.cpp */
+ static struct rgpu_bo rgpu_bos[RGPU_MAX_BO];
+ static lck_grp_t *rgpu_grp;
+@@ -667,8 +681,8 @@ rgpu_bo_free(int slot)
+ 			kfree_data(b->pa, b->npages * sizeof(uint64_t));
+ 		} else {
+ 			if (b->wc) {
+-				/* the client wrote memory past this cached alias: drop its lines */
+-				flush_dcache64((addr64_t)b->va, (unsigned)b->size, FALSE);
++				/* uncached since allocation (0192): back to the default before reuse */
++				rgpu_set_wimg(b->va, b->size, VM_WIMG_DEFAULT);
+ 			}
+ 			kmem_free(kernel_map, b->va, b->size);
+ 		}
+@@ -850,6 +864,20 @@ river_gpu_bo_new(void *owner, uint64_t size, uint32_t flags, uint64_t *gpuva, ui
+ 	if (slot < 0) return 0;
+ 	rgpu_bos[slot].owner = owner;
+ 	rgpu_bos[slot].wc = (flags & 1) != 0;
++	if (rgpu_bos[slot].wc) {
++		/*
++		 * 0192: really uncached. r55/r56 asked only for a write-combined user
++		 * mapping, the pages stayed cacheable and the GPU read stale data.
++		 * The pages were zeroed and cleaned by rgpu_bo_alloc.
++		 */
++		rgpu_set_wimg(rgpu_bos[slot].va, rgpu_bos[slot].size, VM_WIMG_WCOMB);
++		static int logged;
++		if (logged++ < 3) {
++			ppnum_t pn = pmap_find_phys(kernel_pmap, (addr64_t)rgpu_bos[slot].va);
++			printf("RIVER GPU: write-combined bo %u (%llu bytes): page wimg %#x\n", (unsigned)slot + 1,
++			    (unsigned long long)rgpu_bos[slot].size, pn ? pmap_cache_attributes(pn) : 0);
++		}
++	}
+ 	*gpuva = rgpu_bos[slot].gpuva;
+ 	*rsize = rgpu_bos[slot].size;
+ 	return (uint32_t)slot + 1;
+@@ -989,13 +1017,13 @@ rgpu_bo_flush(struct rgpu_bo *b)
+ static void
+ rgpu_bo_prepare_gpu(struct rgpu_bo *b)
+ {
++	if (b->wc) {
++		return;		/* uncached pages (0192): nothing in the CPU cache */
++	}
+ 	if (rgpu_flush_all) {
+ 		rgpu_bo_flush(b);
+ 		return;
+ 	}
+-	if (b->wc) {
+-		return;
+-	}
+ 	if (b->import != NULL) {
+ 		/* small surfaces (textures, glyph atlases) always: cheap, and safe
+ 		 * against writers that do not bump the seed; large ones by seed */

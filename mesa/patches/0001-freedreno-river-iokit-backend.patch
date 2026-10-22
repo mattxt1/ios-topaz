@@ -188,10 +188,10 @@ index d2baf58..b6fde47 100644
    'virtio/virtio_bo.c',
 diff --git a/src/freedreno/drm/river/river_bo.c b/src/freedreno/drm/river/river_bo.c
 new file mode 100644
-index 0000000..c867658
+index 0000000..9b534c3
 --- /dev/null
 +++ b/src/freedreno/drm/river/river_bo.c
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,171 @@
 +/*
 + * Copyright © 2026 river bring-up contributors
 + * SPDX-License-Identifier: MIT
@@ -204,12 +204,13 @@ index 0000000..c867658
 +#include "river_priv.h"
 +
 +/*
-+ * r56 flickered with our buffers write-combined (no kernel cache maintenance)
-+ * and not with rivergpuflush=1. Test: map them cached and let the kernel
-+ * clean them on submit; 1 restores the 0186 behaviour.
++ * Our buffers are write-combined (BO_NEW flag 1): since kernel 0192 their
++ * pages are uncached in every mapping, so no cache maintenance is needed.
++ * (r55/r56 asked only for a write-combined user mapping; the pages stayed
++ * cacheable and the GPU read stale data.) 0: cached, cleaned per submit.
 + */
 +#ifndef RIVER_BO_WC
-+#define RIVER_BO_WC 0
++#define RIVER_BO_WC 1
 +#endif
 +
 +static int
