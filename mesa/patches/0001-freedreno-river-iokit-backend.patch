@@ -4487,10 +4487,10 @@ index 0000000..70f02af
 +};
 diff --git a/src/gallium/drivers/freedreno/sweetgl/eagl.c b/src/gallium/drivers/freedreno/sweetgl/eagl.c
 new file mode 100644
-index 0000000..b0ad950
+index 0000000..064b1c3
 --- /dev/null
 +++ b/src/gallium/drivers/freedreno/sweetgl/eagl.c
-@@ -0,0 +1,2351 @@
+@@ -0,0 +1,2372 @@
 +/*
 + * EAGL on sweetgl: QuartzCore's GLES renderer (CA::OGL::GLESContext) on
 + * Mesa instead of Apple's Metal-backed GLEngine.
@@ -5099,6 +5099,9 @@ index 0000000..b0ad950
 +	}
 +}
 +
++/* river profile: draw split (see prof_report) */
++static _Atomic uint64_t prof_prep_t, prof_draw_t, prof_refresh_t, prof_refresh_n;
++
 +static void
 +copy_refresh(int u, int *active)
 +{
@@ -5112,8 +5115,11 @@ index 0000000..b0ad950
 +	}
 +	glActiveTexture(GL_TEXTURE0 + u);
 +	IOSurfaceRef s = c->surface;
++	uint64_t t0 = mach_absolute_time();
 +	copy_surface(s, GL_TEXTURE_2D, c->format, c->type, IOSurfaceGetWidth(s), IOSurfaceGetHeight(s),
 +	    IOSurfaceGetBytesPerRow(s), "refresh");
++	atomic_fetch_add(&prof_refresh_t, mach_absolute_time() - t0);
++	atomic_fetch_add(&prof_refresh_n, 1);
 +}
 +
 +/*
@@ -5614,13 +5620,17 @@ index 0000000..b0ad950
 +sgl_DrawArrays(void *rctx, GLenum mode, GLint first, GLsizei count)
 +{
 +	SGL_CUR(rctx);
++	uint64_t tp = mach_absolute_time();
 +	bool fresh = draw_prep(mode, count);
++	atomic_fetch_add(&prof_prep_t, mach_absolute_time() - tp);
 +	if (fresh) {
 +		GLint prog = 0;
 +		glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
 +		trace_vertex_color(prog, 0, NULL, first);
 +	}
++	uint64_t td = mach_absolute_time();
 +	glDrawArrays(mode, first, count);
++	atomic_fetch_add(&prof_draw_t, mach_absolute_time() - td);
 +	if (fbfetch_pending) {
 +		fbfetch_pending = false;
 +		trace_region("after");
@@ -5637,14 +5647,18 @@ index 0000000..b0ad950
 +sgl_DrawElements(void *rctx, GLenum mode, GLsizei count, GLenum type, const void *indices)
 +{
 +	SGL_CUR(rctx);
++	uint64_t tp = mach_absolute_time();
 +	bool fresh = draw_prep(mode, count);
++	atomic_fetch_add(&prof_prep_t, mach_absolute_time() - tp);
 +	if (fresh) {
 +		GLint prog = 0, ebuf = 0;
 +		glGetIntegerv(GL_CURRENT_PROGRAM, &prog);
 +		glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &ebuf);
 +		trace_vertex_color(prog, type, ebuf == 0 ? indices : NULL, 0);
 +	}
++	uint64_t td = mach_absolute_time();
 +	glDrawElements(mode, count, type, indices);
++	atomic_fetch_add(&prof_draw_t, mach_absolute_time() - td);
 +	if (fbfetch_pending) {
 +		fbfetch_pending = false;
 +		trace_region("after");
@@ -5865,18 +5879,25 @@ index 0000000..b0ad950
 +		}
 +	}
 +	uint64_t surf = atomic_exchange(&prof_surf_t, 0) * tb.numer / tb.denom, surfn = atomic_exchange(&prof_surf_n, 0);
++	uint64_t prep = atomic_exchange(&prof_prep_t, 0) * tb.numer / tb.denom;
++	uint64_t mdraw = atomic_exchange(&prof_draw_t, 0) * tb.numer / tb.denom;
++	uint64_t refresh = atomic_exchange(&prof_refresh_t, 0) * tb.numer / tb.denom, refreshn = atomic_exchange(&prof_refresh_n, 0);
 +	if (frames == 0 || dthread == 0) {
 +		return;
 +	}
 +	uint64_t ca = dthread > gl + surf ? dthread - gl - surf : 0;
 +	sweet_drm_log("sweetgl prof: per frame (us): wall %llu = GPU wait %llu + between %llu; render thread CPU %llu = "
-+	    "Mesa/GL %llu + sweetgl surfaces %llu + CoreAnimation %llu; not running %llu; %llu GL calls, %llu surface binds; "
-+	    "backboardd CPU %.0f%% of a core",
++	    "Mesa/GL %llu + sweetgl surfaces %llu + CoreAnimation %llu; not running %llu; %llu GL calls, %llu surface binds",
 +	    (wait_ns + between_ns) / frames / 1000, wait_ns / frames / 1000, between_ns / frames / 1000,
 +	    dthread / frames / 1000, gl / frames / 1000, surf / frames / 1000, ca / frames / 1000,
 +	    (wait_ns + between_ns > dthread ? wait_ns + between_ns - dthread : 0) / frames / 1000,
-+	    calls / frames, surfn / frames, span_ns ? 100.0 * (double)dproc / (double)span_ns : 0.0);
++	    calls / frames, surfn / frames);
 +	(void)glwait;
++	if (frames > 0) {
++		sweet_drm_log("sweetgl prof: draws per frame (us): sweetgl draw_prep %llu (of which texture re-copies %llu, %llu copies), "
++		    "Mesa draw call %llu; backboardd CPU %.0f%% of a core", prep / frames / 1000, refresh / frames / 1000,
++		    refreshn / frames, mdraw / frames / 1000, span_ns ? 100.0 * (double)dproc / (double)span_ns : 0.0);
++	}
 +	char line[400];
 +	int o = snprintf(line, sizeof(line), "sweetgl prof: top GL calls per frame (us):");
 +	for (int k = 0; k < 6 && top[k] >= 0 && o < (int)sizeof(line); k++) {

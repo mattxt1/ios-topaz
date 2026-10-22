@@ -1714,3 +1714,17 @@ frames (CoreAnimation + Mesa/freedreno CPU + sweetgl). Even a free GPU gives
 0185 (rivergpuclk=133|200|266|320, default 133; CI 39717137089, kernel in
 k-r54) is built but NOT booted. Next: profile backboardd's CPU time per frame
 (split CA vs Mesa vs sweetgl); also CPU clock is still capped at 1.4 GHz.
+
+### r54p CPU profile of backboardd's render thread (r49-gallium-live-23.txt)
+sweetgl now times every GLI call, IOSurface binds, render-thread and process
+CPU. Continuous Settings scroll, busiest windows (~4-5 frames/s), per frame:
+wall ~195-255 ms = GPU wait ~15-20 ms + ~180-235 ms between; render-thread
+CPU ~160-235 ms = **inside GL calls ~140-215 ms** + CoreAnimation ~15-20 ms +
+sweetgl IOSurface binds ~1 ms; ~330-580 GL calls per frame; top call by far
+**glDrawElements, 120-210 ms per frame** (then glUseProgram, glClear,
+glLinkProgram in some windows). So CoreAnimation and the GPU are cheap; the
+cost is CPU per draw (~0.5 ms+ per draw). Two windows have bogus thread-CPU
+figures (the render thread changed between reports). glDrawElements is a
+sweetgl hand-written slot (draw_prep: texture-unit shadowing, copy_refresh
+re-uploads of copied IOSurfaces, fbfetch emulation) before Mesa's draw, so
+r54q splits sweetgl prep / texture re-copies / Mesa draw.
