@@ -1934,3 +1934,27 @@ uncached render targets with the CPU panel copy.
   scan the surface (riverzc, topaz saw half-drawn frames without sync).
   That removes the 20 ms CPU copy, any stale-read risk, and lets render
   targets skip cleaning.
+
+### r68 (0197 GPU present, fast path) (r49-gallium-live-40.txt): **fast, nearly flicker-free**
+Boot-args: riverblit=1 riverfbinv=0, no rivergpuflush; k-r68 kernel (0196
+uncached render targets + 0197). The kernel presents full-screen frames with
+the A5xx 2D blitter: 13-150 GPU presents per 10 s window, avg 6-16 ms each
+(includes queueing behind CA's GPU work), `0 rows copied` by the CPU.
+CA: mostly 11-20 frames/s while busy (3-7 in quieter windows); kernel SUBMIT ~1.4-1.9 ms per frame. User: only a
+small, occasional flicker on certain screens (e.g. leaving Display Zoom with
+a back swipe), not consistently reproducible. One present timed out (50 ms,
+ETIMEDOUT) and fell back to the CPU copy, the path with the stale-read
+problem: a candidate for the rare flicker. Image:
+`shim-river/out/river-r68-boot.img`.
+
+### Snapintosh (Acelogic/Snapintosh, MIT, published 2026-10-22)
+macOS 27 on Snapdragon X2 Elite with its own Adreno X2-90 Metal/IOGPU stack.
+Relevant here: AdrenoDisplay notes that QuartzCore allocates display
+surfaces write-combined (cache mode 0x400) and that a cached kernel alias of
+such a surface is a mismatched alias that can return stale data; they
+convert the surface object to one cache mode, invalidate GPU-written
+buffers after completion, and use a dsb between DC CIVAC and loads of
+Normal-NC memory. That matches r66 (no CPU writer, still stale reads); River
+maps surfaces cached in the kernel while CA asks cache mode 0x700. Later
+relevance: air2ir3 (Metal AIR -> NIR -> ir3, a8xx back end) and the
+AdrenoMetal plug-in, for a Metal path; not directly reusable (A8xx, macOS 27).
