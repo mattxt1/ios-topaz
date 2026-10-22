@@ -1688,7 +1688,7 @@ width does not accept pitch 64). No backboardd crashes, no GPU error IRQs
 (the CB0 FSR 0x202 line is the boot-time unmapped-write self-test). Image
 `shim-river/out/river-r53-sweetgl-boot.img`, SHA256
 603721b1c78022dc47bf789e83b5022a011e2a181c079e914547ee5d41658936.
-Screen not yet checked on r53.
+User check on r53: screen looks right (labels, icons, blur, transparency).
 Known gaps: QuartzCore texture-function fixes refused (address check fails
 on this cache), LA08 small-stride layout, ~0.1-4 flushes/s and 10-45 ms GPU
 finishes (no FPS measurement yet), GPU clock still conservative.
