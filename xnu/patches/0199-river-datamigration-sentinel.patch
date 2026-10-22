@@ -1,0 +1,74 @@
+diff --git a/bsd/dev/river_files.c b/bsd/dev/river_files.c
+index 6dbab3b..f527032 100644
+--- a/bsd/dev/river_files.c
++++ b/bsd/dev/river_files.c
+@@ -8,6 +8,12 @@
+  * and tools/mkpayload.py --blob RiverFiles=... names it in /chosen/memory-map.
+  * Only absolute paths under /usr/local/ are accepted; missing parent
+  * directories are created (0755); files get the given mode, owner root:wheel.
++ *
++ * riverdm=1 (0199) also creates iOS's data-migration sentinel
++ * /private/var/datamigrator/migrate (empty, mobile:staff 0644): datamigrator
++ * then runs once (installs /private/var/staged_system_apps and does the
++ * first-boot setup River's root image skips) and removes it itself.
++ * riverdm=2 removes the sentinel (rescue if a migration keeps repeating).
+  */
+ #include <sys/param.h>
+ #include <sys/systm.h>
+@@ -82,12 +88,56 @@ river_file_write(const char *path, uint32_t mode, const uint8_t *data, uint32_t
+ 	vnode_close(vp, FWRITE, ctx);
+ 	return err;
+ }
++
++extern int unlink1(vfs_context_t, vnode_t, user_addr_t, enum uio_seg, int);
++
++#define RIVER_DM_SENTINEL "/private/var/datamigrator/migrate"
++
++static void
++river_dm_trigger(void)
++{
++	int dm = 0;
++	if (!PE_parse_boot_argn("riverdm", &dm, sizeof(dm)) || dm == 0) {
++		return;
++	}
++	vfs_context_t ctx = vfs_context_kernel();
++	if (dm == 2) {
++		int err = unlink1(ctx, NULLVP, CAST_USER_ADDR_T(RIVER_DM_SENTINEL), UIO_SYSSPACE, 0);
++		printf("RIVER DM: remove " RIVER_DM_SENTINEL ": %d\n", err);
++		return;
++	}
++	if (dm != 1) {
++		printf("RIVER DM: riverdm=%d unknown (1 create, 2 remove)\n", dm);
++		return;
++	}
++	/* no parent creation: the directory exists, owned by mobile */
++	vnode_t vp = NULLVP;
++	int err = vnode_open(RIVER_DM_SENTINEL, O_CREAT | O_EXCL | FWRITE, 0644, 0, &vp, ctx);
++	if (err == EEXIST) {
++		printf("RIVER DM: " RIVER_DM_SENTINEL " already present\n");
++		return;
++	}
++	if (err) {
++		printf("RIVER DM: create " RIVER_DM_SENTINEL ": %d\n", err);
++		return;
++	}
++	struct vnode_attr va;
++	VATTR_INIT(&va);
++	VATTR_SET(&va, va_uid, 501);
++	VATTR_SET(&va, va_gid, 20);
++	VATTR_SET(&va, va_mode, 0644);
++	err = vnode_setattr(vp, &va, ctx);
++	(void)VNOP_FSYNC(vp, MNT_WAIT, ctx);
++	vnode_close(vp, FWRITE, ctx);
++	printf("RIVER DM: created " RIVER_DM_SENTINEL " (mobile:staff 0644): %d\n", err);
++}
+ #endif
+ 
+ void
+ river_files_install(void)
+ {
+ #if defined(RIVER)
++	river_dm_trigger();
+ 	DTEntry mm;
+ 	void const *prop;
+ 	unsigned int psize;
