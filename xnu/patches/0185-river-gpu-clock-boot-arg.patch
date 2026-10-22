@@ -1,0 +1,36 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 35f1708..af7efb0 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -212,9 +212,29 @@ river_gpu_power_on(vm_offset_t g, vm_offset_t ldo)
+  ctl &= ~(1u << 2); ri_wr(ldo, 0x1c, ctl);
+  ctl &= ~(1u << 0); ri_wr(ldo, 0x1c, ctl);
+  printf("RIVER GPU: LDO clamp off, BHS to GDSC, ctrl %#x (Linux 0x20000038)\n", ri_rd(ldo, 0x1c));
+- ri_wr(g, 0x04, (5u << 8) | 5u);		/* GFX3D CFG: src 5, div 3 */
++ /*
++  * GFX3D RCG CFG = src << 8 | (2 * div - 1). Sources from GPLL0 (800 MHz),
++  * which the default already uses: src 1 = GPLL0, src 5 = GPLL0 / 2. Linux
++  * kgsl ran this GPU at 320 MHz in recovery (CFG 0x104) with VDD_CX at
++  * nominal; rivergpuclk=MHz picks one of these, default 133.
++  */
++ static const struct { uint32_t mhz, cfg; } gfx3d_rates[] = {
++  { 133, (5u << 8) | 5u },			/* GPLL0 / 2 / 3 */
++  { 200, (5u << 8) | 3u },			/* GPLL0 / 2 / 2 */
++  { 266, (1u << 8) | 5u },			/* GPLL0 / 3 */
++  { 320, (1u << 8) | 4u },			/* GPLL0 / 2.5 (Linux) */
++ };
++ uint32_t want = 133, cfg = gfx3d_rates[0].cfg, mhz = gfx3d_rates[0].mhz;
++ PE_parse_boot_argn("rivergpuclk", &want, sizeof(want));
++ for (unsigned i = 0; i < sizeof(gfx3d_rates) / sizeof(gfx3d_rates[0]); i++) {
++  if (gfx3d_rates[i].mhz == want) { cfg = gfx3d_rates[i].cfg; mhz = gfx3d_rates[i].mhz; }
++ }
++ ri_wr(g, 0x04, cfg);				/* GFX3D CFG */
+  ri_wr(g, 0x00, ri_rd(g, 0x00) | 1u);		/* update */
+- for (unsigned i = 0; i < 1000 && (ri_rd(g, 0x00) & 1u); i++) delay(1);
++ unsigned upd = 0;
++ for (; upd < 1000 && (ri_rd(g, 0x00) & 1u); upd++) delay(1);
++ printf("RIVER GPU: GFX3D %u MHz (asked %u), cfg %#x, update %s after %u us\n", mhz, want,
++     ri_rd(g, 0x04), (ri_rd(g, 0x00) & 1u) ? "STILL PENDING" : "done", upd);
+  if (!river_gdsc_on(g, 0x4c, "oxili_cx")) return;
+  uint32_t clamp = ri_rd(g, 0x200c);
+  ri_wr(g, 0x200c, clamp & ~1u);
