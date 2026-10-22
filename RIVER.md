@@ -1776,3 +1776,14 @@ So the once-per-mark invalidate race was not (only) the cause. Next: boot
 `river-r56-flushall-boot.img` (same kernel, rivergpuflush=1) to tell a
 cache problem (e.g. app backing stores written without a seed bump) from a
 timing problem (GPU vs the 30 Hz panel copy).
+
+### r56 with rivergpuflush=1 (r49-gallium-live-28.txt): no flicker, slower
+User: no flicker when scrolling Settings, fewer frames. So the r55/r56
+flicker is CPU cache coherency from 0186's reduced cleaning. Leading
+suspect: Mesa's own buffers. 0186 assumes their user mapping is really
+write-combined, but they are wired kernel_map memory the kernel maps cached,
+and XNU may keep a cached user mapping despite kIOMapWriteCombineCache; then
+command streams/uploads stay dirty in the CPU cache and the GPU reads stale
+data. r57 (`river-r57-cachedbo-boot.img`, r56 kernel): Mesa buffers mapped
+cached without BO_NEW flag 1 (kernel cleans them per submit), imports keep
+seed-based cleaning (the expensive large render targets stay uncleaned).

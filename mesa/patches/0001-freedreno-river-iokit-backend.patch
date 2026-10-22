@@ -188,10 +188,10 @@ index d2baf58..b6fde47 100644
    'virtio/virtio_bo.c',
 diff --git a/src/freedreno/drm/river/river_bo.c b/src/freedreno/drm/river/river_bo.c
 new file mode 100644
-index 0000000..1dc499f
+index 0000000..db62115
 --- /dev/null
 +++ b/src/freedreno/drm/river/river_bo.c
-@@ -0,0 +1,147 @@
+@@ -0,0 +1,156 @@
 +/*
 + * Copyright © 2026 river bring-up contributors
 + * SPDX-License-Identifier: MIT
@@ -202,6 +202,15 @@ index 0000000..1dc499f
 + * seed shows a CPU write. RIVER_CPU_PREP waits for the buffer's last fence.
 + */
 +#include "river_priv.h"
++
++/*
++ * r56 flickered with our buffers write-combined (no kernel cache maintenance)
++ * and not with rivergpuflush=1. Test: map them cached and let the kernel
++ * clean them on submit; 1 restores the 0186 behaviour.
++ */
++#ifndef RIVER_BO_WC
++#define RIVER_BO_WC 0
++#endif
 +
 +static int
 +river_bo_offset(struct fd_bo *bo, uint64_t *offset)
@@ -216,7 +225,7 @@ index 0000000..1dc499f
 +{
 +   mach_vm_address_t addr = 0;
 +   mach_vm_size_t size = 0;
-+   IOOptionBits cache = to_river_bo(bo)->imported ? 0 : kIOMapWriteCombineCache;
++   IOOptionBits cache = (!to_river_bo(bo)->imported && RIVER_BO_WC) ? kIOMapWriteCombineCache : 0;
 +   kern_return_t kr = IOConnectMapMemory64(river_conn(bo->dev), bo->handle,
 +                                           mach_task_self(), &addr, &size,
 +                                           kIOMapAnywhere | cache);
@@ -268,7 +277,7 @@ index 0000000..1dc499f
 +struct fd_bo *
 +river_bo_new(struct fd_device *dev, uint32_t size, uint32_t flags)
 +{
-+   uint64_t in[2] = { size, 1 /* write-combined: no kernel cache maintenance */ }, out[3];
++   uint64_t in[2] = { size, RIVER_BO_WC /* 1: write-combined, no kernel cache maintenance */ }, out[3];
 +   uint32_t n = 3;
 +   kern_return_t kr = IOConnectCallScalarMethod(river_conn(dev), RIVER_BO_NEW,
 +                                                in, 2, out, &n);
