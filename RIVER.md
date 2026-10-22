@@ -1958,3 +1958,16 @@ Normal-NC memory. That matches r66 (no CPU writer, still stale reads); River
 maps surfaces cached in the kernel while CA asks cache mode 0x700. Later
 relevance: air2ir3 (Metal AIR -> NIR -> ir3, a8xx back end) and the
 AdrenoMetal plug-in, for a Metal path; not directly reusable (A8xx, macOS 27).
+
+### r69 (0198, GPU present without CPU fallback) (r49-gallium-live-41.txt): **no flicker**
+User: no flicker on Display Zoom back-swipes or while scrolling Settings.
+Counters over the session: 578 GPU presents (avg ~6-32 ms per 10 s window,
+including queueing behind CA's GPU work), **0 dropped, 0 GPU-drawn layers
+copied by the CPU**; CA 12-15 frames/s in the busy windows. No blit timed
+out this run, so r68's rare flicker is not proven to have been its one CPU
+fallback, but in GPU-present mode the CPU copy can no longer run.
+**Best image: `shim-river/out/river-r69-boot.img`** (k-r69 kernel, boot-args
+riverblit=1 riverfbinv=0, sweetgl with uncached buffers + in-batch barrier).
+Next: frame rate (CA at 12-15 fps; GPU clock still 133 MHz, 0185's
+rivergpuclk= unbooted; blits queue behind CA's GPU work), and the
+Snapintosh mismatched-alias finding for any remaining CPU readers.
