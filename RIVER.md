@@ -1679,3 +1679,16 @@ no kernel mapping" (kernelAddress() 0). No crashes, no GPU faults; up to 4.2
 flushes/s while interacting, finish 10-35 ms. Next (0184): wire the surface
 memory (prepare) and import by physical segments, like the Pixel kernel,
 cache maintenance by physical address, user maps through the surface memory.
+
+### r53 (0184; CI 39715545829) (r49-gallium-live-22.txt): IOSurface imports work
+No BO_IMPORT failures. Of all texImageIOSurface calls logged in the first
+~2 minutes, one fell back to the CPU copy: LA08 23x23 pitch 64 "mesa layout
+failed" (kernel import succeeded; Mesa's linear layout for R8G8 at that
+width does not accept pitch 64). No backboardd crashes, no GPU error IRQs
+(the CB0 FSR 0x202 line is the boot-time unmapped-write self-test). Image
+`shim-river/out/river-r53-sweetgl-boot.img`, SHA256
+603721b1c78022dc47bf789e83b5022a011e2a181c079e914547ee5d41658936.
+Screen not yet checked on r53.
+Known gaps: QuartzCore texture-function fixes refused (address check fails
+on this cache), LA08 small-stride layout, ~0.1-4 flushes/s and 10-45 ms GPU
+finishes (no FPS measurement yet), GPU clock still conservative.
