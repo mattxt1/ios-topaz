@@ -2001,3 +2001,19 @@ the USB link re-enumerated three times with no packets from the phone since
 (0 input packets on en6): most likely a hang mid-migration. Backup
 `device-private/backups/ios-root-before-migration-20261022-1622.img.gz`
 (sha256 6ed4d0a2...dd642) is the rollback point.
+Retry (r49-gallium-live-47.txt, 17:46): sentinel `already present` (the first
+attempt never finished); the progress UI ran at 60 fps for 30+ min with no
+panic, but the bar never moved. Plugin runner started twice and installd once,
+early; the last storage-read counter came before mid-log; afterwards almost
+only `lskdd` (1231 launches, about 1/s; on-demand Mach service
+com.apple.lskdd, ThrottleInterval 0, tied to AppleKeyServices) and
+`fairplayd.H2` (173) restarting. Hypothesis (not proven): FairPlay / key
+services cannot work on River (no SEP-backed keys), and the app-install step of
+the migration waits on them indefinitely.
+Abort: `river-r70-clear-boot.img` (riverdm=2): `RIVER DM: remove
+/private/var/datamigrator/migrate: 0`; normal boot, no migration, SpringBoard
+and PosterBoard started (PosterBoard did not crash this boot), no panic. User:
+home screen works as before; lock screen still has no clock or wallpaper.
+**DataMigration is not a usable route on River.** Next idea for the stock apps:
+put the staged apps in /Applications (system apps there are registered by
+LaunchServices without FairPlay) and force a LaunchServices rebuild.
