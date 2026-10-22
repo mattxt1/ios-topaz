@@ -1787,3 +1787,13 @@ command streams/uploads stay dirty in the CPU cache and the GPU reads stale
 data. r57 (`river-r57-cachedbo-boot.img`, r56 kernel): Mesa buffers mapped
 cached without BO_NEW flag 1 (kernel cleans them per submit), imports keep
 seed-based cleaning (the expensive large render targets stay uncleaned).
+
+### r57 (r56 kernel, Mesa buffers cached + kernel-cleaned) (r49-gallium-live-29.txt)
+User: only a little flicker left. 12-15 frames/s while scrolling; kernel
+SUBMIT ~24-40 ms per frame (~1.5 ms per submit, cleaning Mesa's buffers).
+So most of the r55/r56 flicker was Mesa's own buffers (the "write-combined"
+user mapping did not stop CPU caching, apparently). Remaining flicker: large
+imported surfaces written by the CPU without a seed change. 0188: large
+imports are also cleaned when their last clean is older than 16 ms (about
+once per displayed frame), and the kernel logs every 10 s how many import
+cleans were small / by seed / by age / skipped.

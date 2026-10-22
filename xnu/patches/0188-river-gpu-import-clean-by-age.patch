@@ -1,0 +1,63 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index 5228eb8..ad728bb 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -546,11 +546,17 @@ struct rgpu_bo {
+ 	bool wc;		/* client maps it write-combined: no CPU cache maintenance */
+ 	bool cleaned;		/* imports: seed below is the surface's at the last clean */
+ 	uint32_t seed;
++	uint64_t cleaned_at;	/* imports: mach_absolute_time of the last clean */
+ };
+ /* RiverGPU.cpp: a surface's write seed, and "the GPU may have written it" */
+ extern uint32_t river_gpu_import_seed(void *import);
+ extern void river_gpu_import_touched(void *import);
+ #define RGPU_IMPORT_ALWAYS_CLEAN	(1024 * 1024)
++/* large imports: also cleaned when the last clean is older than this (ns) */
++#define RGPU_IMPORT_MAX_AGE_NS		16000000ULL
++static uint64_t rgpu_import_max_age;	/* in mach_absolute_time units */
++static uint32_t rgpu_clean_seed, rgpu_clean_age, rgpu_clean_small, rgpu_clean_skip;
++static uint64_t rgpu_clean_report;
+ /* rivergpuflush=1: clean every buffer of every submit (before 0186) */
+ static int rgpu_flush_all;
+ extern boolean_t pmap_valid_page(ppnum_t pn);
+@@ -971,11 +977,39 @@ rgpu_bo_prepare_gpu(struct rgpu_bo *b)
+ 	if (b->import != NULL) {
+ 		/* small surfaces (textures, glyph atlases) always: cheap, and safe
+ 		 * against writers that do not bump the seed; large ones by seed */
++		/*
++		 * Large ones by seed, and at least once per ~frame: r57 still
++		 * flickered a little with seed-only cleaning, so some CPU writers
++		 * do not move the seed (0188).
++		 */
+ 		uint32_t seed = river_gpu_import_seed(b->import);
+-		if (!b->cleaned || seed != b->seed || b->size <= RGPU_IMPORT_ALWAYS_CLEAN) {
++		uint64_t now = mach_absolute_time();
++		if (rgpu_import_max_age == 0) {
++			nanoseconds_to_absolutetime(RGPU_IMPORT_MAX_AGE_NS, &rgpu_import_max_age);
++		}
++		bool small = b->size <= RGPU_IMPORT_ALWAYS_CLEAN;
++		bool moved = !b->cleaned || seed != b->seed;
++		bool old = now - b->cleaned_at > rgpu_import_max_age;
++		if (small || moved || old) {
+ 			rgpu_bo_flush(b);
+ 			b->seed = seed;
+ 			b->cleaned = true;
++			b->cleaned_at = now;
++			if (small) rgpu_clean_small++;
++			else if (moved) rgpu_clean_seed++;
++			else rgpu_clean_age++;
++		} else {
++			rgpu_clean_skip++;
++		}
++		uint64_t ns;
++		absolutetime_to_nanoseconds(now - rgpu_clean_report, &ns);
++		if (ns >= 10000000000ULL) {
++			if (rgpu_clean_report != 0) {
++				printf("RIVER GPU: imports in 10 s: %u small cleans, %u by seed, %u by age, %u skipped\n",
++				    rgpu_clean_small, rgpu_clean_seed, rgpu_clean_age, rgpu_clean_skip);
++			}
++			rgpu_clean_report = now;
++			rgpu_clean_small = rgpu_clean_seed = rgpu_clean_age = rgpu_clean_skip = 0;
+ 		}
+ 		river_gpu_import_touched(b->import);
+ 		return;
