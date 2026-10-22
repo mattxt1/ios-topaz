@@ -1806,3 +1806,13 @@ here. 0189: sweetgl marks every surface it binds as a render target
 (attachImage) GPU-only via new RiverGPU selector 9 BO_SET_FLAGS; the kernel
 never cleans GPU-only imports (still gpuTouched for the panel copy) and
 cleans every other import before each GPU use.
+
+### r59 (0189) (r49-gallium-live-31.txt): still flickers
+12-16 frames/s; kernel SUBMIT ~12-24 ms per frame. Counters: every large
+import is a render target (~1000-1600 render-target uses skipped per 10 s,
+~0 large non-RT cleans); small imports cleaned. Flicker unchanged, and
+flush-all (which also cleaned render targets) had none. Hypothesis: render
+targets carry dirty CPU cache lines from their creation (the CPU zero fill)
+or earlier CPU drawing; never cleaned, they are later written back over GPU
+pixels (on eviction or by the panel copy's clean+invalidate). 0190: every
+import is cleaned once when imported, and again when first marked GPU-only.

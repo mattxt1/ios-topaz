@@ -1,0 +1,39 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index b3c9bf8..1c33fca 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -558,6 +558,7 @@ static uint64_t rgpu_clean_report;
+ /* rivergpuflush=1: clean every buffer of every submit (before 0186) */
+ static int rgpu_flush_all;
+ extern boolean_t pmap_valid_page(ppnum_t pn);
++static void rgpu_bo_flush(struct rgpu_bo *b);
+ extern void river_gpu_import_release(void *import);	/* RiverGPU.cpp */
+ static struct rgpu_bo rgpu_bos[RGPU_MAX_BO];
+ static lck_grp_t *rgpu_grp;
+@@ -886,6 +887,13 @@ river_gpu_bo_import_pages(void *owner, const uint64_t *pa, uint32_t npages, void
+ 	gmmu_sync();
+ 	rgpu_bos[slot] = (struct rgpu_bo){ .size = bytes, .gpuva = at, .used = true, .owner = owner,
+ 		.import = import, .pa = copy, .npages = npages };
++	/*
++	 * Write back and drop whatever the CPU left cached (the zero fill at
++	 * creation, earlier CPU drawing) before the GPU owns it: otherwise a
++	 * later eviction or invalidate writes old lines over GPU pixels (r59
++	 * flicker with render targets never cleaned).
++	 */
++	rgpu_bo_flush(&rgpu_bos[slot]);
+ 	lck_mtx_unlock(rgpu_lock);
+ 	*gpuva = at;
+ 	*size = bytes;
+@@ -908,7 +916,11 @@ river_gpu_bo_set_flags(void *owner, uint32_t handle, uint32_t flags)
+ {
+ 	struct rgpu_bo *b = rgpu_bo_get(owner, handle);
+ 	if (!b || b->import == NULL) return EINVAL;
+-	b->gpu_only = (flags & 1) != 0;
++	bool gpu_only = (flags & 1) != 0;
++	if (gpu_only && !b->gpu_only) {
++		rgpu_bo_flush(b);	/* CPU writes before this point: once */
++	}
++	b->gpu_only = gpu_only;
+ 	return 0;
+ }
+ 
