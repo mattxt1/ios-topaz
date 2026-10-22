@@ -1,0 +1,152 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index 1c33fca..db039ef 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -552,6 +552,7 @@ struct rgpu_bo {
+ /* RiverGPU.cpp: a surface's write seed, and "the GPU may have written it" */
+ extern uint32_t river_gpu_import_seed(void *import);
+ extern void river_gpu_import_touched(void *import);
++extern void river_gpu_import_fenced(void *import, uint32_t fence);
+ #define RGPU_IMPORT_ALWAYS_CLEAN	(1024 * 1024)
+ static uint32_t rgpu_clean_seed, rgpu_clean_age, rgpu_clean_small, rgpu_clean_skip;
+ static uint64_t rgpu_clean_report;
+@@ -1058,11 +1059,25 @@ river_gpu_submit(void *owner, const struct river_gpu_cmd *cmd, uint32_t ncmd,
+ 	}
+ 	uint32_t seq = rgpu_submit(ib, dw, ncmd);
+ 	for (uint32_t i = 0; i < ncmd; i++) rgpu_bo_get(owner, cmd[i].handle)->fence = seq;
+-	for (uint32_t i = 0; i < nbos; i++) rgpu_bo_get(owner, bos[i])->fence = seq;
++	for (uint32_t i = 0; i < nbos; i++) {
++		struct rgpu_bo *b = rgpu_bo_get(owner, bos[i]);
++		b->fence = seq;
++		if (b->import != NULL) {
++			river_gpu_import_fenced(b->import, seq);	/* panel copy waits for it (0191) */
++		}
++	}
+ 	*fence = seq;
+ 	return 0;
+ }
+ 
++/* Has the GPU completed fence? */
++bool river_gpu_fence_done(uint32_t fence);
++bool
++river_gpu_fence_done(uint32_t fence)
++{
++	return rgpu_fence_done(fence);
++}
++
+ int river_gpu_wait(uint32_t fence, uint32_t ms);
+ int
+ river_gpu_wait(uint32_t fence, uint32_t ms)
+diff --git a/iokit/Kernel/arm/RiverGPU.cpp b/iokit/Kernel/arm/RiverGPU.cpp
+index 596e810..f19dbeb 100644
+--- a/iokit/Kernel/arm/RiverGPU.cpp
++++ b/iokit/Kernel/arm/RiverGPU.cpp
+@@ -48,6 +48,7 @@ uint64_t river_gpu_param(uint32_t param);
+ uint32_t river_gpu_bo_new(void *owner, uint64_t size, uint32_t flags, uint64_t *gpuva, uint64_t *rsize);
+ uint32_t river_gpu_import_seed(void *import);
+ void river_gpu_import_touched(void *import);
++void river_gpu_import_fenced(void *import, uint32_t fence);
+ int river_gpu_bo_kva(void *owner, uint32_t handle, vm_offset_t *kva, uint64_t *size);
+ int river_gpu_bo_free(void *owner, uint32_t handle);
+ int river_gpu_submit(void *owner, const struct river_gpu_cmd *cmd, uint32_t ncmd,
+@@ -76,6 +77,12 @@ river_gpu_import_touched(void *import)
+ 	((SweetSurface *)import)->gpuTouched = true;
+ }
+ 
++void
++river_gpu_import_fenced(void *import, uint32_t fence)
++{
++	((SweetSurface *)import)->gpuFence = fence;
++}
++
+ /* Undo BO_IMPORT's hold on a surface: its memory was prepared (wired). */
+ void
+ river_gpu_import_release(void *import)
+diff --git a/iokit/Kernel/arm/SweetSurface.cpp b/iokit/Kernel/arm/SweetSurface.cpp
+index 7d8e58e..dc0115f 100644
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -209,15 +209,64 @@ sweet_surface_seed_value(SweetSurface *s)
+ #if defined(RIVER)
+ extern "C" void flush_dcache64(addr64_t addr, unsigned count, int phys);
+ 
++extern "C" bool river_gpu_fence_done(uint32_t fence);
++extern "C" int river_gpu_wait(uint32_t fence, uint32_t ms);
++
++/* r61 diagnostics: panel copies of GPU surfaces, GPU still busy, stale cache seen */
++static uint32_t river_rd_copies, river_rd_busy, river_rd_stale, river_rd_timeout;
++static uint64_t river_rd_wait_ns, river_rd_report;
++
++static uint64_t
++river_rd_sample(uintptr_t va, uint64_t len)
++{
++	/* 8 rows' worth of 64-byte samples spread over the range */
++	uint64_t h = 0xcbf29ce484222325ULL;
++	for (unsigned i = 0; i < 64; i++) {
++		const volatile uint64_t *p = (const volatile uint64_t *)((va + (len / 64) * i) & ~(uintptr_t)63);
++		for (unsigned k = 0; k < 8; k++) {
++			h = (h ^ p[k]) * 0x100000001b3ULL;
++		}
++	}
++	return h;
++}
++
+ void
+ river_surface_cpu_read(SweetSurface *s, uintptr_t va, uint64_t len)
+ {
++	if (!s->gpuTouched || s->scanoutPhys != 0 || va == 0 || len == 0) {
++		return;
++	}
+ 	/*
+-	 * Sticky: the GPU may still be drawing the next frame into this surface
+-	 * while the panel copies it (r55 flickered when the mark was cleared).
++	 * 0191: wait until the GPU finished every submit using this surface
++	 * (r55-r60 flickered with fast frames), then drop stale cache lines.
+ 	 */
+-	if (s->gpuTouched && s->scanoutPhys == 0 && va != 0 && len != 0) {
+-		flush_dcache64((addr64_t)va, (unsigned)len, FALSE);
++	uint32_t f = s->gpuFence;
++	uint64_t t0 = mach_absolute_time();
++	river_rd_copies++;
++	if (f != 0 && !river_gpu_fence_done(f)) {
++		river_rd_busy++;
++		if (river_gpu_wait(f, 50) != 0) {
++			river_rd_timeout++;
++		}
++	}
++	uint64_t t1 = mach_absolute_time(), ns;
++	absolutetime_to_nanoseconds(t1 - t0, &ns);
++	river_rd_wait_ns += ns;
++	uint64_t before = river_rd_sample(va, len);
++	flush_dcache64((addr64_t)va, (unsigned)len, FALSE);
++	if (river_rd_sample(va, len) != before) {
++		river_rd_stale++;
++	}
++	absolutetime_to_nanoseconds(t1 - river_rd_report, &ns);
++	if (ns >= 10000000000ULL) {
++		if (river_rd_report != 0) {
++			IOLog("RIVER FB: 10 s: %u GPU-surface copies, %u found GPU busy (%u timed out, %llu us waited), "
++			    "%u saw stale cache\n", river_rd_copies, river_rd_busy, river_rd_timeout,
++			    river_rd_wait_ns / 1000, river_rd_stale);
++		}
++		river_rd_report = t1;
++		river_rd_copies = river_rd_busy = river_rd_stale = river_rd_timeout = 0;
++		river_rd_wait_ns = 0;
+ 	}
+ }
+ #endif
+diff --git a/iokit/Kernel/arm/SweetSurface.h b/iokit/Kernel/arm/SweetSurface.h
+index 837e9cd..25cae2a 100644
+--- a/iokit/Kernel/arm/SweetSurface.h
++++ b/iokit/Kernel/arm/SweetSurface.h
+@@ -46,8 +46,9 @@ public:
+ 	uint32_t                  wrapDelta;    /* wrapped client memory: where it starts in its first page */
+ 	bool                      wrapped;      /* memory is a prepared range of a task (IOSurfaceWrapClient*) */
+ 	bool                      gpuTouched;   /* river: ever used by a GPU submit (CPU readers drop cache lines first) */
++	volatile uint32_t         gpuFence;     /* river: fence of the last GPU submit using it */
+ 
+-	bool init() APPLE_KEXT_OVERRIDE { scanoutPhys = 0; scanoutSlot = -1; values = NULL; purgeable = 0; wrapDelta = 0; wrapped = false; gpuTouched = false; return OSObject::init(); }
++	bool init() APPLE_KEXT_OVERRIDE { scanoutPhys = 0; scanoutSlot = -1; values = NULL; purgeable = 0; wrapDelta = 0; wrapped = false; gpuTouched = false; gpuFence = 0; return OSObject::init(); }
+ 	void free() APPLE_KEXT_OVERRIDE;
+ 
+ 	/* Kernel address of the pixels (mapped on first use), or 0. */

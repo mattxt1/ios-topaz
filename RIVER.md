@@ -1816,3 +1816,14 @@ targets carry dirty CPU cache lines from their creation (the CPU zero fill)
 or earlier CPU drawing; never cleaned, they are later written back over GPU
 pixels (on eviction or by the panel copy's clean+invalidate). 0190: every
 import is cleaned once when imported, and again when first marked GPU-only.
+
+### r60 (0190) (r49-gallium-live-32.txt): still flickers
+Cleaning imports once at import did not help, so dirty lines from surface
+creation are not the cause. Pattern so far: flicker grows with frame rate
+(flush-all slow: none; r58 6-8 fps: a little; r57 12-15: a little; r59/r60
+12-16: yes; r55/r56 15-27: heavy), so a timing race is as likely as cache.
+0191 (fix attempt + measurement): the kernel stores each submit's fence on
+the imported surfaces it used; before the panel copy reads a GPU-drawn
+surface it waits for that fence (50 ms max). Every 10 s it logs copies, how
+many found the GPU still busy (timeouts, time waited), and how many saw the
+invalidate change sampled data (stale cache lines).
