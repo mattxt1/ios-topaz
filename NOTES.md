@@ -2,6 +2,21 @@
 
 ## River GPU active handoff (2026-10-21)
 
+Mesa freedreno now runs a complete GPU clear on river. The signed
+`river_gallium_test` reached `FD506` screen and context creation, compiled
+ir3 shaders, submitted a clear, waited for the GPU fence, and read back
+4096/4096 correct pixels in 34.42 ms (`../logs-private/r49-gallium-live-11.txt`).
+The preceding crash was an uninitialized Mesa GLSL type cache in our direct
+Gallium harness, fixed with `glsl_type_singleton_init_or_ref()` and decref.
+The successful RAM image is
+`shim-river/out/river-r49-gallium-glslinit-boot.img` (SHA256
+1e991677a99a4487d1944f0f29671db96222304ed886fa9cb74823ca1daba10f).
+Next work: GLES state tracker and CoreAnimation EAGL/GLI bridge. The public
+Pixel 1 port's `tools/sweetgl` is a useful reference for that bridge and
+IOSurface handling. Temporary Mesa trace markers have been removed.
+
+Historical diagnosis follows.
+
 Mesa's signed `river_gallium_test` RAM-booted on r49. RiverGPU and freedreno
 screen creation worked (`FD506`, 32.5 ms); PID 1 then SIGSEGV'd before the
 clear and XNU panicked on init exit. Full USB log is private

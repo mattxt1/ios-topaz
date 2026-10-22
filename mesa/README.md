@@ -27,9 +27,20 @@ cd ../mesa && meson setup build-ios --cross-file ../river-xnu/mesa/ios-arm64.cro
   -Dexpat=disabled -Dvalgrind=disabled -Dlibunwind=disabled -Dbuildtype=release
 ninja -C build-ios src/gallium/drivers/freedreno/river_gallium_test
 ```
-Status 2026-10-21: everything builds for iOS arm64, including
-`build-ios/src/gallium/drivers/freedreno/river_gallium_test` (12.7 MB, linked
-after the u_sync_provider fix). Signed and run on the phone: RiverGPU opened
-and Mesa created an FD506 screen, then PID 1 SIGSEGV'd before context creation
-returned. See RIVER.md r49g. The Mesa source tree currently has temporary
-`RIVER DIAG` context markers; the diagnostic binary and RAM image are built.
+Status 2026-10-21: `river_gallium_test` ran on the Moto G7. It created the
+FD506 screen and context, compiled the blitter shaders, submitted a real GPU
+clear, waited for its fence, and read back 4096/4096 correct RGBA8 pixels
+(private USB log `../logs-private/r49-gallium-live-11.txt`). The first run
+crashed in `glsl_array_type` because this direct Gallium test had not called
+`glsl_type_singleton_init_or_ref()`; the test now initializes and releases
+Mesa's GLSL type cache. Temporary `RIVER DIAG` source markers were removed.
+The signed successful RAM image is ignored at
+`shim-river/out/river-r49-gallium-glslinit-boot.img`.
+
+Next: build a GLES frontend for CoreAnimation. The Pixel 1 iOS port at
+https://github.com/joranv1/ios-sailfish/tree/main/tools/sweetgl provides a
+working reference for Mesa's state tracker, EAGL/GLI dispatch, IOSurface
+imports, and CoreAnimation shader compatibility. Its `mesa.patch` only
+changes BO mmap and IOSurface pitch handling; it does not address our test's
+GLSL type cache initialization. River's KMD is already implemented in
+freedreno and can be used directly instead of its MSM DRM emulation.

@@ -1504,3 +1504,35 @@ Next signed diagnostic RAM image has markers inside that pass:
 17e897cfd1a880d380ec8350dbe8849c04d1ec8d3739d6350935b21991a8aa94).
 It is built but not yet booted; phone needs fastboot. Temporary `RIVER DIAG`
 markers in the Mesa tree must be removed after the fault is fixed.
+
+### r49g GLSL cache fix: Mesa GPU clear succeeds
+The diag8 boot reached `nir_lower_uniforms_to_ubo`; the phone photo
+`IMG_0383.HEIC` (private) showed `uniform instructions pass progress=1`
+then `before glsl_array_type uniforms=1` followed by a PID 1 SIGSEGV. The
+direct Gallium test bypassed Mesa's GLES state tracker and had never called
+`glsl_type_singleton_init_or_ref()`, so `glsl_array_type()` had no cache
+allocator. Initialize the GLSL type singleton before `fd_screen_create()`
+and decref after the test. No kernel change was needed.
+
+The locally repacked, signed RAM image
+`shim-river/out/river-r49-gallium-glslinit-boot.img` (SHA256
+`1e991677a99a4487d1944f0f29671db96222304ed886fa9cb74823ca1daba10f`)
+was booted with the USB receiver already running. Private log
+`logs-private/r49-gallium-live-11.txt` records `context_create complete`,
+both blitter shaders converting and compiling, then:
+```
+GPU clear of 64x64 RGBA8 (0, 0.5, 1, 1): fence signalled in 34.42 ms, 4096/4096 pixels right, pixel 0 = ffff8000
+```
+This verifies Gallium context setup, shader compilation, a real A506 draw,
+submit, fence IRQ and CPU readback. The two unsupported param queries
+(`FD_TIMESTAMP`, `FD_UCHE_TRAP_BASE`) were nonfatal. Temporary `RIVER DIAG`
+source markers were removed after this boot and the Mesa patch regenerated.
+
+Next: GLES behind CoreAnimation. Public Pixel 1 reference:
+https://github.com/joranv1/ios-sailfish/tree/main/tools/sweetgl . Its
+`sweetgl.c` creates Mesa GLES contexts through `st_api_create_context()`;
+`eagl.c` adapts CoreAnimation's EAGL/GLI dispatch and imports IOSurfaces;
+`sweet_drm.c` emulates MSM DRM over its SweetGPU IOKit service. River can
+reuse the frontend concepts with its existing freedreno river KMD. The
+Pixel `mesa.patch` only adapts mmap and IOSurface pitch; it does not fix
+the direct Gallium test's GLSL cache issue.

@@ -737,10 +737,10 @@ index b04379b..1c8f6ec 100644
    [
 diff --git a/src/gallium/drivers/freedreno/river_gallium_test.c b/src/gallium/drivers/freedreno/river_gallium_test.c
 new file mode 100644
-index 0000000..a8a2fe6
+index 0000000..2405b74
 --- /dev/null
 +++ b/src/gallium/drivers/freedreno/river_gallium_test.c
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,166 @@
 +/*
 + * Copyright © 2026 river bring-up contributors
 + * SPDX-License-Identifier: MIT
@@ -762,6 +762,7 @@ index 0000000..a8a2fe6
 +#include "pipe/p_context.h"
 +#include "pipe/p_screen.h"
 +#include "pipe/p_state.h"
++#include "compiler/glsl_types.h"
 +#include "util/driconf.h"
 +#include "util/u_inlines.h"
 +
@@ -813,11 +814,13 @@ index 0000000..a8a2fe6
 +   say("screen \"%s\" by \"%s\" created in %.1f ms", screen->get_name(screen),
 +       screen->get_vendor(screen), ms_since(t0));
 +
++   say("context_create begin");
 +   struct pipe_context *ctx = screen->context_create(screen, NULL, 0);
 +   if (!ctx) {
 +      say("context_create failed");
 +      return;
 +   }
++   say("context_create complete");
 +
 +   const unsigned W = 64, H = 64;
 +   struct pipe_resource templ = {
@@ -894,8 +897,12 @@ index 0000000..a8a2fe6
 +   if (svc && IOServiceOpen(svc, mach_task_self(), 0, &log_conn))
 +      log_conn = 0;
 +   say("PID %d, RiverGPU %s", getpid(), svc ? "found" : "NOT found");
-+   if (svc)
++   if (svc) {
++      glsl_type_singleton_init_or_ref();
++      say("GLSL type cache initialized");
 +      run();
++      glsl_type_singleton_decref();
++   }
 +
 +   for (;;)
 +      sleep(3600);
