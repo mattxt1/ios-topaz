@@ -1986,3 +1986,18 @@ xnu-8796.141.3; global symbols identical to the macos-14 build except a new
 `_iBoot_Stage_2_version`; ~540 KB larger, local-symbol differences only from
 different inlining. Not yet booted. Images: `river-r70-check-boot.img` (r69
 config on the new kernel) and `river-r70-migrate-boot.img` (+ riverdm=1).
+
+### r70-check / r70-migrate (k-r70 = 0199+0200, Xcode 16 build) (r49-gallium-live-42/43.txt)
+r70-check (r69 boot-args on the Xcode 16 kernel): boots to SpringBoard, CA on
+Mesa, GPU presents with 0 dropped, no panic: the macos-15 kernel works.
+r70-migrate (+ riverdm=1): `RIVER DM: created /private/var/datamigrator/migrate`;
+the user saw the Apple logo + progress bar (DataMigration), first time on
+River. installd and com.apple.migrationpluginwrapper (4x) ran; backboardd drew
+the progress UI at 60 fps through GPU present. Crashes only driverkitd and
+accessoryupdater (sig 10). lskdd was exec'd 804 times and fairplayd.H2 kept
+restarting. eMMC read counters stopped advancing well before the end. At
+17:29 local the log stopped with no panic line; the screen froze on the bar;
+the USB link re-enumerated three times with no packets from the phone since
+(0 input packets on en6): most likely a hang mid-migration. Backup
+`device-private/backups/ios-root-before-migration-20261022-1622.img.gz`
+(sha256 6ed4d0a2...dd642) is the rollback point.
