@@ -1668,3 +1668,14 @@ are mask/atlas textures whose IOSurface import failed (A008 438x79 looks like
 a glyph atlas, LA08 23x23 a template icon), so CA sampled unbacked textures;
 r52c copies those instead. The refused QuartzCore fixes are colour-matrix
 and blur functions, not masks.
+
+### r52c (copy fallback for failed imports) (r49-gallium-live-21.txt): **labels and icons correct**
+User: with Settings open, the text labels and row icons now draw correctly
+(the r52b boxes are gone). So the boxes were textures whose IOSurface import
+failed. The log names the reasons for about 25 surfaces (A008 glyph masks up to 640x358,
+LA08 icons, RGhA ramps, BGRA 87x87): "no GPU mapping" (pmap_find_phys on the
+surface's kernel address found no page: memory not wired) and "no surface or
+no kernel mapping" (kernelAddress() 0). No crashes, no GPU faults; up to 4.2
+flushes/s while interacting, finish 10-35 ms. Next (0184): wire the surface
+memory (prepare) and import by physical segments, like the Pixel kernel,
+cache maintenance by physical address, user maps through the surface memory.
