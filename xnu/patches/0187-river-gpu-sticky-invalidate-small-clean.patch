@@ -1,0 +1,54 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index 0dd4d38..5228eb8 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -550,6 +550,7 @@ struct rgpu_bo {
+ /* RiverGPU.cpp: a surface's write seed, and "the GPU may have written it" */
+ extern uint32_t river_gpu_import_seed(void *import);
+ extern void river_gpu_import_touched(void *import);
++#define RGPU_IMPORT_ALWAYS_CLEAN	(1024 * 1024)
+ /* rivergpuflush=1: clean every buffer of every submit (before 0186) */
+ static int rgpu_flush_all;
+ extern boolean_t pmap_valid_page(ppnum_t pn);
+@@ -968,8 +969,10 @@ rgpu_bo_prepare_gpu(struct rgpu_bo *b)
+ 		return;
+ 	}
+ 	if (b->import != NULL) {
++		/* small surfaces (textures, glyph atlases) always: cheap, and safe
++		 * against writers that do not bump the seed; large ones by seed */
+ 		uint32_t seed = river_gpu_import_seed(b->import);
+-		if (!b->cleaned || seed != b->seed) {
++		if (!b->cleaned || seed != b->seed || b->size <= RGPU_IMPORT_ALWAYS_CLEAN) {
+ 			rgpu_bo_flush(b);
+ 			b->seed = seed;
+ 			b->cleaned = true;
+diff --git a/iokit/Kernel/arm/SweetSurface.cpp b/iokit/Kernel/arm/SweetSurface.cpp
+index 14317ac..7d8e58e 100644
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -212,8 +212,11 @@ extern "C" void flush_dcache64(addr64_t addr, unsigned count, int phys);
+ void
+ river_surface_cpu_read(SweetSurface *s, uintptr_t va, uint64_t len)
+ {
++	/*
++	 * Sticky: the GPU may still be drawing the next frame into this surface
++	 * while the panel copies it (r55 flickered when the mark was cleared).
++	 */
+ 	if (s->gpuTouched && s->scanoutPhys == 0 && va != 0 && len != 0) {
+-		s->gpuTouched = false;
+ 		flush_dcache64((addr64_t)va, (unsigned)len, FALSE);
+ 	}
+ }
+diff --git a/iokit/Kernel/arm/SweetSurface.h b/iokit/Kernel/arm/SweetSurface.h
+index 6be95b5..837e9cd 100644
+--- a/iokit/Kernel/arm/SweetSurface.h
++++ b/iokit/Kernel/arm/SweetSurface.h
+@@ -45,7 +45,7 @@ public:
+ 	uint32_t                  purgeable;    /* IOSurfaceSetPurgeable state */
+ 	uint32_t                  wrapDelta;    /* wrapped client memory: where it starts in its first page */
+ 	bool                      wrapped;      /* memory is a prepared range of a task (IOSurfaceWrapClient*) */
+-	bool                      gpuTouched;   /* river: used by a GPU submit since CPU caches were last dropped */
++	bool                      gpuTouched;   /* river: ever used by a GPU submit (CPU readers drop cache lines first) */
+ 
+ 	bool init() APPLE_KEXT_OVERRIDE { scanoutPhys = 0; scanoutSlot = -1; values = NULL; purgeable = 0; wrapDelta = 0; wrapped = false; gpuTouched = false; return OSObject::init(); }
+ 	void free() APPLE_KEXT_OVERRIDE;

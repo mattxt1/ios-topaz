@@ -1755,3 +1755,16 @@ invalidated once at free. Imported IOSurfaces are cleaned only when their
 seed (bumped on every writable unlock) changed since the last clean, and are
 marked gpuTouched; the panel copy invalidates a gpuTouched source before
 reading it. rivergpuflush=1 restores clean-everything-per-submit.
+
+### r55 (0186; CI 39722830907) (r49-gallium-live-26.txt): **~3x faster, but flickers**
+User: "definitely much smoother", but the screen flickers heavily.
+Continuous scroll, per frame: **7-16 frames/s** (r54r 2-4); kernel SUBMIT
+**~1.5-2.7 ms per frame** (~0.1 ms per submit; r54r 130-325 ms); texture
+barriers ~2-3 ms (r54r 70-180 ms); render-thread CPU ~17-26 ms (Mesa ~15-20,
+CA ~4-9); GPU wait ~12-24 ms; the rest (~40-110 ms) the render thread is not
+running (waiting), now the largest share. Panel copy ~19-23 ms per present.
+Flicker hypothesis: the panel copy invalidated a gpuTouched surface once and
+cleared the mark while the GPU could still be drawing the next frame into it,
+so later copies read stale cached lines; also writers that skip the seed.
+0187: the invalidate before the panel copy is sticky (any surface the GPU
+ever used), and imports <= 1 MiB are always cleaned before GPU use.
