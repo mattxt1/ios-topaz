@@ -1577,3 +1577,29 @@ GLES 3.1 context on FD506, linked shaders, and rendered the expected two
 pixel colors into its FBO with GL error 0 and `PASS`. This is a dynamic
 linking and offscreen rendering result; CoreAnimation has not been hooked
 yet. Next: EAGL/GLI adapter, IOSurface sharing, and backboardd injection.
+
+### r50 (0182; CI run 39704395933): **library injected into backboardd** (r49-gallium-live-15.txt)
+0182 adds boot-arg `riverenv=NAME:VAR=VALUE`: exec appends VAR=VALUE to the
+environment of executables named NAME. Without an AMFI kext, dyld's policy
+query `__mac_syscall("AMFI", 0x5a)` failed, so dyld ignored every DYLD_*
+variable. A RIVER-only MAC policy named "AMFI" now answers 0x7b (all but a
+custom shared cache) for NAME only, and is registered only when riverenv is
+set. Every other process still gets ENOPOLICY. Test library:
+`tools/river-inject-probe.c` (logs via RiverGPU LOG, changes nothing).
+RAM image `shim-river/out/river-r50-probe-boot.img` (r49 GUI boot-args +
+`riverenv=backboardd:DYLD_INSERT_LIBRARIES=/usr/local/lib/libriverprobe.dylib`,
+SHA256 32487f5fe9d2255ae347dd12e76d81199721ed26d8fd2dcfab5548666f90840a):
+```
+RIVER ENV: backboardd gets DYLD_INSERT_LIBRARIES=/usr/local/lib/libriverprobe.dylib
+RIVER AMFI: dyld policy for backboardd[56]: in 0x0 out 0x7b
+RIVER GPU [backboardd]: probe: loaded in backboardd pid 56 uid 501, DYLD_INSERT_LIBRARIES=..., 301 images so far
+```
+After that, the probe saw backboardd load IOSurface, IOSurfaceAccelerator, Metal,
+IOAccelerator, QuartzCore, OpenGLES (libGFXShared, libGLImage,
+libCoreVMClient, libCVMSPluginSupport), Metal Performance Shaders, and later
+`OpenGLES.framework/GLEngine.bundle/GLEngine` and libGLProgrammability. So
+CoreAnimation in backboardd does bring up Apple's GL engine on river; that is
+the layer the EAGL/GLI adapter must replace. SpringBoard started and no
+backboardd exit was logged. Home screen not yet checked visually.
+Next: EAGL/GLI adapter in a River-written dylib (log first calls, fall back
+to the original EAGL), then IOSurface import or copy.
