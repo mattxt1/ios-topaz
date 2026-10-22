@@ -1658,3 +1658,13 @@ function fixes refused (code did not match their expectation). Four small
 texImageIOSurface textures (A008 438x79, LA08 23x23, RGhA 256x1 x2) failed
 kernel import (reason not logged). r52c: those fall back to a CPU copy, and
 import failures log their reason. Screen output of r52b not yet reported.
+**r52b screen (user report, private photos IMG_0384/0385): GPU-rendered UI.**
+Home screen and Settings draw through Mesa and run; transparency and blur
+are fully correct with no glitches. Wrong: some text labels are solid boxes
+in the text colour (home "Photos" label, search pill, several Settings row
+titles, the account name in blue), Settings row icons are black squares, two
+widgets show white "Waiting..." tiles. Hypothesis (not verified): the boxes
+are mask/atlas textures whose IOSurface import failed (A008 438x79 looks like
+a glyph atlas, LA08 23x23 a template icon), so CA sampled unbacked textures;
+r52c copies those instead. The refused QuartzCore fixes are colour-matrix
+and blur functions, not masks.
