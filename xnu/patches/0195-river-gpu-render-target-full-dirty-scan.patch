@@ -1,0 +1,127 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index e0abdab..56175ff 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -555,6 +555,7 @@ extern uint32_t river_gpu_import_seed(void *import);
+ extern void river_gpu_import_touched(void *import);
+ extern void river_gpu_import_fenced(void *import, uint32_t fence);
+ extern void river_gpu_import_describe(void *import, char *buf, size_t len);
++extern void river_gpu_import_geometry(void *import, uint32_t *start, uint32_t *bpr, uint32_t *bpe, uint32_t *w, uint32_t *h);
+ extern vm_map_address_t phystokv(uint64_t pa);
+ extern void ml_io_unmap(vm_offset_t addr, vm_size_t sz);
+ #define RGPU_IMPORT_ALWAYS_CLEAN	(1024 * 1024)
+@@ -1029,10 +1030,20 @@ rgpu_rt_sample(struct rgpu_bo *b)
+ 		return;
+ 	}
+ 	b->sampled_at = now;
+-	unsigned dirty = 0, n = 0;
+-	for (unsigned i = 0; i < 32; i++) {
+-		uint32_t p = (uint32_t)(((uint64_t)i * b->npages) / 32);
+-		uint64_t off = ((uint64_t)(i * 1237u) % (PAGE_SIZE / 64)) * 64;
++	/* the GPU still writing it would look like CPU-dirty lines: wait first */
++	if (!rgpu_fence_done(b->fence)) {
++		(void)rgpu_wait(b->fence, 100);
++	}
++	/*
++	 * 0195: every cache line of the surface (r64's 32 lines could not see a
++	 * write to a small region): memory through an uncached page mapping
++	 * against the cached kernel view, with the dirty pixels' bounds.
++	 */
++	uint32_t start, bpr, bpe, w, h;
++	river_gpu_import_geometry(b->import, &start, &bpr, &bpe, &w, &h);
++	uint64_t dirty = 0, lines = 0;
++	uint32_t r0 = UINT32_MAX, r1 = 0, c0 = UINT32_MAX, c1 = 0;
++	for (uint32_t p = 0; p < b->npages; p++) {
+ 		uint64_t pa = b->pa[p];
+ 		if (!pmap_valid_page((ppnum_t)atop_64(pa))) {
+ 			continue;
+@@ -1041,29 +1052,45 @@ rgpu_rt_sample(struct rgpu_bo *b)
+ 		if (u == 0) {
+ 			continue;
+ 		}
+-		const volatile uint64_t *mem = (const volatile uint64_t *)(u + off);
+-		const volatile uint64_t *cpu = (const volatile uint64_t *)(phystokv(pa) + off);
+-		uint64_t m[8];
+-		for (unsigned k = 0; k < 8; k++) m[k] = mem[k];
+-		bool diff = false;
+-		for (unsigned k = 0; k < 8; k++) diff |= cpu[k] != m[k];
++		const volatile uint64_t *mem = (const volatile uint64_t *)u;
++		const volatile uint64_t *cpu = (const volatile uint64_t *)phystokv(pa);
++		for (uint32_t l = 0; l < PAGE_SIZE / 64; l++) {
++			bool diff = false;
++			for (unsigned k = 0; k < 8; k++) {
++				diff |= cpu[l * 8 + k] != mem[l * 8 + k];
++			}
++			lines++;
++			if (!diff) {
++				continue;
++			}
++			dirty++;
++			uint64_t idx = (uint64_t)p * PAGE_SIZE + (uint64_t)l * 64;
++			if (bpr != 0 && idx >= start) {
++				uint32_t row = (uint32_t)((idx - start) / bpr), col = (uint32_t)(((idx - start) % bpr) / bpe);
++				r0 = row < r0 ? row : r0;
++				r1 = row > r1 ? row : r1;
++				c0 = col < c0 ? col : c0;
++				c1 = col + 64 / bpe > c1 ? col + 64 / bpe : c1;
++			}
++		}
+ 		ml_io_unmap(u, PAGE_SIZE);
+-		dirty += diff;
+-		n++;
+ 	}
++	uint64_t t1 = mach_absolute_time();
+ 	rgpu_rt_sampled++;
+ 	if (dirty) {
+ 		rgpu_rt_dirty_surfaces++;
+-		if (rgpu_rt_detail++ < 6) {
++		if (rgpu_rt_detail++ < 8) {
+ 			char d[200];
+ 			river_gpu_import_describe(b->import, d, sizeof(d));
+-			printf("RIVER GPU: render target with CPU-dirty lines %u/%u: %s\n", dirty, n, d);
++			absolutetime_to_nanoseconds(t1 - now, &ns);
++			printf("RIVER GPU: render target CPU-dirty: %llu of %llu lines, pixels x %u-%u y %u-%u (scan %llu ms): %s\n",
++			    dirty, lines, c0, c1 > w ? w : c1, r0, r1, ns / 1000000, d);
+ 		}
+ 	}
+ 	absolutetime_to_nanoseconds(now - rgpu_rt_report, &ns);
+ 	if (ns >= 10000000000ULL) {
+ 		if (rgpu_rt_report != 0) {
+-			printf("RIVER GPU: 10 s: %u render-target samples, %u with CPU-dirty lines\n",
++			printf("RIVER GPU: 10 s: %u render targets scanned in full, %u with CPU-dirty lines\n",
+ 			    rgpu_rt_sampled, rgpu_rt_dirty_surfaces);
+ 		}
+ 		rgpu_rt_report = now;
+diff --git a/iokit/Kernel/arm/RiverGPU.cpp b/iokit/Kernel/arm/RiverGPU.cpp
+index 3ca9fba..4cab036 100644
+--- a/iokit/Kernel/arm/RiverGPU.cpp
++++ b/iokit/Kernel/arm/RiverGPU.cpp
+@@ -50,6 +50,7 @@ uint32_t river_gpu_import_seed(void *import);
+ void river_gpu_import_touched(void *import);
+ void river_gpu_import_fenced(void *import, uint32_t fence);
+ void river_gpu_import_describe(void *import, char *buf, size_t len);
++void river_gpu_import_geometry(void *import, uint32_t *start, uint32_t *bpr, uint32_t *bpe, uint32_t *w, uint32_t *h);
+ int river_gpu_bo_kva(void *owner, uint32_t handle, vm_offset_t *kva, uint64_t *size);
+ int river_gpu_bo_free(void *owner, uint32_t handle);
+ int river_gpu_submit(void *owner, const struct river_gpu_cmd *cmd, uint32_t ncmd,
+@@ -92,6 +93,20 @@ river_gpu_import_describe(void *import, char *buf, size_t len)
+ 	    s->riverMappers[1], s->riverMappers[2], s->riverMappers[3]);
+ }
+ 
++/* 0195: where pixel (0,0) is, from the start of the import's first page, and the row stride */
++void
++river_gpu_import_geometry(void *import, uint32_t *start, uint32_t *bpr, uint32_t *bpe, uint32_t *w, uint32_t *h)
++{
++	SweetSurface *s = (SweetSurface *)import;
++	IOByteCount seg = 0;
++	uint64_t first = s->memory->getPhysicalSegment(0, &seg, kIOMemoryMapperNone);
++	*start = (uint32_t)(first & PAGE_MASK) + s->offset;
++	*bpr = s->bytesPerRow;
++	*bpe = s->bytesPerElement ? s->bytesPerElement : 4;
++	*w = s->width;
++	*h = s->height;
++}
++
+ void
+ river_gpu_import_fenced(void *import, uint32_t fence)
+ {
