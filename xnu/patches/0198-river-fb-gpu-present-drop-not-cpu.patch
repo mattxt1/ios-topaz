@@ -1,0 +1,121 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index f6a7da8..4c6c58f 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -1264,6 +1264,9 @@ river_gpu_fence_done(uint32_t fence)
+ #define RB5_R8G8B8A8_UNORM		48
+ 
+ static int rgpu_blit_slot = -1;
++/* 0198: a blit that timed out keeps its windows mapped until it completes */
++static uint32_t rgpu_blit_pending;
++static uint64_t rgpu_blit_pending_src, rgpu_blit_pending_dst;
+ 
+ int river_gpu_blit(const uint64_t *pa, uint32_t npages, uint64_t start, uint32_t src_pitch, uint32_t sx, uint32_t sy,
+     uint64_t dst_pa, uint64_t dst_size, uint32_t dst_pitch, uint32_t dx, uint32_t dy, uint32_t w, uint32_t h,
+@@ -1285,6 +1288,18 @@ river_gpu_blit(const uint64_t *pa, uint32_t npages, uint64_t start, uint32_t src
+ 			return ENOMEM;
+ 		}
+ 	}
++	if (rgpu_blit_pending != 0) {
++		/* the previous blit timed out: let it finish before reusing its windows */
++		if (!rgpu_fence_done(rgpu_blit_pending) && !rgpu_wait(rgpu_blit_pending, timeout_ms)) {
++			return EBUSY;
++		}
++		lck_mtx_lock(rgpu_lock);
++		gmmu_unmap(RGPU_BLIT_DST_VA, rgpu_blit_pending_dst);
++		gmmu_unmap(RGPU_BLIT_SRC_VA, rgpu_blit_pending_src);
++		gmmu_sync();
++		lck_mtx_unlock(rgpu_lock);
++		rgpu_blit_pending = 0;
++	}
+ 	/* pixel (0,0) must be 64-byte aligned: move the misalignment into x */
+ 	uint64_t src_base = RGPU_BLIT_SRC_VA + (start & ~63ULL);
+ 	sx += (uint32_t)((start & 63) / 4);
+@@ -1346,6 +1361,9 @@ river_gpu_blit(const uint64_t *pa, uint32_t npages, uint64_t start, uint32_t src
+ 		uint32_t seq = rgpu_submit(&ib, &n, 1);
+ 		if (!rgpu_wait(seq, timeout_ms)) {
+ 			err = ETIMEDOUT;
++			rgpu_blit_pending = seq;
++			rgpu_blit_pending_src = src_bytes;
++			rgpu_blit_pending_dst = dst_bytes;
+ 		}
+ 	}
+ 	if (err != ETIMEDOUT) {		/* a GPU still blitting keeps its mapping */
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 3fd2b33..8171c92 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -79,7 +79,8 @@ static uint64_t river_present_ns, river_present_rows, river_presents, river_dire
+ static int river_zc;	/* boot-arg riverzc=1: scan iOS's scanout-pool surface directly */
+ static int river_blit = -1;	/* boot-arg riverblit=1: present with the GPU 2D blitter (0197) */
+ static bool river_blit_flushed;
+-static uint32_t river_blit_ok, river_blit_fail;
++static bool river_blit_drop_frame;	/* 0198: this present's GPU blit failed: do not flip */
++static uint32_t river_blit_ok, river_blit_fail, river_blit_dropped, river_blit_cpu;
+ static uint64_t river_blit_ns, river_blit_report;
+ extern "C" int river_gpu_blit(const uint64_t *pa, uint32_t npages, uint64_t start, uint32_t src_pitch, uint32_t sx,
+     uint32_t sy, uint64_t dst_pa, uint64_t dst_size, uint32_t dst_pitch, uint32_t dx, uint32_t dy, uint32_t w,
+@@ -1191,7 +1192,7 @@ AppleCLCD::present(const uint8_t *rec)
+ 			}
+ 			uint64_t t0 = mach_absolute_time();
+ 			int err = have ? river_gpu_blit(pa, npages, start, s->bytesPerRow, (uint32_t)sx, (uint32_t)sy,
+-			    fFlipPhys[back], fFlip[back]->getLength(), fRowBytes, 0, 0, (uint32_t)w, (uint32_t)h, 50) : ENOMEM;
++			    fFlipPhys[back], fFlip[back]->getLength(), fRowBytes, 0, 0, (uint32_t)w, (uint32_t)h, 200) : ENOMEM;
+ 			uint64_t t1 = mach_absolute_time(), ns;
+ 			if (pa != NULL) {
+ 				IOFreeData(pa, npages * sizeof(uint64_t));
+@@ -1201,16 +1202,17 @@ AppleCLCD::present(const uint8_t *rec)
+ 				river_blit_ok++;
+ 				river_blit_ns += ns;
+ 			} else if (river_blit_fail++ < 5) {
+-				IOLog("RIVER FB: GPU present failed (%d), CPU copy instead\n", err);
++				IOLog("RIVER FB: GPU present failed (%d), frame dropped\n", err);
+ 			}
+ 			absolutetime_to_nanoseconds(t1 - river_blit_report, &ns);
+ 			if (ns >= 10000000000ULL) {
+ 				if (river_blit_report != 0) {
+-					IOLog("RIVER FB: 10 s: %u GPU presents (avg %llu us), %u fell back\n", river_blit_ok,
+-					    river_blit_ok ? river_blit_ns / river_blit_ok / 1000 : 0, river_blit_fail);
++					IOLog("RIVER FB: 10 s: %u GPU presents (avg %llu us), %u dropped, %u GPU-surface layers copied by the CPU\n",
++					    river_blit_ok, river_blit_ok ? river_blit_ns / river_blit_ok / 1000 : 0, river_blit_dropped,
++					    river_blit_cpu);
+ 				}
+ 				river_blit_report = t1;
+-				river_blit_ok = river_blit_fail = 0;
++				river_blit_ok = river_blit_dropped = river_blit_cpu = 0;
+ 				river_blit_ns = 0;
+ 			}
+ 			if (err == 0) {
+@@ -1219,6 +1221,18 @@ AppleCLCD::present(const uint8_t *rec)
+ 				s->release();
+ 				continue;
+ 			}
++			/*
++			 * 0198: never the CPU copy (stale reads of GPU surfaces: the r68
++			 * flicker candidate). Keep showing the front buffer; the next
++			 * frame replaces it.
++			 */
++			river_blit_dropped++;
++			river_blit_drop_frame = true;
++			s->release();
++			continue;
++		}
++		if (river_blit && src != 0 && s->gpuTouched) {
++			river_blit_cpu++;	/* 0198: GPU surface copied by the CPU (not one full-screen layer) */
+ 		}
+ 		/* GPU-rendered (sweetgl): submits no longer drop CPU cache lines (0186) */
+ 		if (src != 0) {
+@@ -1274,6 +1288,13 @@ AppleCLCD::present(const uint8_t *rec)
+ 		}
+ 		s->release();
+ 	}
++#if defined(RIVER)
++	if (river_blit_drop_frame) {
++		river_blit_drop_frame = false;
++		river_flip_valid[fFlipIdx ^ 1] = false;
++		return;		/* 0198: the back buffer is incomplete; keep the front one */
++	}
++#endif
+ 	if (fFlip[0] != NULL) {
+ 		flipBack();
+ 	}
