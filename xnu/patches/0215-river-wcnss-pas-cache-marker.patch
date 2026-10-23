@@ -1,0 +1,40 @@
+From 7c8c199cfcae2fdec6094da099561433f2df5769 Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Fri, 23 Oct 2026 16:52:47 -0400
+Subject: [PATCH] RIVER: clean PAS metadata and mark SCM call boundary
+
+---
+ bsd/dev/sweet_keys.c | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 886020d..2838f2f 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -15,6 +15,7 @@
+ extern vm_offset_t ml_io_map_unmappable(vm_offset_t, vm_size_t, uint32_t);
+ extern void sweet_hid_key(int, int);
+ extern void sweet_hid_touch(int, int, int, int);
++extern void sweet_dcache_clean(vm_offset_t, unsigned);
+ void river_input_init(void);
+ static vm_offset_t ri_qup, ri_gcc, ri_gcc_ahb, ri_gcc_vote;
+ static vm_offset_t ri_tlmm, ri_touch, ri_key, ri_spmi, ri_obs;
+@@ -319,7 +320,14 @@ river_wcnss_probe(void)
+   printf("RIVER WCNSS: invalid ELF32 PAS metadata\n");
+   return;
+  }
+- __asm__ volatile("dsb sy" ::: "memory");
++ /* The boot blob is cached, while PAS reads its physical address.  Clean
++  * the exact buffer to PoC before TrustZone protects and reads these pages.
++  * Linux uses a coherent allocation for this same SCM command. */
++ sweet_dcache_clean((vm_offset_t)meta, (unsigned)len);
++ printf("RIVER WCNSS: PAS init_image about to call with metadata %#llx+%#llx (cache clean complete)\n",
++     pa, len);
++ /* Let the USB console receiver persist the marker if TZ resets the SoC. */
++ ri_wait(12000);
+  uint64_t res = 0;
+  int64_t st = river_scm(0x02, 0x01, 2 | (2 << 6), 6, pa, &res);
+  printf("RIVER WCNSS: PAS init_image metadata %#llx+%#llx status %lld result %llu (no reset)\n",
+-- 
+2.54.0 (Apple Git-156)
+

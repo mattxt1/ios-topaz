@@ -73,9 +73,22 @@ text and is not usable for failure attribution. No partition was flashed.
 Prepared `shim-river/out/river-r84-noinit-boot.img` (SHA-256
 `8732bf3bf5019adb27d68fd87db9f415db0c3b4c9e126d7e2f9e05fe94ff543b`)
 with the exact same r84 kernel and metadata blob, changing only
-`riverwcnssinit=1` to `=0`; phone control test pending fastboot handoff. If it
-boots, the init-image call path is implicated. Avoid repeating the failing
-probe unchanged.
+`riverwcnssinit=1` to `=0`. This matched RAM-only control booted on the phone:
+USB Ethernet and SSH came up, and the live log reported both PAS capability
+checks successful without an init-image line. Therefore the failed r84 boot is
+associated with the enabled init-image path, although the exact failure mode
+has not been observed. Private console evidence is in
+`../logs-private/r81-vigfit-live-8.txt` (the existing receiver file). Avoid
+repeating the failing probe unchanged.
+
+Patch 0215 (`7c8c199` in the scratch XNU checkout) explicitly cleans the
+cached metadata boot blob to the point of coherency, prints a pre-SMC marker,
+and waits 12 seconds to give the USB log receiver time to persist it. Linux's
+PAS caller uses a physically contiguous, 4 KiB aligned, noncached buffer for
+metadata; the River blob is contiguous/aligned but cached. Cleaning it is a
+diagnostic improvement, not proof that all TrustZone memory requirements are
+met. Build/test of 0215 pending. The current phone remains on the working
+control image; no partition was flashed.
 
 ## River performance and app follow-up (2026-10-23)
 
