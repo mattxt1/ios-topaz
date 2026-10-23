@@ -18,9 +18,13 @@
 #define BOOT_LINE_LENGTH	608
 #define PAGE_16K		0x4000UL
 
-/* Above splash/modem/ADSP carve-outs, below the 0xeefa1800 crash regions. */
-#define RIVER_RAM_LO		0xa0000000UL
-#define RIVER_RAM_HI		0xee000000UL
+/*
+ * Low DRAM above ABL's boot buffers (shim, DTB and ramdisk end below
+ * 0x16000000) and below River's GPU zap shader at 0x81800000, the first
+ * fixed carve-out (firmware regions start at 0x84300000).
+ */
+#define RIVER_RAM_LO		0x18000000UL
+#define RIVER_RAM_HI		0x81800000UL
 
 struct payload_seg {
 	uint64_t vmaddr, vmsize, file_off, file_size;

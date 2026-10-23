@@ -15,10 +15,12 @@ import mkadt
 
 
 # A single contiguous window with no fixed reserved-memory node in the live
-# FDT: above the 0x90000000 splash and below the 0xeefa1800 crash carve-outs.
-# This is enough for early kernel work, not a final whole-RAM layout.
-PHYS_BASE = 0xA0000000
-MEM_SIZE = 0x4E000000
+# FDT: DRAM starts at 0x10000000; ABL's boot buffers (shim, DTB, ramdisk
+# payload) end below 0x16000000; the first fixed carve-out is River's own GPU
+# zap shader at 0x81800000 (then SMMU ptbl 0x82000000, firmware from
+# 0x84300000). 1.65 GB; the old window 0xa0000000-0xee000000 was 1.25 GB.
+PHYS_BASE = 0x18000000
+MEM_SIZE = 0x69800000
 GICD = 0x0B000000
 GICC = 0x0B002000
 FB = 0x90001000
