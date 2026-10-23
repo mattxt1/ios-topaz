@@ -2083,3 +2083,20 @@ r76-fullram boots; vm_stat at the home screen: 237,486 pages in range (~16k
 of them the holes, counted as wired), free 86,191 (1.35 GB), speculative
 51,065: ~3.38 GB usable, ~2x phase 1, ~2.7x the original window.
 User on r76-fullram: "feels good under heavy use, no freezes" (app switcher, Safari, several apps).
+
+### Lock-screen clock: NULL CoreGraphics context (r76, diagnosis in progress)
+On-phone tools (phone-tools/: oslog, exq, psx, pstack from ios-flame; rput,
+cgprobe) installed by river-r76-tools / rput. exq: LaunchServices 157 apps,
+413 extension records (9 posterkit.provider, 8 widgetkit-extension). oslog on
+SpringBoard: building the lock screen (after boot or `psx -k SpringBoard`)
+logs hundreds of CoreGraphics "invalid context 0x0" errors in text-drawing
+sequences (SetFont/SetFontSize/SetTextPosition/.../CGBitmapContextCreateImage):
+the clock/date text is drawn into a bitmap context that was never created.
+All IOSurface creations succeed (kernel log). CG_CONTEXT_SHOW_BACKTRACE=1
+(SpringBoard env in launchd.plist.river-f) only gives `<redacted>` frames;
+private log data enabled via /Library/Preferences/Logging/com.apple.system.logging.plist.
+Next: river-r76-cgprobe (riverenv=SpringBoard + libcgprobe.dylib) logs the
+failing CGBitmapContextCreate parameters and unslid callers. Also: AegirPoster
+SIGABRT loop (~30/boot), Siri TTS synth loops, extension check-in timeouts.
+Folder cleaned: images r1-r73 deleted (rebuildable), kernels r1-r73 moved to
+archive/kernels/; tools/river-mkimage.sh builds images.
