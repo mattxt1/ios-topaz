@@ -27,4 +27,6 @@ cc -fobjc-arc -framework Foundation -larchive -o "$out/appinstall" appinstall.m
 sign appinstall
 cc -fobjc-arc -framework Foundation -o "$out/applaunch" applaunch.m
 sign applaunch
+cc -o "$out/btaudio-toggle" btaudio-toggle.c
+sign btaudio-toggle
 ls -l "$out"
