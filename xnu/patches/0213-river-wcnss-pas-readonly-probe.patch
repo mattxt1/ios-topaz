@@ -1,0 +1,33 @@
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index af7efb0..824359c 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -278,6 +278,20 @@ river_scm(uint32_t svc, uint32_t cmd, uint64_t arginfo, uint64_t a0, uint64_t a1
+  return (int64_t)x0;
+ }
+ 
++/* Read-only first gate for River's distinct WCNSS/Pronto WLAN subsystem.
++ * Do not touch radio clocks, PAS reset or reserved firmware memory here. */
++static void
++river_wcnss_probe(void)
++{
++ uint32_t enabled = 0;
++ if (!PE_parse_boot_argn("riverwcnssprobe", &enabled, sizeof(enabled)) || !enabled) return;
++ uint64_t avail = 0, supported = 0;
++ int64_t a = river_scm(0x06, 0x01, 1, 0x42000201ULL, 0, &avail);
++ int64_t s = river_scm(0x02, 0x07, 1, 6, 0, &supported);
++ printf("RIVER WCNSS: read-only PAS init_image call avail status %lld result %llu; PAS 6 support status %lld result %llu\n",
++     a, avail, s, supported);
++}
++
+ static void
+ river_gpu_probe(void)
+ {
+@@ -350,6 +364,7 @@ river_gpu_probe(void)
+ static void
+ ri_probe(void)
+ {
++ river_wcnss_probe();
+  ri_tlmm = ri_map(0x01008000);
+  ri_touch = ri_map(0x01040000);
+  ri_key = ri_map(0x01054000);

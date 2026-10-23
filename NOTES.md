@@ -30,6 +30,13 @@ then WCNSS control/NV and DXE. Only after radio readiness should an iOS
 network interface be published. Do not change regulators or PAS blindly.
 The current iOS root has no Android WCNSS firmware installed.
 
+Patch 0213 adds `riverwcnssprobe=1`: two read-only Qualcomm SCM queries
+for PAS init-image call availability and WCNSS PAS ID 6 support during the
+River input thread's early probe. It does not reset the radio or write
+WCNSS registers. The local River single-file compile passed; CI and a
+RAM-only phone test are pending. This probe is a hardware gate, not a
+Wi-Fi driver.
+
 ## River performance and app follow-up (2026-10-23)
 
 r82 RAM boot succeeded from `shim-river/out/river-r82-apps-boot.img` (only
