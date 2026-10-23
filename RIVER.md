@@ -2082,3 +2082,4 @@ reaches one, and the physmap maps each stretch between holes separately
 r76-fullram boots; vm_stat at the home screen: 237,486 pages in range (~16k
 of them the holes, counted as wired), free 86,191 (1.35 GB), speculative
 51,065: ~3.38 GB usable, ~2x phase 1, ~2.7x the original window.
+User on r76-fullram: "feels good under heavy use, no freezes" (app switcher, Safari, several apps).
