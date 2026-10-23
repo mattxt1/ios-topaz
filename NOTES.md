@@ -19,6 +19,16 @@ against Foundation and the existing iOS libarchive. No kernel or partition chang
 
 ## River display fit tests (2026-10-23)
 
+- Patch 0210 r81 CI `39992378505` passed. The verified kernel was packaged
+  with the r76 full-RAM ADT and GPU firmware plus `riverfitmdp=1`; `fastboot
+  boot` of the temporary r81 image succeeded. USB log
+  `logs-private/r81-vigfit-live-2.txt` shows SpringBoard started, full-screen
+  swaps arrived, and VIG0 overlay fit activated on swap 2. The user saw a blue
+  screen with intermittent Apple logo, so 0210 is also a failed display probe.
+  No further r81 phone tests until the MDP path is audited offline. The
+  installed partitions were not changed. `fastboot boot` of the known working
+  r76 full-RAM image succeeded; the user confirmed it booted normally after
+  the usual delay.
 - Offline r80 candidate (commit `31c4edb`, CI `39989122435` passed): the
   saved River DT has `qcom,mdss-has-non-scalar-rgb`,
   so the ABL RGB0 scanout pipe cannot scale. VIG0 is present at +0x5000 and
@@ -33,10 +43,11 @@ against Foundation and the existing iOS libarchive. No kernel or partition chang
   apps present. Treat 0209 as a
   failed diagnostic, not a usable fit. The RGB0-to-VIG0 handoff needs a
   register/clock/fetch audit before any more phone tests.
-- Patch 0210 r81 candidate is offline only: force VIG0's DT-specified pipe
+- Patch 0210 r81 candidate: force VIG0's DT-specified pipe
   clock on; keep ABL RGB0 at mixer base and place VIG0 at the next stage;
   program opaque blending and flush LM0 with CTL/VIG0/RGB0. This addresses
-  plausible causes of the r80 blue screen but has not yet been built or booted.
+  plausible causes of the r80 blue screen; despite log activation, the panel
+  still appeared blue to the user.
 - Patch 0207 (`67d6e89`, CI 39906798316 passed), r78 RAM boot: offscreen
   A5xx mode 7 / CP_BLIT op 3 64x64 -> 32x32 probe completed its fence but
   left all four destination samples at 0xdeadbeef. The normal GPU present and
