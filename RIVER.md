@@ -2069,3 +2069,16 @@ mkadt_river.py): **0x18000000-0x81800000, 1.65 GB** (was 0xa0000000-0xee000000,
 at the home screen; user: "running well". Phase 2 (~3.4 GB) needs the pmap
 (linear first_avail..avail_end allocator, pmap_next_page) and the physmap to
 skip the carve-out holes; never map TZ-protected regions (speculative access).
+
+### More RAM, phase 2: 0x18000000-4 GiB around the carve-outs (0205, r76)
+Kernel 0205 (osfmk/arm64/river_phys.h): holes 0x81800000-0x91400000 and
+0xeefa0000-0xef0c0000 inside xnu's range. pa_valid() is false there (the pmap
+keeps treating GPU zap/SMMU ptbl/splash as I/O), pmap_is_bad_ram() reports
+them and pmap_startup marks their vm_pages errored so they are never freed
+(arm64 needs vm_pages[] linear in ppnum), pmap_steal_memory panics if it ever
+reaches one, and the physmap maps each stretch between holes separately
+(nothing maps the carve-outs). `tools/mkadt_river.py --full-ram` makes the
+0x18000000-0x100000000 ADT window (needs 0205); the default stays 1.65 GB.
+r76-fullram boots; vm_stat at the home screen: 237,486 pages in range (~16k
+of them the holes, counted as wired), free 86,191 (1.35 GB), speculative
+51,065: ~3.38 GB usable, ~2x phase 1, ~2.7x the original window.
