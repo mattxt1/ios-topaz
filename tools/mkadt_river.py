@@ -21,6 +21,10 @@ import mkadt
 # 0x84300000). 1.65 GB; the old window 0xa0000000-0xee000000 was 1.25 GB.
 PHYS_BASE = 0x18000000
 MEM_SIZE = 0x69800000
+# --full-ram: everything up to the end of DRAM at 4 GiB (3.6 GB range,
+# ~3.38 GB usable). Only for kernels with 0205, which skips the firmware
+# holes (osfmk/arm64/river_phys.h); an older kernel would hand them out.
+MEM_SIZE_FULL = 0x100000000 - PHYS_BASE
 GICD = 0x0B000000
 GICC = 0x0B002000
 FB = 0x90001000
@@ -115,7 +119,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('output')
     parser.add_argument('--dump', action='store_true')
+    parser.add_argument('--full-ram', action='store_true',
+                        help='RAM to 4 GiB around the firmware holes (kernel 0205+)')
     args = parser.parse_args()
+    global MEM_SIZE
+    if args.full_ram:
+        MEM_SIZE = MEM_SIZE_FULL
     blob = adt.serialize(make_tree())
     parsed, end = adt.parse(blob)
     assert end == len(blob)

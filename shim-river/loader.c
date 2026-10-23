@@ -19,12 +19,14 @@
 #define PAGE_16K		0x4000UL
 
 /*
- * Low DRAM above ABL's boot buffers (shim, DTB and ramdisk end below
- * 0x16000000) and below River's GPU zap shader at 0x81800000, the first
- * fixed carve-out (firmware regions start at 0x84300000).
+ * DRAM above ABL's boot buffers (shim, DTB and ramdisk end below
+ * 0x16000000) up to its end at 4 GiB. Firmware carve-outs lie inside
+ * (0x81800000-0x91400000, 0xeefa0000-0xef0c0000): kernels with 0205 skip
+ * them; older kernels get an ADT window that ends at 0x81800000. The
+ * kernel segments, ADT and boot_args are always copied to the low end.
  */
 #define RIVER_RAM_LO		0x18000000UL
-#define RIVER_RAM_HI		0x81800000UL
+#define RIVER_RAM_HI		0x100000000UL
 
 struct payload_seg {
 	uint64_t vmaddr, vmsize, file_off, file_size;

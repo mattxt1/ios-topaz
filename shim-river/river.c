@@ -6,7 +6,7 @@
  * any storage controller. The only clock write is the Gold (perf) cluster
  * mux, copied from Linux's cpu_clock_init(); the only other writes outside
  * our own image are the splash framebuffer and, for a valid payload, the
- * 0x18000000-0x81800000 kernel window (loader.c).
+ * 0x18000000-0x100000000 kernel window (loader.c).
  *
  * Without a payload (or on any failure) the screen keeps the report for
  * 60 s, then PSCI SYSTEM_RESET reboots into the installed Android.
