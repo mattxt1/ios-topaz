@@ -23,4 +23,6 @@ for m in oslog exq; do cc -fobjc-arc -framework Foundation -o "$out/$m" "$m.m"; 
 cc -Wno-deprecated-declarations -dynamiclib -install_name /usr/local/lib/libcgprobe.dylib \
 	-framework CoreGraphics -framework CoreFoundation -o "$out/libcgprobe.dylib" cgprobe.c
 codesign -f -s - "$out/libcgprobe.dylib"
+cc -fobjc-arc -framework Foundation -larchive -o "$out/appinstall" appinstall.m
+sign appinstall
 ls -l "$out"

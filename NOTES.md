@@ -1,5 +1,19 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River stock apps (2026-10-23, installation in progress)
+
+Normal r76-fullram RAM boot. `phone-tools/appinstall.m` extracts private tar
+streams into unique `/Applications/.river-stock-UUID` staging, moves new
+bundles without replacing existing apps, and registers system application
+dictionaries with LaunchServices. URL-only registration failed; dictionary
+registration (`Path`, `ApplicationType=System`, `IsDeletable=YES`, bundle plist)
+succeeded for Calculator. Calculator installed at `/Applications/Calculator.app`.
+Remaining 31 apps (private 501 MiB tar) are transferring/extracting over SSH;
+process must complete before respring. Private output: `logs-private/stock-app-install.txt`.
+Helper installed persistently at `/usr/local/bin/appinstall`; source builds
+against Foundation and the existing iOS libarchive. No kernel or partition change.
+
+
 ## River display fit tests (2026-10-23)
 
 - Patch 0207 (`67d6e89`, CI 39906798316 passed), r78 RAM boot: offscreen
