@@ -1,5 +1,28 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River display fit tests (2026-10-23)
+
+- Patch 0207 (`67d6e89`, CI 39906798316 passed), r78 RAM boot: offscreen
+  A5xx mode 7 / CP_BLIT op 3 64x64 -> 32x32 probe completed its fence but
+  left all four destination samples at 0xdeadbeef. The normal GPU present and
+  SpringBoard survived. This register pair does not establish A5xx scaling.
+- Patch 0208 (`3a2eb4b`, CI 39908025231 passed), r79 RAM boot:
+  `riverfitcpu=1` fit the 1125x2436 full-screen surface into 1048x2270 with
+  16-pixel side margins. The user confirmed the still image fits, but scrolling
+  flickers and leaves a black strip. Fit frames averaged about 85-126 ms.
+  Rebooting the same kernel with `riverfbinv=1` enabled the GPU fence wait and
+  cache refresh; logs showed no busy fences or stale samples, and the user
+  reported the same visible defect. CPU fit is diagnostic, not a usable mode.
+- A RAM-only `sweetfb_native=1` boot with the r79 kernel advertised
+  1080x2270 and launched SpringBoard, but the phone stayed on the text boot
+  console (user photo IMG_0398.HEIC); one GPU present timed out (60).
+  Do not use this as the normal boot. The known working r76 full-RAM image was
+  RAM-booted afterward; log -74 reached SpringBoard and GPU present.
+- The two kernel probes are boot-arg gated and default off. Next fit approach
+  needs a stable GPU or MDP scaled present with the iPhone X logical canvas;
+  avoid another per-frame CPU read/scale of the live GPU surface. Preserve
+  the 0207/0208 results when considering A5xx scale packet registers.
+
 ## River performance review (2026-10-23, offline)
 
 r76 60-second process samples: launchd +77.32 CPU s, vmd +45.32 s,
