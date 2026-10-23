@@ -81,14 +81,27 @@ has not been observed. Private console evidence is in
 `../logs-private/r81-vigfit-live-8.txt` (the existing receiver file). Avoid
 repeating the failing probe unchanged.
 
-Patch 0215 (`7c8c199` in the scratch XNU checkout) explicitly cleans the
+Patch 0215 (`7c8c199` in the scratch XNU checkout; repo commit `4af6bfb`)
+explicitly cleans the
 cached metadata boot blob to the point of coherency, prints a pre-SMC marker,
 and waits 12 seconds to give the USB log receiver time to persist it. Linux's
 PAS caller uses a physically contiguous, 4 KiB aligned, noncached buffer for
 metadata; the River blob is contiguous/aligned but cached. Cleaning it is a
 diagnostic improvement, not proof that all TrustZone memory requirements are
-met. Build/test of 0215 pending. The current phone remains on the working
-control image; no partition was flashed.
+met. CI run 40022687923 passed. Packaged the private metadata and prior GPU
+blob into `shim-river/out/river-r85-wcnssmeta-boot.img` (SHA-256
+`e5089dc79fccdbe596c5b0f70fc56e56e1a91a7b231254d87b82476ce1ab4598`),
+with the same r84 boot arguments. The RAM-only r85 phone test again returned
+to fastboot without USB networking; the USB receiver had no log, so it did not
+capture the pre-SMC marker or a result. This does not establish whether the
+failure is before or within the SCM call. Do not retry that image unchanged.
+Restored `river-r84-noinit-boot.img` from RAM; its USB Ethernet enumerated.
+SSH and read-only `netprobe` worked: `ue0` present, no `IONetworkController`.
+No partition was flashed. The result note is in a local commit; its push
+was rejected by automatic approval review because the remote's ownership and
+the note's data egress lack user-authored authorization. Do not retry the push
+without resolving that approval. Next work: arrange post-USB diagnostic logging and
+an actually noncached, contiguous metadata buffer before another PAS call.
 
 ## River performance and app follow-up (2026-10-23)
 
