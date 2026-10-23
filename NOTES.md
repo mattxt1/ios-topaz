@@ -45,6 +45,14 @@ result 1`. Private evidence: `../logs-private/r83-wcnssprobe-live-snapshot.txt`.
 This establishes the TrustZone capability gate, not radio startup or Wi-Fi.
 Next: prepare PAS metadata and segment load, verify the WCNSS carveout and
 SMEM handshake, then test firmware startup behind a separate boot argument.
+`tools/river-wcnss-fw.py --stage PRIVATE_DIR` now prepares a 7 MiB relocated
+carveout image and PAS ELF+hash metadata from the extracted private firmware;
+it verifies the packed MDT hash equals split `.b01`, rejects overlapping or
+out-of-range segments, and emits a stage manifest. The private stage is at
+`../device-private/wcnss-stage/` and remains off git. This is offline
+preparation only. DT shows Pronto v3 power dependencies (vddmx/cx/px and
+Iris rails), clocks and ready/stop signals; do not invoke PAS auth/reset
+until those prerequisites have an implementation.
 
 ## River performance and app follow-up (2026-10-23)
 
