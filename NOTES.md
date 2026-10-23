@@ -27,8 +27,11 @@ against Foundation and the existing iOS libarchive. No kernel or partition chang
   contiguous memory, then VIG0 scales it to 1048x2270 at x=16. The normal
   path remains default; this is an unbooted probe, not a confirmed fix.
   RAM-only image prepared privately at the display chat's `work/river-r80-vigfit-boot.img`.
-  RAM-boot only when the phone is available. The switch from
-  RGB0 to VIG0 is potentially disruptive; keep the r76 RAM image ready.
+  RAM boot reached an all-blue screen per user. USB log receiver was down, so
+  no boot log was captured. `fastboot boot` of the known r76-fullram image
+  succeeded afterward; home-screen confirmation pending. Treat 0209 as a
+  failed diagnostic, not a usable fit. The RGB0-to-VIG0 handoff needs a
+  register/clock/fetch audit before any more phone tests.
 - Patch 0207 (`67d6e89`, CI 39906798316 passed), r78 RAM boot: offscreen
   A5xx mode 7 / CP_BLIT op 3 64x64 -> 32x32 probe completed its fence but
   left all four destination samples at 0xdeadbeef. The normal GPU present and
