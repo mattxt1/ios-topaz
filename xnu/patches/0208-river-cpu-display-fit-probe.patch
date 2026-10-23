@@ -1,0 +1,70 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 8171c92..843350c 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -81,6 +81,10 @@ static int river_blit = -1;	/* boot-arg riverblit=1: present with the GPU 2D bli
+ static bool river_blit_flushed;
+ static bool river_blit_drop_frame;	/* 0198: this present's GPU blit failed: do not flip */
+ static uint32_t river_blit_ok, river_blit_fail, river_blit_dropped, river_blit_cpu;
++static int river_fit_cpu = -1;	/* boot-arg riverfitcpu=1: diagnostic nearest-neighbour fit */
++static uint16_t river_fit_x[1048];
++static uint64_t river_fit_ns, river_fit_report;
++static uint32_t river_fit_frames;
+ static uint64_t river_blit_ns, river_blit_report;
+ extern "C" int river_gpu_blit(const uint64_t *pa, uint32_t npages, uint64_t start, uint32_t src_pitch, uint32_t sx,
+     uint32_t sy, uint64_t dst_pa, uint64_t dst_size, uint32_t dst_pitch, uint32_t dx, uint32_t dy, uint32_t w,
+@@ -1126,6 +1130,54 @@ AppleCLCD::present(const uint8_t *rec)
+ 		if (dx < 0 || dy < 0) {
+ 			dx = dy = 0;
+ 		}
++#if defined(RIVER)
++		if (river_fit_cpu < 0) {
++			river_fit_cpu = 0;
++			PE_parse_boot_argn("riverfitcpu", &river_fit_cpu, sizeof(river_fit_cpu));
++			if (river_fit_cpu) {
++				for (uint32_t x = 0; x < 1048; x++) {
++					river_fit_x[x] = (uint16_t)((x * 1125 + 524) / 1048);
++				}
++				IOLog("RIVER FB: diagnostic CPU fit enabled (1125x2436 -> 1048x2270, x=16)\n");
++			}
++		}
++		/* Only the single full-screen surface; other compositions retain the crop. */
++		if (river_fit_cpu && mask == 1 && layer == 0 && src != 0 && bpe == 4 &&
++		    fFlip[0] != NULL && fWidth == 1080 && fHeight == 2270 &&
++		    fLogicalW == 1125 && fLogicalH == 2436 && sx == 0 && sy == 0 &&
++		    dx == 0 && dy == 0 && w == 1125 && h == 2436 &&
++		    s->elementWidth == 1 && s->elementHeight == 1 && s->memory != NULL &&
++		    (uint64_t)s->offset + (uint64_t)2435 * s->bytesPerRow + 1125 * 4 <= s->memory->getLength()) {
++			uint64_t t0 = mach_absolute_time();
++			river_surface_cpu_read(s, src + s->offset, (uint64_t)2435 * s->bytesPerRow + 1125 * 4);
++			for (uint32_t y = 0; y < 2270; y++) {
++				uint32_t in_y = (y * 2436 + 1135) / 2270;
++				const uint32_t *in = (const uint32_t *)(src + s->offset + (uint64_t)in_y * s->bytesPerRow);
++				uint32_t *out = (uint32_t *)(dst + (uint64_t)y * fRowBytes);
++				for (uint32_t x = 0; x < 16; x++) out[x] = 0xff000000;
++				for (uint32_t x = 0; x < 1048; x++) out[16 + x] = in[river_fit_x[x]];
++				for (uint32_t x = 1064; x < 1080; x++) out[x] = 0xff000000;
++			}
++			river_flip_valid[fFlipIdx ^ 1] = false;
++			fBackClean = false;
++			uint64_t t1 = mach_absolute_time(), ns;
++			absolutetime_to_nanoseconds(t1 - t0, &ns);
++			river_fit_ns += ns;
++			river_fit_frames++;
++			absolutetime_to_nanoseconds(t1 - river_fit_report, &ns);
++			if (ns >= 10000000000ULL) {
++				if (river_fit_report != 0) {
++					IOLog("RIVER FB: CPU fit 10 s: %u frames, avg %llu us\n", river_fit_frames,
++					    river_fit_frames ? river_fit_ns / river_fit_frames / 1000 : 0);
++				}
++				river_fit_report = t1;
++				river_fit_frames = 0;
++				river_fit_ns = 0;
++			}
++			s->release();
++			continue;
++		}
++#endif
+ 		/* Logical (presented) display coordinates -> panel coordinates. */
+ 		dx -= fOffX;
+ 		dy -= fOffY;
