@@ -1,0 +1,16 @@
+diff --git a/bsd/dev/river_files.c b/bsd/dev/river_files.c
+index 181a096..4286b35 100644
+--- a/bsd/dev/river_files.c
++++ b/bsd/dev/river_files.c
+@@ -104,8 +104,11 @@ river_file_write(const char *path, uint32_t mode, const uint8_t *data, uint32_t
+ 		err = EIO;
+ 	}
+ 	if (!err) {
++		/* O_TRUNC does not shorten an existing file here: set the size,
++		 * or a shorter file keeps the old file's tail (0204). */
+ 		struct vnode_attr va;
+ 		VATTR_INIT(&va);
++		VATTR_SET(&va, va_data_size, size);
+ 		VATTR_SET(&va, va_mode, mode & 07777);
+ 		err = vnode_setattr(vp, &va, ctx);
+ 	}
