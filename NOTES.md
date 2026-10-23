@@ -1,5 +1,17 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River performance review (2026-10-23, offline)
+
+r76 60-second process samples: launchd +77.32 CPU s, vmd +45.32 s,
+mediaserverd +29.71 s, logd +8.72 s. The separate r69 diagnostic boot
+shows many distinct assetsd/AegirPoster/Siri TTS extension crashes, but
+restart churn has not yet been tied quantitatively to launchd CPU. GPU clock
+selection already exists (`rivergpuclk=133|200|266|320`); the r53 profile
+was CPU dominated. Gold above 1.4 GHz needs S5/CPR voltage work. Next,
+after the diagnostic phone session, sample the normal boot for 60 seconds
+and inspect vmd stacks before a reversible service-stop trial. No phone,
+root, kernel, or boot-image change in this review.
+
 ## River GPU active handoff (2026-10-21)
 
 Current entry point: `../HANDOFF.md`. It records the verified Gallium GPU
