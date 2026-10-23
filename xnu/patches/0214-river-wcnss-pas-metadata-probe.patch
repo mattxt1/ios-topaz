@@ -1,0 +1,64 @@
+From 06e13448fcf42ef745d2ff519e6a7686efed795d Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Fri, 23 Oct 2026 16:36:08 -0400
+Subject: [PATCH] RIVER: gate WCNSS PAS metadata authentication probe
+
+---
+ bsd/dev/sweet_keys.c | 34 ++++++++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 824359c..886020d 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -10,6 +10,7 @@
+ #include <kern/sched_prim.h>
+ #include <machine/machine_routines.h>
+ #include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
+ #include <vm/memory_types.h>
+ extern vm_offset_t ml_io_map_unmappable(vm_offset_t, vm_size_t, uint32_t);
+ extern void sweet_hid_key(int, int);
+@@ -290,6 +291,39 @@ river_wcnss_probe(void)
+  int64_t s = river_scm(0x02, 0x07, 1, 6, 0, &supported);
+  printf("RIVER WCNSS: read-only PAS init_image call avail status %lld result %llu; PAS 6 support status %lld result %llu\n",
+      a, avail, s, supported);
++
++ /* A separate opt-in test asks TZ to authenticate only the MDT metadata.
++  * No segment, power, GPIO, reset or WCNSS register is changed here. */
++ uint32_t init = 0;
++ if (!PE_parse_boot_argn("riverwcnssinit", &init, sizeof(init)) || !init) return;
++ if (a != 0 || avail != 1 || s != 0 || supported != 1) {
++  printf("RIVER WCNSS: PAS capability gate failed; skipping metadata\n");
++  return;
++ }
++ DTEntry mm;
++ void const *prop;
++ unsigned int psize;
++ if (SecureDTLookupEntry(NULL, "/chosen/memory-map", &mm) != kSuccess ||
++     SecureDTGetProperty(mm, "RiverWCNSSMeta", &prop, &psize) != kSuccess || psize != 16) {
++  printf("RIVER WCNSS: no RiverWCNSSMeta boot blob\n");
++  return;
++ }
++ uint64_t pa = ((const uint64_t *)prop)[0], len = ((const uint64_t *)prop)[1];
++ if ((pa & 0xfff) || pa >= 0xf0000000ULL || len < 52 || len > 0x10000 ||
++     pa + len > 0xf0000000ULL) {
++  printf("RIVER WCNSS: rejected PAS metadata physical range %#llx+%#llx\n", pa, len);
++  return;
++ }
++ const uint8_t *meta = (const uint8_t *)ml_static_ptovirt((vm_offset_t)pa);
++ if (!meta || memcmp(meta, "\x7f" "ELF", 4) != 0 || meta[4] != 1 || meta[5] != 1) {
++  printf("RIVER WCNSS: invalid ELF32 PAS metadata\n");
++  return;
++ }
++ __asm__ volatile("dsb sy" ::: "memory");
++ uint64_t res = 0;
++ int64_t st = river_scm(0x02, 0x01, 2 | (2 << 6), 6, pa, &res);
++ printf("RIVER WCNSS: PAS init_image metadata %#llx+%#llx status %lld result %llu (no reset)\n",
++     pa, len, st, res);
+ }
+ 
+ static void
+-- 
+2.54.0 (Apple Git-156)
+
