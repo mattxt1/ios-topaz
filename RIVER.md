@@ -2054,3 +2054,18 @@ builtins; /bin/ps, /bin/df, ioreg, lsdiagnose exist). First `ps`: launchd 66%
 CPU (2 min), mediaserverd 43%, progressd 56%, vmd 26%: next speed targets.
 Boot images must stay under ~38 MB (ABL refused 39 MB); sweetgl.dylib
 persists in /usr/local, so file-drop images can leave it out.
+
+### More RAM, phase 1: low DRAM window (r75, shim + ADT only)
+Memory pressure was the main slowdown/freeze cause on r74 (SSH vm_stat: 1.25 GB,
+~25 MB free, wired 195 -> 415 MB and page-ins 80k -> 151k in 90 s; the
+app switcher stalls; CollectionsPoster made 164 MB of IOSurfaces over its
+check-in-timeout relaunches). Live FDT: DRAM 0x10000000-0x100000000;
+fixed no-map carve-outs 0x84300000-0x8ee00000 (other/TZ, modem, ADSP,
+WCNSS), splash 0x90001000+0x13ff000, crash logs 0xeefa1800-0xef0bf800; River's
+GPU zap 0x81800000 and SMMU ptbl 0x82000000. New window (shim loader.c,
+mkadt_river.py): **0x18000000-0x81800000, 1.65 GB** (was 0xa0000000-0xee000000,
+1.25 GB), above ABL's boot buffers (ramdisk ends below 0x16000000). r75-lowram
+(r74 kernel): boots; vm_stat ~108k 16 KiB pages, ~375 MB free+speculative
+at the home screen; user: "running well". Phase 2 (~3.4 GB) needs the pmap
+(linear first_avail..avail_end allocator, pmap_next_page) and the physmap to
+skip the carve-out holes; never map TZ-protected regions (speculative access).
