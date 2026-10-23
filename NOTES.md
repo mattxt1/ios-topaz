@@ -22,7 +22,8 @@ through the kernel's read-only `/dev/remmc0*` nodes (modem_b is p20, ext4,
 the 31,723-byte `WCNSS_qcom_wlan_nv.bin` and config from preserved vendor_b
 p61 without copying the entire 848 MiB partition. No protected partition
 or firmware was written, and binaries stay out of git. Offline
-`tools/river-wcnss-fw.py` verified split segment sizes and one hash segment.
+`tools/river-wcnss-fw.py` verified split segment sizes and one hash segment;
+all present `.bNN` SHA-256 digests match its signed hash table.
 Its nine loadable segments start at 0x8e600000 and relocate by +0x100000
 into the DT's 0x8e700000+7 MiB carveout (end 0x8ed56680). Next milestone:
 boot-arg-gated WCNSS PAS/SMEM readiness probe using these private files,

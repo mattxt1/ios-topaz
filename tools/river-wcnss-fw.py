@@ -5,6 +5,7 @@ Usage: river-wcnss-fw.py /path/to/private/wcnss-firmware
 The directory must stay out of git. This script only reads files.
 """
 from pathlib import Path
+import hashlib
 import struct
 import sys
 
@@ -44,6 +45,15 @@ def main():
 
     if len(hashes) != 1 or not segments:
         raise ValueError('expected one hash segment and loadable segments')
+    hash_data = (root / f'wcnss.b{hashes[0]:02d}').read_bytes()
+    for index in range(count):
+        part = root / f'wcnss.b{index:02d}'
+        if not part.is_file() or index in hashes:
+            continue
+        digest_off = 40 + index * 32
+        digest = hashlib.sha256(part.read_bytes()).digest()
+        if hash_data[digest_off:digest_off + 32] != digest:
+            raise ValueError(f'{part.name}: digest differs from signed hash segment')
     lo = min(addr for _, addr, _, _ in segments)
     hi = max(addr + size for _, addr, size, _ in segments)
     if not all(flags & MDT_RELOCATABLE for _, _, _, flags in segments):
@@ -54,7 +64,7 @@ def main():
     nv = root / 'WCNSS_qcom_wlan_nv.bin'
     if not nv.is_file() or nv.stat().st_size == 0:
         raise ValueError('missing River WLAN NV file')
-    print(f'WCNSS: {len(segments)} loadable segments, hash index {hashes[0]}')
+    print(f'WCNSS: {len(segments)} loadable segments, hash index {hashes[0]}; file digests match')
     print(f'firmware address {lo:#x}..{hi:#x}; relocate by {slide:#x}')
     print(f'relocated address {lo+slide:#x}..{hi+slide:#x} within {CARVEOUT:#x}+{CARVEOUT_SIZE:#x}')
     print(f'WLAN NV: {nv.stat().st_size} bytes')
