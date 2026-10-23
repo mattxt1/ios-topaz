@@ -1,5 +1,35 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River native Wi-Fi focus (2026-10-23)
+
+User prioritized built-in Wi-Fi. Read-only `phone-tools/netprobe.c` was
+installed as `/usr/local/bin/netprobe` on r82. It found only `lo0`, `gif0`,
+`stf0`, `ue0` and three `utun` interfaces, with **no IONetworkController**.
+The saved Moto G7 DTB has `qcom,pronto@a21b000` (`qcom,pil-tz-generic`,
+firmware name `wcnss`, PAS ID 6, 0x8e700000/7 MiB firmware carveout),
+`qcom,wcnss-wlan@0a000000` (`qcom,wcnss_wlan`, Pronto v3), SMD/SMSM and
+SMP2P WCNSS edges, plus 5-wire GPIO76-79. This is not the WCN3990/SNOC
+copy-engine path in imported Topaz Wi-Fi patches 0129/0130; do not enable
+those against river. Linux's wcn36xx path is a reference for the separate
+firmware/PAS, WCNSS control SMD, NV download, DXE and 802.11 stages. No
+native Wi-Fi driver, firmware bootstrap, or IONetworkController exists yet;
+Wi-Fi is not working.
+
+Firmware milestone: `phone-tools/rget.c` read the GPT and modem_b partition
+through the kernel's read-only `/dev/remmc0*` nodes (modem_b is p20, ext4,
+100 MiB). `tools/river-ext4-read.py` extracted `/image/wcnss.mdt` and its
+`.bNN` pieces into private `../device-private/wcnss-firmware/`. It also read
+the 31,723-byte `WCNSS_qcom_wlan_nv.bin` and config from preserved vendor_b
+p61 without copying the entire 848 MiB partition. No protected partition
+or firmware was written, and binaries stay out of git. Offline
+`tools/river-wcnss-fw.py` verified split segment sizes and one hash segment.
+Its nine loadable segments start at 0x8e600000 and relocate by +0x100000
+into the DT's 0x8e700000+7 MiB carveout (end 0x8ed56680). Next milestone:
+boot-arg-gated WCNSS PAS/SMEM readiness probe using these private files,
+then WCNSS control/NV and DXE. Only after radio readiness should an iOS
+network interface be published. Do not change regulators or PAS blindly.
+The current iOS root has no Android WCNSS firmware installed.
+
 ## River performance and app follow-up (2026-10-23)
 
 r82 RAM boot succeeded from `shim-river/out/river-r82-apps-boot.img` (only
@@ -13,9 +43,9 @@ then was killed for suspension with locked system files. Private evidence:
 `logs-private/r81-vigfit-live-4.txt`, `r82-apps-oslog.txt`,
 `r82-tccd-oslog.txt`. TCCD explicitly grants Music MediaLibrary access via
 `com.apple.private.tcc.allow` but reports failure issuing the required Sandbox
-extension. Patch 0212 makes the permissive Sandbox stand-in return the
+extension. Patch 0212 (`ca98d83`) makes the permissive Sandbox stand-in return the
 `invalid` no-op token expected by libsystem_sandbox for issue operation 5;
-local River single-file compile passed. CI and phone test pending. Offline
+local River single-file compile and CI 40000071680 passed. Phone test pending. Offline
 Podcasts/Music stack symbolication used the mounted local iOS shared cache.
 
 Normal r76 GPU boot: a new 60-second process sample showed launchd +62.77 CPU s, vmd +38.01, mediaserverd +26.81, healthd +23.67. Private logs are `../logs-private/r78-*`. vmd repeated CoreTelephony XPC failures about 420 times in 12 seconds; a 30-second SIGSTOP trial removed its CPU use, then SIGCONT restored it. mediaserverd repeated BTAudioPlugin connection failures ~1750 times in 10 seconds. The absent Bluetooth HAL plugin was renamed persistently to `.river-disabled` using `/usr/local/bin/btaudio-toggle disable`, and mediaserverd restarted; the next 30-second sample showed mediaserverd only +1.09 CPU s. Restore with `btaudio-toggle restore` and restart mediaserverd. Healthd was in an SQLite checkpoint; no action.
