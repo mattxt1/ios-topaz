@@ -1,5 +1,11 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River performance and app follow-up (2026-10-23)
+
+Normal r76 GPU boot: a new 60-second process sample showed launchd +62.77 CPU s, vmd +38.01, mediaserverd +26.81, healthd +23.67. Private logs are `../logs-private/r78-*`. vmd repeated CoreTelephony XPC failures about 420 times in 12 seconds; a 30-second SIGSTOP trial removed its CPU use, then SIGCONT restored it. mediaserverd repeated BTAudioPlugin connection failures ~1750 times in 10 seconds. The absent Bluetooth HAL plugin was renamed persistently to `.river-disabled` using `/usr/local/bin/btaudio-toggle disable`, and mediaserverd restarted; the next 30-second sample showed mediaserverd only +1.09 CPU s. Restore with `btaudio-toggle restore` and restart mediaserverd. Healthd was in an SQLite checkpoint; no action.
+
+Stock launch tests: Calculator, Contacts, Files, Maps, Calendar, Mail, Notes and Weather reached live processes. Music, Podcasts and Books abort at dyld with `@rpath` expansion denied, although the frameworks exist in their bundles. Patch 0211 `7eeb121` gives ordinary processes only dyld `ALLOW_AT_PATH`; named riverenv injection processes retain 0x7b. Local compile passed; CI 39996398504 passed. r82 RAM image `shim-river/out/river-r82-apps-boot.img` is prepared (SHA256 80211f3e...), unbooted pending fastboot. `phone-tools/applaunch.m` is committed `67ca805`; reversible Bluetooth toggle committed `c7ea489`. Current phone remains on r76 normal GPU boot; no kernel or partition flash.
+
 ## River stock apps installed (2026-10-23)
 
 Normal r76-fullram RAM boot. `phone-tools/appinstall.m` extracts private tar
