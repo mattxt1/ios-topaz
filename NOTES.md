@@ -78,6 +78,11 @@ extension. Patch 0212 (`ca98d83`) makes the permissive Sandbox stand-in return t
 `invalid` no-op token expected by libsystem_sandbox for issue operation 5;
 local River single-file compile and CI 40000071680 passed. Phone test pending. Offline
 Podcasts/Music stack symbolication used the mounted local iOS shared cache.
+The r83 boot includes 0212. `psx` later showed live Music, Podcasts and Books
+processes (PIDs 303, 276 and 305), but `applaunch` returned `open=NO` for
+these and Calculator, and a short app log sample was empty. This is not enough
+to call the app fix successful; foreground UI and sustained behavior still
+need direct verification.
 
 Normal r76 GPU boot: a new 60-second process sample showed launchd +62.77 CPU s, vmd +38.01, mediaserverd +26.81, healthd +23.67. Private logs are `../logs-private/r78-*`. vmd repeated CoreTelephony XPC failures about 420 times in 12 seconds; a 30-second SIGSTOP trial removed its CPU use, then SIGCONT restored it. mediaserverd repeated BTAudioPlugin connection failures ~1750 times in 10 seconds. The absent Bluetooth HAL plugin was renamed persistently to `.river-disabled` using `/usr/local/bin/btaudio-toggle disable`, and mediaserverd restarted; the next 30-second sample showed mediaserverd only +1.09 CPU s. Restore with `btaudio-toggle restore` and restart mediaserverd. Healthd was in an SQLite checkpoint; no action.
 
