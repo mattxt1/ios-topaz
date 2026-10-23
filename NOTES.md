@@ -19,13 +19,15 @@ against Foundation and the existing iOS libarchive. No kernel or partition chang
 
 ## River display fit tests (2026-10-23)
 
-- Offline r80 candidate: the saved River DT has `qcom,mdss-has-non-scalar-rgb`,
+- Offline r80 candidate (commit `31c4edb`, CI `39989122435` passed): the
+  saved River DT has `qcom,mdss-has-non-scalar-rgb`,
   so the ABL RGB0 scanout pipe cannot scale. VIG0 is present at +0x5000 and
   supports QSEED scaling in the Qualcomm driver. Patch 0209 adds boot-arg
   `riverfitmdp=1`: GPU copy of a full 1125x2436 frame to double-buffered
   contiguous memory, then VIG0 scales it to 1048x2270 at x=16. The normal
   path remains default; this is an unbooted probe, not a confirmed fix.
-  Inspect CI and RAM-boot only when the phone is available. The switch from
+  RAM-only image prepared privately at the display chat's `work/river-r80-vigfit-boot.img`.
+  RAM-boot only when the phone is available. The switch from
   RGB0 to VIG0 is potentially disruptive; keep the r76 RAM image ready.
 - Patch 0207 (`67d6e89`, CI 39906798316 passed), r78 RAM boot: offscreen
   A5xx mode 7 / CP_BLIT op 3 64x64 -> 32x32 probe completed its fence but
