@@ -1,0 +1,80 @@
+diff --git a/bsd/kern/sweet_amfi.c b/bsd/kern/sweet_amfi.c
+index 0a8502e..00d2ee4 100644
+--- a/bsd/kern/sweet_amfi.c
++++ b/bsd/kern/sweet_amfi.c
+@@ -372,20 +372,20 @@ static mac_policy_handle_t sweet_amfi_mac_handle;
+ /*
+  * Policy "AMFI": dyld calls __mac_syscall("AMFI", 0x5a, {u64 in_flags;
+  * u64 *out_flags}) (amfi_check_dyld_policy_self) and honours no DYLD_*
+- * variable when it fails, as it always did here. Only the process named
+- * by riverenv[2]=NAME:... (kern_exec.c) gets an answer: @-paths, path,
+- * fallback and print variables, failed insertion (a broken library must
+- * not stop backboardd) and interposing; no custom shared cache. Every
+- * other process and operation still gets ENOPOLICY.
++ * variable when it fails. All processes need @-path expansion for bundled
++ * frameworks in stock apps (e.g. Music and Podcasts). Return only that bit
++ * by default; the process named by riverenv[2]=NAME:... retains the wider
++ * injection policy. No other DYLD environment variable is enabled globally.
+  */
+ #define RIVER_AMFI_DYLD_POLICY  0x5a
++#define RIVER_AMFI_DYLD_AT_PATH 0x1ull
+ #define RIVER_AMFI_DYLD_ALLOW   0x7bull
+ 
+ static int
+ river_amfi_syscall(struct proc *p, int call, user_addr_t arg)
+ {
+ 	char env[160], name[MAXCOMLEN + 1];
+-	uint64_t a[2], flags = RIVER_AMFI_DYLD_ALLOW;
++	uint64_t a[2], flags = RIVER_AMFI_DYLD_AT_PATH;
+ 	char *sep;
+ 	const char *env_args[] = { "riverenv", "riverenv2" };
+ 
+@@ -400,16 +400,17 @@ river_amfi_syscall(struct proc *p, int call, user_addr_t arg)
+ 		}
+ 		*sep = '\0';
+ 		if (strcmp(name, env) == 0) {
+-			goto allowed;
++			flags = RIVER_AMFI_DYLD_ALLOW;
++			break;
+ 		}
+ 	}
+-	return ENOPOLICY;
+-allowed:
+ 	if (copyin(arg, a, sizeof(a)) != 0 || a[1] == 0) {
+ 		return EFAULT;
+ 	}
+-	printf("RIVER AMFI: dyld policy for %s[%d]: in 0x%llx out 0x%llx\n",
+-	    name, proc_pid(p), a[0], flags);
++	if (flags != RIVER_AMFI_DYLD_AT_PATH) {
++		printf("RIVER AMFI: dyld policy for %s[%d]: in 0x%llx out 0x%llx\n",
++		    name, proc_pid(p), a[0], flags);
++	}
+ 	return copyout(&flags, (user_addr_t)a[1], sizeof(flags));
+ }
+ 
+@@ -419,7 +420,7 @@ static const struct mac_policy_ops river_amfi_mac_ops = {
+ 
+ static struct mac_policy_conf river_amfi_mac_conf = {
+ 	.mpc_name = "AMFI",             /* __mac_syscall finds policies by name */
+-	.mpc_fullname = "RIVER dyld policy for riverenv",
++	.mpc_fullname = "RIVER dyld policy",
+ 	.mpc_ops = &river_amfi_mac_ops,
+ };
+ 
+@@ -439,13 +440,9 @@ sweet_amfi_policy_register(void)
+ 	printf("SWEET Sandbox: permissive policy %s (%d)\n",
+ 	    error ? "NOT registered" : "registered", error);
+ #if defined(RIVER)
+-	char env[160];
+-	if (PE_parse_boot_argn("riverenv", env, sizeof(env)) ||
+-	    PE_parse_boot_argn("riverenv2", env, sizeof(env))) {
+-		error = mac_policy_register(&river_amfi_mac_conf, &river_amfi_mac_handle, NULL);
+-		printf("RIVER AMFI: dyld policy for riverenv %s (%d)\n",
+-		    error ? "NOT registered" : "registered", error);
+-	}
++	error = mac_policy_register(&river_amfi_mac_conf, &river_amfi_mac_handle, NULL);
++	printf("RIVER AMFI: dyld @-path policy %s (%d)\n",
++	    error ? "NOT registered" : "registered", error);
+ #endif
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
