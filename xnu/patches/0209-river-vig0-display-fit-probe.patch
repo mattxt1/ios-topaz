@@ -1,0 +1,155 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 843350c..f24c393 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -190,6 +190,11 @@ public:
+ 	uint32_t      fPipeFlush;     /* CTL_FLUSH bits of ABL's splash pipe (+ CTL) */
+ 	uint32_t      fBootFormat, fBootUnpack;	/* ABL's 24bpp SRC_FORMAT / UNPACK_PATTERN */
+ 	bool          fBackClean;	/* back buffer's dirty rows already cleaned */
++	IOBufferMemoryDescriptor *fFit[2];
++	uint64_t      fFitPhys[2];
++	uint32_t      fFitIdx;
++	volatile uint32_t *fFitPipe;
++	bool          fFitActive;
+ #endif
+ 	SweetSurface *fSurface;         /* the panel memory as an IOSurface */
+ 	IOLock       *fLock;            /* swaps and client list */
+@@ -683,6 +688,23 @@ AppleCLCD::scanFrom(uint64_t pa, uint32_t stride)
+ #if defined(RIVER)
+ 	/* ABL's splash is RGB888 (3 bytes); flip buffers are BGRX8888 (B,G,R,X). */
+ 	bool boot = pa == fBootSrc;
++	if (fFitActive) {
++		bool fit = pa == fFitPhys[0] || pa == fFitPhys[1];
++		uint32_t sw = fit ? 1125 : fWidth, sh = fit ? 2436 : fHeight;
++		uint32_t ow = fit ? 1048 : fWidth, ox = fit ? 16 : 0;
++		/* QSEED2 VIG0: 21-bit phase steps, PCMN downscale for RGB and alpha. */
++		fVig0[0x00 / 4] = (sh << 16) | sw;
++		fVig0[0x04 / 4] = (sh << 16) | sw;
++		fVig0[0x08 / 4] = 0;
++		fVig0[0x0c / 4] = (fHeight << 16) | ow;
++		fVig0[0x10 / 4] = ox;
++		fVig0[0x210 / 4] = fit ? (uint32_t)(((uint64_t)1125 << 21) / 1048) : (1u << 21);
++		fVig0[0x214 / 4] = fit ? (uint32_t)(((uint64_t)2436 << 21) / 2270) : (1u << 21);
++		fVig0[0x220 / 4] = 0;
++		fVig0[0x224 / 4] = 0;
++		fVig0[0x204 / 4] = fit ? (3u | (2u << 8) | (2u << 10) |
++		    (2u << 16) | (2u << 18)) : 0;
++	}
+ 	fVig0[0x30 / 4] = boot ? fBootFormat : 0x000236ffU;	/* SRC_FORMAT */
+ 	fVig0[0x34 / 4] = boot ? fBootUnpack : 0x03020001U;	/* SRC_UNPACK_PATTERN */
+ 	fVig0[0x14 / 4] = (uint32_t)pa;
+@@ -1131,6 +1153,46 @@ AppleCLCD::present(const uint8_t *rec)
+ 			dx = dy = 0;
+ 		}
+ #if defined(RIVER)
++		/* Full logical canvas -> contiguous buffer; VIG0 scales at scanout. */
++		if (fFitPipe != NULL && mask == 1 && layer == 0 && src != 0 && bpe == 4 &&
++		    s->memory != NULL && s->elementWidth == 1 && s->elementHeight == 1 &&
++		    sx == 0 && sy == 0 && dx == 0 && dy == 0 && w == 1125 && h == 2436 &&
++		    (uint64_t)s->offset + (uint64_t)2435 * s->bytesPerRow + 1125 * 4 <= s->memory->getLength()) {
++			uint32_t next = fFitIdx ^ 1;
++			IOByteCount seg = 0;
++			uint64_t first = s->memory->getPhysicalSegment(0, &seg, kIOMemoryMapperNone);
++			uint64_t start = (first & PAGE_MASK) + s->offset;
++			uint32_t npages = (uint32_t)((start + s->memory->getLength() + PAGE_MASK) / PAGE_SIZE);
++			uint64_t *pa = first ? (uint64_t *)IOMallocData(npages * sizeof(uint64_t)) : NULL;
++			bool have = pa != NULL;
++			for (uint32_t p = 0; have && p < npages; p++) {
++				uint64_t at = p == 0 ? 0 : (uint64_t)p * PAGE_SIZE - (first & PAGE_MASK);
++				uint64_t phys = s->memory->getPhysicalSegment(at, &seg, kIOMemoryMapperNone);
++				pa[p] = phys & ~(uint64_t)PAGE_MASK;
++				have = phys != 0;
++			}
++			int err = have ? river_gpu_blit(pa, npages, start, s->bytesPerRow, 0, 0,
++			    fFitPhys[next], fFit[next]->getLength(), 4608, 0, 0, 1125, 2436, 200) : ENOMEM;
++			if (pa != NULL) IOFreeData(pa, npages * sizeof(uint64_t));
++			if (err == 0) {
++				if (!fFitActive) {
++					/* RGB0 is ABL's pipe. Move mixer stage 0 to VIG0 only after a good frame. */
++					fFitPipe[0x38 / 4] = fVig0[0x38 / 4];
++					fVig0 = fFitPipe;
++					fPipeFlush = 0x20001;
++					fFitActive = true;
++					fCtl0[0x00 / 4] = 1;
++					IOLog("RIVER MDP: VIG0 scaled fit active, 1125x2436 -> 1048x2270 at x=16\n");
++				}
++				scanFrom(fFitPhys[next], 4608);
++				fFitIdx = next;
++				s->release();
++				return;
++			}
++			IOLog("RIVER MDP: VIG0 fit GPU blit failed %d; keeping previous frame\n", err);
++			s->release();
++			return;
++		}
+ 		if (river_fit_cpu < 0) {
+ 			river_fit_cpu = 0;
+ 			PE_parse_boot_argn("riverfitcpu", &river_fit_cpu, sizeof(river_fit_cpu));
+@@ -1474,6 +1536,32 @@ AppleCLCD::riverMdpSetup(void)
+ 		IOLog("RIVER MDP: no contiguous flip buffers; keeping the 24bpp copy\n");
+ 		return;
+ 	}
++	int fit = 0;
++	PE_parse_boot_argn("riverfitmdp", &fit, sizeof(fit));
++	if (fit && fWidth == 1080 && fHeight == 2270 &&
++	    fLogicalW == 1125 && fLogicalH == 2436 && !strcmp(pname, "RGB0")) {
++		const vm_size_t fitSize = (vm_size_t)4608 * 2436;
++		fFitPipe = river_mdp_map(0x1a05000ULL);
++		for (unsigned i = 0; fFitPipe != NULL && i < 2; i++) {
++			fFit[i] = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
++			    kIODirectionInOut | kIOMemoryPhysicallyContiguous, fitSize, 0x00000000fffff000ull);
++			fFitPhys[i] = fFit[i] ? fFit[i]->getPhysicalSegment(0, NULL, kIOMemoryMapperNone) : 0;
++		}
++		if (fFitPhys[0] && fFitPhys[1]) {
++			for (unsigned i = 0; i < 2; i++) {
++				memset(fFit[i]->getBytesNoCopy(), 0, fitSize);
++				flush_dcache64((addr64_t)(uintptr_t)fFit[i]->getBytesNoCopy(), fitSize, FALSE);
++			}
++			IOLog("RIVER MDP: VIG0 fit buffers %#llx %#llx, waiting for first GPU frame\n",
++			    fFitPhys[0], fFitPhys[1]);
++		} else {
++			OSSafeReleaseNULL(fFit[0]);
++			OSSafeReleaseNULL(fFit[1]);
++			fFitPhys[0] = fFitPhys[1] = 0;
++			fFitPipe = NULL;
++			IOLog("RIVER MDP: VIG0 fit buffers unavailable; normal RGB0 scanout\n");
++		}
++	}
+ 	fBootSrc = pipe[0x14 / 4];
+ 	fBootStride = pipe[0x24 / 4];
+ 	fBootFormat = pipe[0x30 / 4];
+diff --git a/iokit/Kernel/arm/hid/SweetHID.cpp b/iokit/Kernel/arm/hid/SweetHID.cpp
+index a305d6c..46057af 100644
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -374,6 +374,7 @@ protected:
+ private:
+ 	IOLock *fLock;
+ 	int fLogicalW, fLogicalH, fOffX, fOffY;
++	bool fFitMdp;
+ 	bool fDown[SWEET_TOUCH_FINGERS];
+ 	bool fEdge[SWEET_TOUCH_FINGERS];
+ 	IOFixed fX[SWEET_TOUCH_FINGERS];
+@@ -444,6 +445,9 @@ SweetHIDTouch::start(IOService *provider)
+ 	fLogicalH = native ? SWEET_TOUCH_HEIGHT : 2436;
+ 	fOffX = ((fLogicalW - 1080) / 2) & ~3;           /* as SweetFramebuffer.cpp */
+ 	fOffY = (fLogicalH - SWEET_TOUCH_HEIGHT) / 2;
++	int fitMdp = 0;
++	PE_parse_boot_argn("riverfitmdp", &fitMdp, sizeof(fitMdp));
++	fFitMdp = !native && fitMdp != 0;
+ 	/* The digitizer covers the main display (backboardd maps it 1:1). */
+ 	setProperty("DisplayIntegrated", kOSBooleanTrue);
+ 	setProperty("SurfaceWidth", (unsigned long long)(68 << 16), 32);	/* mm, 16.16 */
+@@ -476,8 +480,10 @@ SweetHIDTouch::touch(int finger, bool down, int x, int y)
+ 	bool was = fDown[finger];
+ 	/* Panel pixels -> the presented 1125x2436 display (SweetFramebuffer.cpp).
+ 	 * A lift reports no position: it ends where the finger last was. */
+-	IOFixed nx = down ? (IOFixed)(((int64_t)(x + fOffX) << 16) / fLogicalW) : fX[finger];
+-	IOFixed ny = down ? (IOFixed)(((int64_t)(y + fOffY) << 16) / fLogicalH) : fY[finger];
++	int fx = fFitMdp ? (x <= 16 ? 0 : (x >= 1064 ? 1124 : ((x - 16) * 1125) / 1048)) : x + fOffX;
++	int fy = fFitMdp ? (y * 2436) / SWEET_TOUCH_HEIGHT : y + fOffY;
++	IOFixed nx = down ? (IOFixed)(((int64_t)fx << 16) / fLogicalW) : fX[finger];
++	IOFixed ny = down ? (IOFixed)(((int64_t)fy << 16) / fLogicalH) : fY[finger];
+ 	bool moved = down && (nx != fX[finger] || ny != fY[finger]);
+ 	if (was == down && !moved) {
+ 		IOLockUnlock(fLock);
