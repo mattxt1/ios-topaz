@@ -1,0 +1,79 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+index 00457c5..10394c1 100644
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -5743,13 +5743,17 @@ exec_extract_strings(struct image_params *imgp)
+ 
+ #if defined(RIVER)
+ 	/*
+-	 * riverenv=NAME:VAR=VALUE appends VAR=VALUE to the environment of
++	 * riverenv[2]=NAME:VAR=VALUE appends VAR=VALUE to the environment of
+ 	 * executables whose file name is NAME (e.g. backboardd with
+ 	 * DYLD_INSERT_LIBRARIES for a GL library under development). dyld only
+ 	 * honours DYLD_* because sweet_amfi.c answers its policy query for NAME.
+ 	 */
+-	char river_env[160];
+-	if (PE_parse_boot_argn("riverenv", river_env, sizeof(river_env))) {
++	const char *river_env_args[] = { "riverenv", "riverenv2" };
++	for (unsigned int i = 0; i < sizeof(river_env_args) / sizeof(river_env_args[0]); i++) {
++		char river_env[160];
++		if (!PE_parse_boot_argn(river_env_args[i], river_env, sizeof(river_env))) {
++			continue;
++		}
+ 		char *sep = strchr(river_env, ':');
+ 		const char *path = imgp->ip_strings + strlen(EXECUTABLE_KEY);
+ 		const char *base = strrchr(path, '/');
+diff --git a/bsd/kern/sweet_amfi.c b/bsd/kern/sweet_amfi.c
+index 499f36e..0a8502e 100644
+--- a/bsd/kern/sweet_amfi.c
++++ b/bsd/kern/sweet_amfi.c
+@@ -373,7 +373,7 @@ static mac_policy_handle_t sweet_amfi_mac_handle;
+  * Policy "AMFI": dyld calls __mac_syscall("AMFI", 0x5a, {u64 in_flags;
+  * u64 *out_flags}) (amfi_check_dyld_policy_self) and honours no DYLD_*
+  * variable when it fails, as it always did here. Only the process named
+- * by riverenv=NAME:... (kern_exec.c) gets an answer: @-paths, path,
++ * by riverenv[2]=NAME:... (kern_exec.c) gets an answer: @-paths, path,
+  * fallback and print variables, failed insertion (a broken library must
+  * not stop backboardd) and interposing; no custom shared cache. Every
+  * other process and operation still gets ENOPOLICY.
+@@ -387,17 +387,24 @@ river_amfi_syscall(struct proc *p, int call, user_addr_t arg)
+ 	char env[160], name[MAXCOMLEN + 1];
+ 	uint64_t a[2], flags = RIVER_AMFI_DYLD_ALLOW;
+ 	char *sep;
++	const char *env_args[] = { "riverenv", "riverenv2" };
+ 
+-	if (call != RIVER_AMFI_DYLD_POLICY ||
+-	    !PE_parse_boot_argn("riverenv", env, sizeof(env)) ||
+-	    (sep = strchr(env, ':')) == NULL) {
++	if (call != RIVER_AMFI_DYLD_POLICY) {
+ 		return ENOPOLICY;
+ 	}
+-	*sep = '\0';
+ 	proc_name(proc_pid(p), name, sizeof(name));
+-	if (strcmp(name, env) != 0) {
+-		return ENOPOLICY;
++	for (unsigned int i = 0; i < sizeof(env_args) / sizeof(env_args[0]); i++) {
++		if (!PE_parse_boot_argn(env_args[i], env, sizeof(env)) ||
++		    (sep = strchr(env, ':')) == NULL) {
++			continue;
++		}
++		*sep = '\0';
++		if (strcmp(name, env) == 0) {
++			goto allowed;
++		}
+ 	}
++	return ENOPOLICY;
++allowed:
+ 	if (copyin(arg, a, sizeof(a)) != 0 || a[1] == 0) {
+ 		return EFAULT;
+ 	}
+@@ -433,7 +440,8 @@ sweet_amfi_policy_register(void)
+ 	    error ? "NOT registered" : "registered", error);
+ #if defined(RIVER)
+ 	char env[160];
+-	if (PE_parse_boot_argn("riverenv", env, sizeof(env))) {
++	if (PE_parse_boot_argn("riverenv", env, sizeof(env)) ||
++	    PE_parse_boot_argn("riverenv2", env, sizeof(env))) {
+ 		error = mac_policy_register(&river_amfi_mac_conf, &river_amfi_mac_handle, NULL);
+ 		printf("RIVER AMFI: dyld policy for riverenv %s (%d)\n",
+ 		    error ? "NOT registered" : "registered", error);
