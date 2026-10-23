@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 int main(int argc, char **argv)
@@ -19,6 +20,10 @@ int main(int argc, char **argv)
 	errno = 0;
 	unsigned long long length = strtoull(argv[3], &end, 0);
 	if (errno || *end || length > 1024ull * 1024 * 1024) return 2;
+	if (strncmp(argv[1], "/dev/remmc", 10) == 0 && ((off | length) & 511)) {
+		fprintf(stderr, "raw eMMC reads require 512-byte aligned offset and length\n");
+		return 2;
+	}
 	int fd = open(argv[1], O_RDONLY);
 	if (fd < 0) { perror(argv[1]); return 1; }
 	char buf[65536];
