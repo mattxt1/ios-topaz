@@ -1,0 +1,133 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -187,6 +187,7 @@
+ 	volatile uint8_t *fRiverScanout; /* ABL's 24-bit splash, never a BGRA IOSurface */
+ 	void riverFlush(void);
+ 	void riverMdpSetup(void);
++	void fitScanFrom(uint64_t pa);
+ 	uint32_t      fPipeFlush;     /* CTL_FLUSH bits of ABL's splash pipe (+ CTL) */
+ 	uint32_t      fBootFormat, fBootUnpack;	/* ABL's 24bpp SRC_FORMAT / UNPACK_PATTERN */
+ 	bool          fBackClean;	/* back buffer's dirty rows already cleaned */
+@@ -194,6 +195,8 @@
+ 	uint64_t      fFitPhys[2];
+ 	uint32_t      fFitIdx;
+ 	volatile uint32_t *fFitPipe;
++	volatile uint32_t *fFitMixer;
++	uint32_t      fFitMixerMode;
+ 	bool          fFitActive;
+ #endif
+ 	SweetSurface *fSurface;         /* the panel memory as an IOSurface */
+@@ -688,29 +691,18 @@
+ #if defined(RIVER)
+ 	/* ABL's splash is RGB888 (3 bytes); flip buffers are BGRX8888 (B,G,R,X). */
+ 	bool boot = pa == fBootSrc;
++	bool resetFit = fFitActive;
+ 	if (fFitActive) {
+-		bool fit = pa == fFitPhys[0] || pa == fFitPhys[1];
+-		uint32_t sw = fit ? 1125 : fWidth, sh = fit ? 2436 : fHeight;
+-		uint32_t ow = fit ? 1048 : fWidth, ox = fit ? 16 : 0;
+-		/* QSEED2 VIG0: 21-bit phase steps, PCMN downscale for RGB and alpha. */
+-		fVig0[0x00 / 4] = (sh << 16) | sw;
+-		fVig0[0x04 / 4] = (sh << 16) | sw;
+-		fVig0[0x08 / 4] = 0;
+-		fVig0[0x0c / 4] = (fHeight << 16) | ow;
+-		fVig0[0x10 / 4] = ox;
+-		fVig0[0x210 / 4] = fit ? (uint32_t)(((uint64_t)1125 << 21) / 1048) : (1u << 21);
+-		fVig0[0x214 / 4] = fit ? (uint32_t)(((uint64_t)2436 << 21) / 2270) : (1u << 21);
+-		fVig0[0x220 / 4] = 0;
+-		fVig0[0x224 / 4] = 0;
+-		fVig0[0x204 / 4] = fit ? (3u | (2u << 8) | (2u << 10) |
+-		    (2u << 16) | (2u << 18)) : 0;
++		fCtl0[0x00 / 4] = 0x200; /* return to RGB0 for partial/console frames */
++		fFitMixer[0] = fFitMixerMode;
++		fFitActive = false;
+ 	}
+ 	fVig0[0x30 / 4] = boot ? fBootFormat : 0x000236ffU;	/* SRC_FORMAT */
+ 	fVig0[0x34 / 4] = boot ? fBootUnpack : 0x03020001U;	/* SRC_UNPACK_PATTERN */
+ 	fVig0[0x14 / 4] = (uint32_t)pa;
+ 	fVig0[0x24 / 4] = stride;
+ 	__asm__ volatile("dsb sy" ::: "memory");
+-	fCtl0[0x18 / 4] = fPipeFlush;	/* latched at the next vsync */
++	fCtl0[0x18 / 4] = fPipeFlush | (resetFit ? 0x41u : 0u);	/* latched at the next vsync */
+ 	__asm__ volatile("dsb sy" ::: "memory");
+ 	fScanPhys = pa;
+ 	fScanStride = stride;
+@@ -724,6 +716,41 @@
+ 	fScanPhys = pa;
+ 	fScanStride = stride;
+ }
++
++#if defined(RIVER)
++void
++AppleCLCD::fitScanFrom(uint64_t pa)
++{
++	volatile uint32_t *p = fFitPipe;
++	/* QSEED2 VIG0: 21-bit phase steps and PCMN downscale. */
++	p[0x00 / 4] = (2436u << 16) | 1125u;
++	p[0x04 / 4] = (2436u << 16) | 1125u;
++	p[0x08 / 4] = 0;
++	p[0x0c / 4] = (2270u << 16) | 1048u;
++	p[0x10 / 4] = 16;
++	p[0x14 / 4] = (uint32_t)pa;
++	p[0x24 / 4] = 4608;
++	p[0x30 / 4] = 0x000236ffU;
++	p[0x34 / 4] = 0x03020001U;
++	p[0x38 / 4] = fVig0[0x38 / 4];
++	p[0x200 / 4] = 0;
++	p[0x210 / 4] = (uint32_t)(((uint64_t)1125 << 21) / 1048);
++	p[0x214 / 4] = (uint32_t)(((uint64_t)2436 << 21) / 2270);
++	p[0x220 / 4] = 0;
++	p[0x224 / 4] = 0;
++	p[0x204 / 4] = 3u | (2u << 8) | (2u << 10) | (2u << 16) | (2u << 18);
++	/* Keep ABL's RGB0 underneath as a fallback while VIG0 is tested. */
++	fFitMixer[0x20 / 4] = 0x100; /* opaque: FG_CONST=255, BG_CONST=0 */
++	fFitMixer[0x24 / 4] = 0xff;
++	fFitMixer[0x28 / 4] = 0;
++	fFitMixer[0] = fFitMixerMode | 2u; /* stage-0 blend enabled */
++	fCtl0[0x00 / 4] = 0x202;
++	__asm__ volatile("dsb sy" ::: "memory");
++	fCtl0[0x18 / 4] = 0x20049; /* CTL + LM0 + RGB0 + VIG0 */
++	__asm__ volatile("dsb sy" ::: "memory");
++	fFitActive = true;
++}
++#endif
+ 
+ /*
+  * DCS long write through the DSI command DMA path (topaz-woa: the TPG FIFO
+@@ -1176,15 +1203,9 @@
+ 			if (pa != NULL) IOFreeData(pa, npages * sizeof(uint64_t));
+ 			if (err == 0) {
+ 				if (!fFitActive) {
+-					/* RGB0 is ABL's pipe. Move mixer stage 0 to VIG0 only after a good frame. */
+-					fFitPipe[0x38 / 4] = fVig0[0x38 / 4];
+-					fVig0 = fFitPipe;
+-					fPipeFlush = 0x20001;
+-					fFitActive = true;
+-					fCtl0[0x00 / 4] = 1;
+-					IOLog("RIVER MDP: VIG0 scaled fit active, 1125x2436 -> 1048x2270 at x=16\n");
++					IOLog("RIVER MDP: VIG0 overlay fit active, 1125x2436 -> 1048x2270 at x=16\n");
+ 				}
+-				scanFrom(fFitPhys[next], 4608);
++				fitScanFrom(fFitPhys[next]);
+ 				fFitIdx = next;
+ 				s->release();
+ 				return;
+@@ -1542,6 +1563,17 @@
+ 	    fLogicalW == 1125 && fLogicalH == 2436 && !strcmp(pname, "RGB0")) {
+ 		const vm_size_t fitSize = (vm_size_t)4608 * 2436;
+ 		fFitPipe = river_mdp_map(0x1a05000ULL);
++		fFitMixer = river_mdp_map(0x1a45000ULL);
++		if (fFitMixer != NULL) fFitMixerMode = fFitMixer[0];
++		volatile uint32_t *vigClk = river_mdp_map(0x1a012acULL);
++		if (vigClk != NULL && fFitMixer != NULL) {
++			/* DT: VIG0 clock control is MDP base +0x2ac, force-on bit 0. */
++			*vigClk = (*vigClk | 1u) & ~2u;
++			__asm__ volatile("dsb sy" ::: "memory");
++			IOLog("RIVER MDP: VIG0 clock control %#x\n", *vigClk);
++		} else {
++			fFitPipe = NULL;
++		}
+ 		for (unsigned i = 0; fFitPipe != NULL && i < 2; i++) {
+ 			fFit[i] = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+ 			    kIODirectionInOut | kIOMemoryPhysicallyContiguous, fitSize, 0x00000000fffff000ull);

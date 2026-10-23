@@ -29,9 +29,14 @@ against Foundation and the existing iOS libarchive. No kernel or partition chang
   RAM-only image prepared privately at the display chat's `work/river-r80-vigfit-boot.img`.
   RAM boot reached an all-blue screen per user. USB log receiver was down, so
   no boot log was captured. `fastboot boot` of the known r76-fullram image
-  succeeded afterward; home-screen confirmation pending. Treat 0209 as a
+  succeeded afterward; user confirmed the home screen works with all default
+  apps present. Treat 0209 as a
   failed diagnostic, not a usable fit. The RGB0-to-VIG0 handoff needs a
   register/clock/fetch audit before any more phone tests.
+- Patch 0210 r81 candidate is offline only: force VIG0's DT-specified pipe
+  clock on; keep ABL RGB0 at mixer base and place VIG0 at the next stage;
+  program opaque blending and flush LM0 with CTL/VIG0/RGB0. This addresses
+  plausible causes of the r80 blue screen but has not yet been built or booted.
 - Patch 0207 (`67d6e89`, CI 39906798316 passed), r78 RAM boot: offscreen
   A5xx mode 7 / CP_BLIT op 3 64x64 -> 32x32 probe completed its fence but
   left all four destination samples at 0xdeadbeef. The normal GPU present and
