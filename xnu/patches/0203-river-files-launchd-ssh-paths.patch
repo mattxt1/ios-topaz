@@ -1,0 +1,46 @@
+diff --git a/bsd/dev/river_files.c b/bsd/dev/river_files.c
+index ec8cd0d..181a096 100644
+--- a/bsd/dev/river_files.c
++++ b/bsd/dev/river_files.c
+@@ -8,6 +8,10 @@
+  * and tools/mkpayload.py --blob RiverFiles=... names it in /chosen/memory-map.
+  * Only absolute paths under /usr/local/ are accepted; missing parent
+  * directories are created (0755); files get the given mode, owner root:wheel.
++ * riverfilessys=1 (0203) also accepts /System/Library/xpc/launchd.plist
++ * (launchd's job list: restart loops removed, an SSH job added), /bin/sh and
++ * files under /private/var/root/.ssh/. These persist on the root volume; a
++ * boot image carrying the stock launchd.plist puts it back.
+  *
+  * riverdm=1 (0199) also creates iOS's data-migration sentinel
+  * /private/var/datamigrator/migrate (empty, mobile:staff 0644): datamigrator
+@@ -48,6 +52,21 @@ river_has_dotdot(const char *p)
+ 	return false;
+ }
+ 
++static bool
++river_path_allowed(const char *path)
++{
++	if (strncmp(path, "/usr/local/", 11) == 0) {
++		return true;
++	}
++	uint32_t sys = 0;
++	if (!PE_parse_boot_argn("riverfilessys", &sys, sizeof(sys)) || sys != 1) {
++		return false;
++	}
++	return strcmp(path, "/System/Library/xpc/launchd.plist") == 0 ||
++	       strcmp(path, "/bin/sh") == 0 ||
++	       strncmp(path, "/private/var/root/.ssh/", 23) == 0;
++}
++
+ extern int river_mkdir_kernel(const char *path, int mode);
+ 
+ /* Create each missing parent directory of path (0755). */
+@@ -199,7 +218,7 @@ river_files_install(void)
+ 		path[112] = 0;
+ 		uint32_t mode = *(const uint32_t *)(e + 112), off = *(const uint32_t *)(e + 116);
+ 		uint32_t len = *(const uint32_t *)(e + 120);
+-		if (strncmp(path, "/usr/local/", 11) != 0 || river_has_dotdot(path) ||
++		if (!river_path_allowed(path) || river_has_dotdot(path) ||
+ 		    (uint64_t)off + len > size) {
+ 			printf("RIVER FILES: refused %s\n", path);
+ 			continue;
