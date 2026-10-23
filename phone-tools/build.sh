@@ -25,4 +25,6 @@ cc -Wno-deprecated-declarations -dynamiclib -install_name /usr/local/lib/libcgpr
 codesign -f -s - "$out/libcgprobe.dylib"
 cc -fobjc-arc -framework Foundation -larchive -o "$out/appinstall" appinstall.m
 sign appinstall
+cc -fobjc-arc -framework Foundation -o "$out/applaunch" applaunch.m
+sign applaunch
 ls -l "$out"
