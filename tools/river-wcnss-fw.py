@@ -53,7 +53,7 @@ def main():
         digest_off = 40 + index * 32
         digest = hashlib.sha256(part.read_bytes()).digest()
         if hash_data[digest_off:digest_off + 32] != digest:
-            raise ValueError(f'{part.name}: digest differs from signed hash segment')
+            raise ValueError(f'{part.name}: digest differs from embedded hash segment')
     lo = min(addr for _, addr, _, _ in segments)
     hi = max(addr + size for _, addr, size, _ in segments)
     if not all(flags & MDT_RELOCATABLE for _, _, _, flags in segments):
