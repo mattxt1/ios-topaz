@@ -2017,3 +2017,40 @@ home screen works as before; lock screen still has no clock or wallpaper.
 **DataMigration is not a usable route on River.** Next idea for the stock apps:
 put the staged apps in /Applications (system apps there are registered by
 LaunchServices without FairPlay) and force a LaunchServices rebuild.
+
+## Lock screen wallpaper, SSH, restart loops (2026-10-22, r71-r74)
+
+**Wallpaper: app extensions now register (0201, 0202).** PosterBoard had an
+empty provider store and asserted in first-time setup; LaunchServices had 131
+apps but ~1 extension record. 0201 `riverls=<container UUID>` deletes the two
+LaunchServices csstores before launchd so lsd rebuilds them (r71: rebuilt,
+still no extensions, checked on a read-only readback). Cause found in
+NWylynko/ios-flame (their 0103): ExtensionFoundation asks the
+AppleMobileFileIntegrity IOService (selector 6) whether the extension point
+cache's cdhash is trusted; with no such service lsd rejects every .appex.
+**0202** ports their stand-in service (answers "trusted"). r72-lsreset:
+`SWEET AMFI: trust cache query (20-byte cdhash): trusted`, widget and poster
+extensions start, the Gradient wallpaper shows on lock and home screens.
+Still missing: lock-screen clock/date and widget content. Extensions are
+killed by launchd ("extension check-in timeout", namespace 7): symbolicated
+(`ipsw` + tools/sweet-crash.py), they are still in dyld ObjC/Swift setup
+before main, i.e. too slow, not blocked. `launchd_disable_all_timeouts=1`
+stops the kills but no clock appears and the UI gets slower.
+
+**Restart loops removed, SSH (0203, 0204).** 0203 `riverfilessys=1` lets the
+boot image's file drop also write /System/Library/xpc/launchd.plist, /bin/sh
+and /private/var/root/.ssh/ (persist on the root). tools/river-launchd-plist.py
+removes fairplayd.H2, bluetoothd, lskdd (46/41/16 restarts per boot before)
+and adds dropbear (+ a one-shot dropbearkey job). Two launchd panics on the
+way were a file-drop bug, not the plist: O_TRUNC did not shorten the file, so
+a shorter plist kept the old tail and broke the bplist trailer; **0204** sets
+va_data_size. User: "running very smooth, best it's ever ran"; wallpaper
+appears after a delay. **SSH works** (r74-ssh2): dropbear 2025.88 and dash
+built with the iOS 16 SDK (userland/, not in git), key login as root at
+192.168.7.2 (`ssh -i ../userland/ssh/id_ed25519 -o
+UserKnownHostsFile=../userland/ssh/known_hosts root@192.168.7.2`). Needs the
+receiver running (it gives the Mac 192.168.7.1). No coreutils yet (dash
+builtins; /bin/ps, /bin/df, ioreg, lsdiagnose exist). First `ps`: launchd 66%
+CPU (2 min), mediaserverd 43%, progressd 56%, vmd 26%: next speed targets.
+Boot images must stay under ~38 MB (ABL refused 39 MB); sweetgl.dylib
+persists in /usr/local, so file-drop images can leave it out.
