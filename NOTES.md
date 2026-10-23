@@ -35,9 +35,16 @@ The current iOS root has no Android WCNSS firmware installed.
 Patch 0213 adds `riverwcnssprobe=1`: two read-only Qualcomm SCM queries
 for PAS init-image call availability and WCNSS PAS ID 6 support during the
 River input thread's early probe. It does not reset the radio or write
-WCNSS registers. The local River single-file compile passed; CI and a
-RAM-only phone test are pending. This probe is a hardware gate, not a
-Wi-Fi driver.
+WCNSS registers. The local River single-file compile and CI 40001750574
+passed. The artifact SHA-256 matched its manifest. The RAM-only r83 image
+`shim-river/out/river-r83-wcnssprobe-boot.img` (SHA-256
+`6ac1140a59c10c841729ab04f75a420430f814a7e0e9e97d40990b2cdfe803a2`)
+booted by `fastboot boot`; USB networking and SSH returned. The kernel log
+reported `PAS init_image call avail status 0 result 1; PAS 6 support status 0
+result 1`. Private evidence: `../logs-private/r83-wcnssprobe-live-snapshot.txt`.
+This establishes the TrustZone capability gate, not radio startup or Wi-Fi.
+Next: prepare PAS metadata and segment load, verify the WCNSS carveout and
+SMEM handshake, then test firmware startup behind a separate boot argument.
 
 ## River performance and app follow-up (2026-10-23)
 
