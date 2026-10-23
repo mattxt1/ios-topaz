@@ -62,8 +62,20 @@ no firmware segments copied and no WCNSS reset. Package the staged private
 `shim-river/out/river-r84-wcnssmeta-boot.img` (SHA-256
 `b65b22ff9d47a4e576f7e52fa49acab27509b5a0c6ef414ebf5caacd96b13b94`).
 Its 7324-byte metadata blob byte-matches the staged private file at physical
-0x1a5e8000, and the 524-byte boot line fits its field. Phone test pending
-fastboot access. Do not describe `INIT_IMAGE` alone as Wi-Fi or radio startup.
+0x1a5e8000, and the 524-byte boot line fits its field. Do not describe
+`INIT_IMAGE` alone as Wi-Fi or radio startup.
+Phone r84 RAM boot was accepted by fastboot but returned to fastboot before
+USB networking appeared. The user confirmed it did not boot. A known-good r83
+kernel with `riverlog=0` subsequently booted and allowed a read-only 4,198,400
+byte userdata-tail dump (`../logs-private/r84-failed-boot-ring.bin`), but the
+dump has no `SWEETLOG` header or r84 metadata result; it contains older console
+text and is not usable for failure attribution. No partition was flashed.
+Prepared `shim-river/out/river-r84-noinit-boot.img` (SHA-256
+`8732bf3bf5019adb27d68fd87db9f415db0c3b4c9e126d7e2f9e05fe94ff543b`)
+with the exact same r84 kernel and metadata blob, changing only
+`riverwcnssinit=1` to `=0`; phone control test pending fastboot handoff. If it
+boots, the init-image call path is implicated. Avoid repeating the failing
+probe unchanged.
 
 ## River performance and app follow-up (2026-10-23)
 
