@@ -1,0 +1,111 @@
+diff --git a/bsd/dev/river_gpu.c b/bsd/dev/river_gpu.c
+index 4c6c58f..81d91e1 100644
+--- a/bsd/dev/river_gpu.c
++++ b/bsd/dev/river_gpu.c
+@@ -603,6 +603,7 @@ static volatile uint32_t rgpu_irqs, rgpu_irq_err, rgpu_irq_last;
+ static int rgpu_fence_event;
+ static bool rgpu_up;			/* service usable by user clients */
+ extern void river_gpu_publish(void);	/* RiverGPU.cpp: publishResource("RiverGPUReady") */
++static void rgpu_scale_probe(void);
+ 
+ static void
+ rgpu_irq(__unused void *arg)
+@@ -826,6 +827,11 @@ rgpu_service_test(vm_offset_t buf, uint64_t pa, uint64_t gva)
+ 	if (done && good == N) {
+ 		PE_parse_boot_argn("rivergpuflush", &rgpu_flush_all, sizeof(rgpu_flush_all));
+ 		rgpu_up = true;
++		int scale_probe = 0;
++		PE_parse_boot_argn("riverblitscaleprobe", &scale_probe, sizeof(scale_probe));
++		if (scale_probe == 1) {
++			rgpu_scale_probe();
++		}
+ 		river_gpu_publish();
+ 		printf("RIVER GPU: RiverGPUReady published for user clients\n");
+ 	}
+@@ -1376,6 +1382,86 @@ river_gpu_blit(const uint64_t *pa, uint32_t npages, uint64_t start, uint32_t src
+ 	return err;
+ }
+ 
++/*
++ * Diagnostic only: one offscreen 64x64 -> 32x32 scale. Mesa's A5xx register
++ * descriptions name mode 7 and CP_BLIT op 3, but its driver does not support
++ * scaling. Keep this behind a boot arg and leave the live present path alone.
++ */
++static void
++rgpu_scale_probe(void)
++{
++	int src = rgpu_bo_alloc(64 * 64 * 4);
++	int dst = rgpu_bo_alloc(32 * 32 * 4);
++	int ib = rgpu_bo_alloc(PAGE_SIZE);
++	if (src < 0 || dst < 0 || ib < 0) {
++		printf("RIVER GPU: scale probe allocation failed %d/%d/%d\n", src, dst, ib);
++		if (ib >= 0) rgpu_bo_free(ib);
++		if (dst >= 0) rgpu_bo_free(dst);
++		if (src >= 0) rgpu_bo_free(src);
++		return;
++	}
++	struct rgpu_bo *s = &rgpu_bos[src], *d = &rgpu_bos[dst], *i = &rgpu_bos[ib];
++	uint32_t *sp = (uint32_t *)s->va, *dp = (uint32_t *)d->va;
++	const uint32_t colors[4] = { 0xff0000ff, 0xff00ff00, 0xffff0000, 0xffffffff };
++	for (uint32_t y = 0; y < 64; y++) {
++		for (uint32_t x = 0; x < 64; x++) {
++			sp[y * 64 + x] = colors[(y >= 32 ? 2 : 0) + (x >= 32 ? 1 : 0)];
++		}
++	}
++	for (uint32_t j = 0; j < 32 * 32; j++) dp[j] = 0xdeadbeef;
++	flush_dcache64((addr64_t)s->va, (unsigned)s->size, FALSE);
++	flush_dcache64((addr64_t)d->va, (unsigned)d->size, FALSE);
++
++	uint32_t *c = (uint32_t *)i->va, n = 0;
++#define B(v) (c[n++] = (v))
++	B(pkt4(REG_A5XX_RB_RENDER_CNTL, 1)); B(0x00000008);
++	B(pkt4(REG_A5XX_RB_2D_BLIT_CNTL, 1)); B(0x86000000);
++	B(pkt4(REG_A5XX_GRAS_2D_BLIT_CNTL, 1)); B(0x86000000);
++	B(pkt4(REG_A5XX_UNKNOWN_2184, 1)); B(0x00000009);
++	B(pkt4(REG_A5XX_RB_CNTL, 1)); B(0x00020000);
++	B(pkt4(REG_A5XX_RB_MODE_CNTL, 1)); B(0x00000004);
++	B(pkt4(REG_A5XX_SP_MODE_CNTL, 1)); B(0x0000000c);
++	B(pkt4(REG_A5XX_TPL1_MODE_CNTL, 1)); B(0x00000344);
++	B(pkt4(REG_A5XX_HLSQ_MODE_CNTL, 1)); B(0x00000002);
++	B(pkt4(REG_A5XX_GRAS_CL_CNTL, 1)); B(0x00000181);
++	B(pkt7(CP_SET_RENDER_MODE, 1)); B(7); /* BLIT2DSCALE */
++	B(pkt4(REG_A5XX_RB_2D_SRC_INFO, 9));
++	B(RB5_R8G8B8A8_UNORM);
++	B((uint32_t)s->gpuva); B((uint32_t)(s->gpuva >> 32));
++	B(256 >> 6); B(0); B(0); B(0); B(0); B(0);
++	B(pkt4(REG_A5XX_GRAS_2D_SRC_INFO, 1)); B(RB5_R8G8B8A8_UNORM);
++	B(pkt4(REG_A5XX_RB_2D_DST_INFO, 9));
++	B(RB5_R8G8B8A8_UNORM);
++	B((uint32_t)d->gpuva); B((uint32_t)(d->gpuva >> 32));
++	B(128 >> 6); B(0); B(0); B(0); B(0); B(0);
++	B(pkt4(REG_A5XX_GRAS_2D_DST_INFO, 1)); B(RB5_R8G8B8A8_UNORM);
++	B(pkt7(CP_BLIT, 5));
++	B(3); /* BLIT_OP_SCALE */
++	B(0); B(63 | (63 << 16));
++	B(0); B(31 | (31 << 16));
++	B(pkt7(CP_SET_RENDER_MODE, 1)); B(RENDER_MODE_END2D);
++	B(pkt7(CP_WAIT_FOR_IDLE, 0));
++#undef B
++	flush_dcache64((addr64_t)i->va, n * 4, FALSE);
++	printf("RIVER GPU: scale probe submit mode7/op3 64x64 -> 32x32\n");
++	uint64_t ibva = i->gpuva;
++	uint32_t seq = rgpu_submit(&ibva, &n, 1);
++	bool done = rgpu_wait(seq, 200);
++	if (!done) {
++		printf("RIVER GPU: scale probe TIMEOUT (GPU buffers retained)\n");
++		return;
++	}
++	flush_dcache64((addr64_t)d->va, (unsigned)d->size, FALSE);
++	uint32_t a = dp[8 * 32 + 8], b = dp[8 * 32 + 24];
++	uint32_t c0 = dp[24 * 32 + 8], d0 = dp[24 * 32 + 24];
++	printf("RIVER GPU: scale probe samples %#x %#x %#x %#x (%s), IRQ errors %u last %#x\n",
++	    a, b, c0, d0, a == colors[0] && b == colors[1] && c0 == colors[2] && d0 == colors[3]
++	    ? "PASS" : "FAIL", rgpu_irq_err, rgpu_irq_last);
++	rgpu_bo_free(ib);
++	rgpu_bo_free(dst);
++	rgpu_bo_free(src);
++}
++
+ int river_gpu_wait(uint32_t fence, uint32_t ms);
+ int
+ river_gpu_wait(uint32_t fence, uint32_t ms)
