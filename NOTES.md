@@ -53,13 +53,17 @@ out-of-range segments, and emits a stage manifest. The private stage is at
 preparation only. DT shows Pronto v3 power dependencies (vddmx/cx/px and
 Iris rails), clocks and ready/stop signals; do not invoke PAS auth/reset
 until those prerequisites have an implementation.
-Patch 0214 (`870613d`, CI 40020522756 pending) adds a separate
+Patch 0214 (`870613d`, CI 40020522756 passed) adds a separate
 `riverwcnssinit=1` probe: after the two capability gates, it reads a
 `RiverWCNSSMeta` boot blob, checks its physical range and ELF32 header, and
 calls PAS `INIT_IMAGE` for ID 6. It logs TrustZone status and result, with
 no firmware segments copied and no WCNSS reset. Package the staged private
-`wcnss-pas-metadata.bin` as that blob after CI succeeds; the phone test has
-not yet run. Do not describe `INIT_IMAGE` alone as Wi-Fi or radio startup.
+`wcnss-pas-metadata.bin` as that blob. The RAM-only image is
+`shim-river/out/river-r84-wcnssmeta-boot.img` (SHA-256
+`b65b22ff9d47a4e576f7e52fa49acab27509b5a0c6ef414ebf5caacd96b13b94`).
+Its 7324-byte metadata blob byte-matches the staged private file at physical
+0x1a5e8000, and the 524-byte boot line fits its field. Phone test pending
+fastboot access. Do not describe `INIT_IMAGE` alone as Wi-Fi or radio startup.
 
 ## River performance and app follow-up (2026-10-23)
 
