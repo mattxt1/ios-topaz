@@ -6,9 +6,20 @@ Patch 0226 (`65ca790` scratch XNU) extends the opt-in SMEM survey to
 read item 18, the live `rpm_requests` channel control pair, and item 342,
 its FIFO pair. It validates TOC bounds and reports the pair's size, TX/RX
 state and pointers without writing either item. Local River single-file
-compile passed. CI, RAM image and phone test are pending. Use the result
-to implement the SMD handshake and RPM regulator votes; do not change
-PMIC registers directly.
+compile and CI run 40066180589 passed. The verified RAM-only r96 image
+`shim-river/out/river-r96-rpm-smd-info-boot.img` has SHA-256
+`f4119d138e2daaaa4a5385f441e84a7968acc816297caaf17c9b8a29bdd0aedd`.
+The downloaded kernel matched its manifest; unpacked payload, 575-byte
+boot line and private blobs matched their inputs. `fastboot boot` succeeded;
+the paced firmware copy completed through 0x657000 and USB ping succeeded.
+RPM channel info item 18 is allocated with size 0x58 and FIFO item 342
+with size 0x800. Both have auxiliary base 0x60000, so their offsets are
+relative to the DT's `aux-mem1` physical region at 0x60000+0x8000, rather
+than the main 0x86300000 SMEM region. No control words were read yet.
+Private snapshot: `../logs-private/r96-rpm-smd-aux-snapshot.txt`.
+Map the DT auxiliary region for a bounded state/pointer survey next, then
+implement the SMD handshake and RPM regulator votes; do not change PMIC
+registers directly. The r96 phone is running from RAM.
 
 ## River SMEM/SMD channel survey (2026-10-24)
 
