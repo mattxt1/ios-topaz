@@ -1,0 +1,74 @@
+From 6a1c3b457fbe993c47a5a81ec28dbdb295f47598 Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Sat, 24 Oct 2026 01:07:34 -0400
+Subject: [PATCH] RIVER: survey WCNSS PMU and PMIC rails read-only
+
+---
+ bsd/dev/sweet_keys.c | 44 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 44 insertions(+)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 367243b..e995ac2 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -25,6 +25,8 @@ void river_input_init(void);
+ static vm_offset_t ri_qup, ri_gcc, ri_gcc_ahb, ri_gcc_vote;
+ static vm_offset_t ri_tlmm, ri_touch, ri_key, ri_spmi, ri_obs;
+ static uint32_t ri_pon_off;
++static vm_offset_t ri_spmi_obs(vm_offset_t core, unsigned ppid);
++static bool ri_spmi_read(vm_offset_t obs, unsigned addr, unsigned count, uint32_t *v);
+ static bool ri_started, ri_pon_ok, ri_touch_ok;
+ static int ri_chan;
+ static char ri_rtc_note[96] = "RIVER RTC: not read";
+@@ -432,6 +434,48 @@ river_wcnss_probe(void)
+       load, end);
+   if (load == 3) ri_wait(1000);
+  }
++ uint32_t power = 0;
++ if (!PE_parse_boot_argn("riverwcnsspower", &power, sizeof(power)) || !power) return;
++ /* Read-only prerequisite survey. The live River DT names Pronto's PMU
++  * window and PM8953 L5/L7/L9/L19 rails; no RPM vote or PMIC write here. */
++ /* Pronto base is 0x0a21b000; cfg/spare are at +0x1004/+0x1088. */
++ vm_offset_t pmu = ml_io_map_unmappable(0x0a21c000, 0x4000, VM_WIMG_IO);
++ if (pmu) {
++  printf("RIVER WCNSS: PMU cfg %#x spare %#x (read-only)\n",
++      ri_rd(pmu, 0x04), ri_rd(pmu, 0x88));
++  ml_io_unmap(pmu, 0x4000);
++ } else {
++  printf("RIVER WCNSS: PMU read-only map failed\n");
++ }
++ vm_offset_t core = ri_map(0x0200f000);
++ if (!core) {
++  printf("RIVER WCNSS: PMIC SPMI core map failed\n");
++  return;
++ }
++ uint32_t ver = ri_rd(core, 0);
++ if (ver < 0x20010000 || ver >= 0x50000000) {
++  printf("RIVER WCNSS: PMIC SPMI version %#x unsupported\n", ver);
++  return;
++ }
++ static const struct { unsigned ppid; const char *name; } rails[] = {
++  { 0x144, "PM8953 L5 vddpx/vdddig" },
++  { 0x146, "PM8953 L7 vddxo/PLL" },
++  { 0x148, "PM8953 L9 vddpa" },
++  { 0x152, "PM8953 L19 vddrfa" },
++ };
++ for (unsigned i = 0; i < sizeof(rails) / sizeof(rails[0]); i++) {
++  vm_offset_t obs = ri_spmi_obs(core, rails[i].ppid);
++  uint32_t type = 0, sub = 0, status = 0, enable = 0;
++  if (!obs || !ri_spmi_read(obs, 0x04, 1, &type) ||
++      !ri_spmi_read(obs, 0x05, 1, &sub) ||
++      !ri_spmi_read(obs, 0x08, 1, &status) ||
++      !ri_spmi_read(obs, 0x46, 1, &enable)) {
++   printf("RIVER WCNSS: %s PPID %#x not readable\n", rails[i].name, rails[i].ppid);
++   continue;
++  }
++  printf("RIVER WCNSS: %s type %#x subtype %#x status %#x enable %#x (read-only)\n",
++      rails[i].name, type & 0xff, sub & 0xff, status & 0xff, enable & 0xff);
++ }
+ 
+ }
+ 
+-- 
+2.54.0 (Apple Git-156)
+

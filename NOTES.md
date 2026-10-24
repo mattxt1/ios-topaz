@@ -1,5 +1,16 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River WCNSS power status survey (2026-10-24)
+
+Patch 0224 (`6a1c3b4` scratch XNU) adds `riverwcnsspower=1` after a
+completed mode-3 firmware copy. It reads Pronto v3 PMU cfg/spare at the
+live DT's 0x0a21b000 register window and reads raw PM8953 L5/L7/L9/L19
+type/subtype/status/enable bytes via existing SPMI observer logic. It only
+writes observer read commands, makes no PMIC/RPM vote and does not release
+WCNSS reset. The River single-file compile passed. CI, RAM image and phone
+test are pending. Use the observed rail state to design proper RPM-SMD votes;
+do not assume bootloader state is sufficient or write PMIC registers directly.
+
 ## River firmware load complete (2026-10-24)
 
 Patch 0223 (`9df27f5` scratch XNU, repo `48182a3`) passed local River
