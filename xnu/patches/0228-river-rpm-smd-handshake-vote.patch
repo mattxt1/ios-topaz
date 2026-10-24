@@ -1,15 +1,15 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 02:59:00 -0400
+Date: Sat, 24 Oct 2026 03:40:00 -0400
 Subject: [PATCH] RIVER: RPM SMD channel handshake and regulator votes for L9/L19
 
 ---
- bsd/dev/sweet_keys.c | 162 ++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 162 insertions(+)
+ bsd/dev/sweet_keys.c | 185 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 185 insertions(+)
 
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -566,6 +566,168 @@
+@@ -566,6 +566,191 @@
          ri_rd(region, off + rx + 24), ri_rd(region, off + rx + 28),
          ri_rd(region, off + rx + 32));
     }
@@ -77,8 +77,16 @@ Subject: [PATCH] RIVER: RPM SMD channel handshake and regulator votes for L9/L19
 +    delay(1000);
 +   }
 +   tx_st = ri_rd(auxmem, 0);
-+   printf("RIVER WCNSS: RPM SMD channel established: tx state %u rx state %u\n", tx_st, rx_st);
++   uint32_t cur_tx_h = ri_rd(auxmem, 40);
++   uint32_t cur_tx_t = ri_rd(auxmem, 36);
++   uint32_t cur_rx_h = ri_rd(auxmem, 44 + 40);
++   uint32_t cur_rx_t = ri_rd(auxmem, 44 + 36);
++   printf("RIVER WCNSS: RPM SMD channel established: tx state %u rx state %u (tx_h %#x tx_t %#x rx_h %#x rx_t %#x)\n",
++       tx_st, rx_st, cur_tx_h, cur_tx_t, cur_rx_h, cur_rx_t);
 +   if (tx_st == SMD_OPENED && rx_st == SMD_OPENED) {
++    /* Purge any stale bootloader RX packet by syncing rx tail to current head */
++    ri_wr(auxmem, 44 + 36, cur_rx_h);
++    ri_wr(auxmem, 44 + 24, 1);
 +    vm_offset_t tx_fifo = auxmem + 0x800;
 +    vm_offset_t rx_fifo = auxmem + 0xc00;
 +    static const struct {
@@ -133,7 +141,9 @@ Subject: [PATCH] RIVER: RPM SMD channel handshake and regulator votes for L9/L19
 +     }
 +     head = (head + sizeof(pkt)) & 1023;
 +     ri_wr(auxmem, 40, head);
++     ri_wr(auxmem, 24, 0);
 +     ri_wr(auxmem, 20, 1);
++     __asm__ volatile("dmb sy" ::: "memory");
 +     ri_wr(ipc_reg, 0, 1);
 +     printf("RIVER WCNSS: sent RPM request for %s (msg_id %u, %u uV) new head %#x\n",
 +         targets[t].name, cur_msg_id, targets[t].uV, head);
@@ -142,16 +152,27 @@ Subject: [PATCH] RIVER: RPM SMD channel handshake and regulator votes for L9/L19
 +      uint32_t rx_h = ri_rd(auxmem, 44 + 40);
 +      uint32_t rx_t = ri_rd(auxmem, 44 + 36);
 +      if (rx_h != rx_t) {
++       uint32_t avail = (rx_h - rx_t) & 1023;
 +       uint32_t resp_smd_len = ri_rd(rx_fifo, rx_t & 1023);
 +       uint32_t resp_srv = ri_rd(rx_fifo, (rx_t + 20) & 1023);
 +       uint32_t resp_type = ri_rd(rx_fifo, (rx_t + 28) & 1023);
 +       uint32_t resp_msg_id = ri_rd(rx_fifo, (rx_t + 36) & 1023);
-+       printf("RIVER WCNSS: RPM ACK received for %s: smd_len %u srv %#x type %#x resp_msg_id %u\n",
-+           targets[t].name, resp_smd_len, resp_srv, resp_type, resp_msg_id);
-+       unsigned total_resp = 20 + ((resp_smd_len + 3) & ~3);
-+       rx_t = (rx_t + total_resp) & 1023;
++       printf("RIVER WCNSS: RPM ACK for %s: avail %u (rx_h %#x rx_t %#x) smd_len %u srv %#x type %#x msg_id %u\n",
++           targets[t].name, avail, rx_h, rx_t, resp_smd_len, resp_srv, resp_type, resp_msg_id);
++       printf("RIVER WCNSS: RPM FIFO words: %#x %#x %#x %#x %#x %#x %#x %#x\n",
++           ri_rd(rx_fifo, (rx_t + 0) & 1023), ri_rd(rx_fifo, (rx_t + 4) & 1023),
++           ri_rd(rx_fifo, (rx_t + 8) & 1023), ri_rd(rx_fifo, (rx_t + 12) & 1023),
++           ri_rd(rx_fifo, (rx_t + 16) & 1023), ri_rd(rx_fifo, (rx_t + 20) & 1023),
++           ri_rd(rx_fifo, (rx_t + 24) & 1023), ri_rd(rx_fifo, (rx_t + 28) & 1023));
++       unsigned advance = avail;
++       if (resp_smd_len <= 128) {
++        unsigned pkt_tot = 20 + ((resp_smd_len + 3) & ~3);
++        if (pkt_tot <= avail) advance = pkt_tot;
++       }
++       rx_t = (rx_t + advance) & 1023;
 +       ri_wr(auxmem, 44 + 36, rx_t);
 +       ri_wr(auxmem, 44 + 24, 1);
++       __asm__ volatile("dmb sy" ::: "memory");
 +       ri_wr(ipc_reg, 0, 1);
 +       acked = true;
 +       break;
@@ -159,9 +180,11 @@ Subject: [PATCH] RIVER: RPM SMD channel handshake and regulator votes for L9/L19
 +      delay(1000);
 +     }
 +     if (!acked) {
-+      printf("RIVER WCNSS: RPM request for %s timed out waiting for ACK\n", targets[t].name);
++      printf("RIVER WCNSS: RPM request for %s timed out waiting for ACK (rx_h %#x rx_t %#x)\n",
++          targets[t].name, ri_rd(auxmem, 44 + 40), ri_rd(auxmem, 44 + 36));
 +     }
 +    }
++    delay(50000);
 +    if (core) {
 +     for (unsigned i = 0; i < sizeof(targets) / sizeof(targets[0]); i++) {
 +      unsigned ppid = (targets[i].id == 9) ? 0x148 : 0x152;
@@ -178,6 +201,5 @@ Subject: [PATCH] RIVER: RPM SMD channel handshake and regulator votes for L9/L19
    }
   }
   if (auxmem) ml_io_unmap(auxmem, 0x8000);
-
 -- 
 2.54.0 (Apple Git-156)
