@@ -1,42 +1,60 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 18:00:00 -0400
-Subject: [PATCH] RIVER: invoke PAS 6 auth_and_reset and survey post-reset SMEM/SMD
+Date: Sat, 24 Oct 2026 18:20:00 -0400
+Subject: [PATCH] RIVER: configure Iris PMU/XO, invoke PAS 6, and monitor WCNSS SMD
 
 ---
- bsd/dev/sweet_keys.c | 76 ++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 76 insertions(+)
+ bsd/dev/sweet_keys.c | 99 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 99 insertions(+)
 
 diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
 index a88eae8..8899aabb 100644
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -750,6 +750,82 @@ river_wcnss_probe(void)
+@@ -750,6 +750,105 @@ river_wcnss_probe(void)
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
 + uint32_t reset = 0;
 + if (PE_parse_boot_argn("riverwcnssreset", &reset, sizeof(reset)) && reset) {
++  vm_offset_t pmu = ml_io_map_unmappable(0x0a21c000, 0x4000, VM_WIMG_IO);
++  if (pmu) {
++   uint32_t spare = ri_rd(pmu, 0x88) | (1u << 25);
++   ri_wr(pmu, 0x88, spare);
++   printf("RIVER WCNSS: PMU spare set to %#x (NVBIN_DLND)\n", ri_rd(pmu, 0x88));
++   ri_wr(pmu, 0x04, 0);
++   uint32_t val = (1u << 5) | (1u << 4);
++   ri_wr(pmu, 0x04, val);
++   val |= (1u << 7);
++   ri_wr(pmu, 0x04, val);
++   unsigned spin = 0;
++   while ((ri_rd(pmu, 0x04) & (1u << 8)) && spin++ < 1000) delay(10);
++   val &= ~(1u << 7);
++   ri_wr(pmu, 0x04, val);
++   val |= (1u << 3);
++   ri_wr(pmu, 0x04, val);
++   spin = 0;
++   while ((ri_rd(pmu, 0x04) & (1u << 6)) && spin++ < 1000) delay(10);
++   val &= ~((1u << 5) | (1u << 3));
++   ri_wr(pmu, 0x04, val);
++   printf("RIVER WCNSS: Iris XO configured (pmu_cfg %#x); waiting 20ms...\n", ri_rd(pmu, 0x04));
++   delay(20000);
++   ml_io_unmap(pmu, 0x4000);
++  }
 +  printf("RIVER WCNSS: invoking PAS 6 auth_and_reset...\n");
 +  uint64_t ares = 0;
 +  int64_t ast = river_scm(0x02, 0x05, 1, 6, 0, 0, &ares);
 +  printf("RIVER WCNSS: PAS 6 auth_and_reset status %lld result %llu\n", ast, ares);
 +  if (ast == 0 && ares == 0) {
 +   printf("RIVER WCNSS: Pronto v3 brought out of reset!\n");
-+   for (unsigned w = 0; w < 100; w++) {
-+    delay(10000);
++   for (unsigned w = 0; w < 30; w++) {
++    delay(100000);
 +    unsigned ent422 = SMEM_TOC + 422 * SMEM_ENTRY;
 +    uint32_t alloc422 = ri_rd(smem, ent422);
 +    if (alloc422) {
 +     uint32_t off422 = ri_rd(smem, ent422 + 4);
 +     uint32_t len422 = ri_rd(smem, ent422 + 8);
-+     uint32_t aux422 = ri_rd(smem, ent422 + 12);
-+     printf("RIVER WCNSS: SMEM item 422 alloc %u offset %#x size %#x aux %#x (waited %u ms)\n",
-+         alloc422, off422, len422, aux422, (w + 1) * 10);
 +     if (off422 < SMEM_SIZE && len422 >= 16) {
-+      printf("RIVER WCNSS: SMEM item 422 words: %#x %#x %#x %#x\n",
-+          ri_rd(smem, off422), ri_rd(smem, off422 + 4),
-+          ri_rd(smem, off422 + 8), ri_rd(smem, off422 + 12));
 +      char sfr[81];
 +      unsigned slen = len422 < 80 ? len422 : 80;
 +      for (unsigned j = 0; j < slen; j++) {
@@ -44,12 +62,44 @@ index a88eae8..8899aabb 100644
 +       sfr[j] = (c >= 0x20 && c <= 0x7e) ? (char)c : ' ';
 +      }
 +      sfr[slen] = 0;
-+      printf("RIVER WCNSS: SMEM item 422 SFR text: [%s]\n", sfr);
++      printf("RIVER WCNSS: SMEM 422 SFR (waited %u ms): [%s]\n", (w + 1) * 100, sfr);
 +     }
-+     break;
++    }
++    unsigned ent431 = SMEM_TOC + 431 * SMEM_ENTRY;
++    if (ri_rd(smem, ent431)) {
++     uint32_t o431 = ri_rd(smem, ent431 + 4);
++     uint32_t l431 = ri_rd(smem, ent431 + 8);
++     printf("RIVER WCNSS: SMP2P-in item 431 alloc 1 offset %#x size %#x words: %#x %#x %#x %#x\n",
++         o431, l431, ri_rd(smem, o431), ri_rd(smem, o431 + 4), ri_rd(smem, o431 + 8), ri_rd(smem, o431 + 12));
++    }
++    static const unsigned tbls[] = { 13, 266 };
++    for (unsigned t = 0; t < sizeof(tbls) / sizeof(tbls[0]); t++) {
++     unsigned tid = tbls[t];
++     unsigned ent = SMEM_TOC + tid * SMEM_ENTRY;
++     if (!ri_rd(smem, ent)) continue;
++     uint32_t toff = ri_rd(smem, ent + 4);
++     uint32_t tlen = ri_rd(smem, ent + 8);
++     if (toff < SMEM_SIZE && tlen >= 64 * 32) {
++      for (unsigned i = 0; i < 64; i++) {
++       unsigned e = toff + i * 32;
++       uint32_t cid = ri_rd(smem, e + 20);
++       uint32_t flags = ri_rd(smem, e + 24);
++       uint32_t refs = ri_rd(smem, e + 28);
++       unsigned edge = flags & 0xff;
++       if (refs && edge == 6) {
++        char name[21];
++        for (unsigned j = 0; j < 20; j++) {
++         unsigned char c = *(volatile unsigned char *)(smem + e + j);
++         name[j] = (c >= 0x20 && c <= 0x7e) ? (char)c : 0;
++        }
++        name[20] = 0;
++        printf("RIVER WCNSS: Pronto SMD edge 6 slot %u cid %u flags %#x refs %u name %s (waited %u ms)\n",
++            i, cid, flags, refs, name, (w + 1) * 100);
++       }
++      }
++     }
 +    }
 +   }
-+   delay(200000);
 +   printf("RIVER WCNSS: surveying allocated SMEM items post-reset:\n");
 +   for (unsigned id = 0; id < 512; id++) {
 +    unsigned ent = SMEM_TOC + id * SMEM_ENTRY;
@@ -60,33 +110,6 @@ index a88eae8..8899aabb 100644
 +     uint32_t u = ri_rd(smem, ent + 12);
 +     printf("RIVER WCNSS: post-reset SMEM item %u alloc %u offset %#x size %#x aux %#x\n",
 +         id, a, o, l, u);
-+    }
-+   }
-+   static const unsigned tbls[] = { 13, 266 };
-+   for (unsigned t = 0; t < sizeof(tbls) / sizeof(tbls[0]); t++) {
-+    unsigned tid = tbls[t];
-+    unsigned ent = SMEM_TOC + tid * SMEM_ENTRY;
-+    if (!ri_rd(smem, ent)) continue;
-+    uint32_t toff = ri_rd(smem, ent + 4);
-+    uint32_t tlen = ri_rd(smem, ent + 8);
-+    if (toff < SMEM_SIZE && tlen >= 64 * 32) {
-+     for (unsigned i = 0; i < 64; i++) {
-+      unsigned e = toff + i * 32;
-+      uint32_t cid = ri_rd(smem, e + 20);
-+      uint32_t flags = ri_rd(smem, e + 24);
-+      uint32_t refs = ri_rd(smem, e + 28);
-+      unsigned edge = flags & 0xff;
-+      if (refs) {
-+       char name[21];
-+       for (unsigned j = 0; j < 20; j++) {
-+        unsigned char c = *(volatile unsigned char *)(smem + e + j);
-+        name[j] = (c >= 0x20 && c <= 0x7e) ? (char)c : 0;
-+       }
-+       name[20] = 0;
-+       printf("RIVER WCNSS: post-reset table %u slot %u edge %u cid %u flags %#x refs %u name %s\n",
-+           tid, i, edge, cid, flags, refs, name);
-+      }
-+     }
 +    }
 +   }
 +  }
