@@ -1,0 +1,46 @@
+From 04b46cdfef218ea2dcf1431c95fc6366b602d783 Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Fri, 23 Oct 2026 23:57:43 -0400
+Subject: [PATCH] RIVER: map WCNSS reserved RAM write combining
+
+---
+ bsd/dev/sweet_keys.c | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index b5db81f..78524ad 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -374,7 +374,9 @@ river_wcnss_probe(void)
+   printf("RIVER WCNSS: rejected image blob %#llx+%#llx\n", image_pa, image_len);
+   return;
+  }
+- vm_offset_t carveout = ml_io_map_unmappable(WCNSS_PA, WCNSS_SIZE, VM_WIMG_IO);
++ /* Linux's WCNSS driver uses ioremap_wc for this reserved DDR carveout.
++  * Device memory attributes are for MMIO registers, not bulk RAM writes. */
++ vm_offset_t carveout = ml_io_map_unmappable(WCNSS_PA, WCNSS_SIZE, VM_WIMG_WCOMB);
+  if (!carveout) {
+   printf("RIVER WCNSS: firmware carveout map failed\n");
+   return;
+@@ -388,7 +390,17 @@ river_wcnss_probe(void)
+  printf("RIVER WCNSS: PAS mem_setup status %lld result %llu\n", st, res);
+  if (st || res) { ml_io_unmap(carveout, WCNSS_SIZE); return; }
+  volatile uint32_t *dest = (volatile uint32_t *)carveout;
+- for (unsigned o = 0; o < WCNSS_SIZE / 4; o++) dest[o] = image[o];
++ printf("RIVER WCNSS: begin WC firmware copy, first source word %#x\n", image[0]);
++ dest[0] = image[0];
++ __asm__ volatile("dsb sy" ::: "memory");
++ printf("RIVER WCNSS: first firmware word copied\n");
++ for (unsigned o = 1; o < WCNSS_SIZE / 4; o++) {
++  dest[o] = image[o];
++  if ((o & 0x3ffff) == 0) {
++   __asm__ volatile("dsb sy" ::: "memory");
++   printf("RIVER WCNSS: firmware copy reached %#x bytes\n", o * 4);
++  }
++ }
+  __asm__ volatile("dsb sy" ::: "memory");
+  printf("RIVER WCNSS: copied %#x staged firmware bytes to reserved memory; radio remains in reset\n",
+      WCNSS_SIZE);
+-- 
+2.54.0 (Apple Git-156)
+

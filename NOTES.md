@@ -145,6 +145,19 @@ with 540-byte boot arguments including `riverwcnssmem=1`. Its staged private
 metadata is 0x1c9c bytes at 0x1a5e8000; the SHA-verified 7 MiB firmware
 image is at 0x1a5ec000 in the boot payload. Awaiting user fastboot handoff
 for the RAM-only phone test.
+Phone r87 RAM boot reached USB and GPU PAS as expected. WCNSS PAS INIT_IMAGE
+returned status 0/result 0; PAS MEM_SETUP at 0x8e700000+0x657000 also
+returned status 0/result 0. The live log then stopped before the firmware
+copy-complete message, and USB Ethernet stopped answering ping/SSH while the
+USB device remained enumerated. Fastboot did not appear automatically. The
+private log snapshot is `../logs-private/r87-wcnssmem-stall-snapshot.txt`.
+This implicates the carveout copy path, but no exception/panic was captured;
+the first failing access is unconfirmed. Asked the user for phone screen
+status and will need manual recovery before another phone test.
+Patch 0218 (`04b46cd` scratch XNU) changes the reserved DDR mapping from
+Device to write-combining, matching Linux WCNSS's `devm_ioremap_wc`, and
+prints markers before/after the first word and every MiB of copy. Its local
+River compile passed; CI and phone test pending. Do not repeat r87 unchanged.
 
 ## River performance and app follow-up (2026-10-23)
 
