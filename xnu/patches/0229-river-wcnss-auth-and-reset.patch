@@ -1,17 +1,17 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 17:25:00 -0400
-Subject: [PATCH] RIVER: invoke PAS 6 auth_and_reset and monitor SMEM/SMD for Pronto v3
+Date: Sat, 24 Oct 2026 18:00:00 -0400
+Subject: [PATCH] RIVER: invoke PAS 6 auth_and_reset and survey post-reset SMEM/SMD
 
 ---
- bsd/dev/sweet_keys.c | 82 ++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 82 insertions(+)
+ bsd/dev/sweet_keys.c | 76 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 76 insertions(+)
 
 diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
 index a88eae8..8899aabb 100644
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -750,6 +750,88 @@ river_wcnss_probe(void)
+@@ -750,6 +750,82 @@ river_wcnss_probe(void)
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -88,12 +88,6 @@ index a88eae8..8899aabb 100644
 +      }
 +     }
 +    }
-+   }
-+   vm_offset_t wmmio = ml_io_map_unmappable(0x0a000000, 0x1000, VM_WIMG_IO);
-+   if (wmmio) {
-+    printf("RIVER WCNSS: MMIO 0x0a000000 mapped: %#x %#x %#x %#x\n",
-+        ri_rd(wmmio, 0), ri_rd(wmmio, 4), ri_rd(wmmio, 8), ri_rd(wmmio, 12));
-+    ml_io_unmap(wmmio, 0x1000);
 +   }
 +  }
 + }
