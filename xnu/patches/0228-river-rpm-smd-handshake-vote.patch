@@ -1,29 +1,31 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 02:40:00 -0400
+Date: Sat, 24 Oct 2026 02:59:00 -0400
 Subject: [PATCH] RIVER: RPM SMD channel handshake and regulator votes for L9/L19
 
 ---
- bsd/dev/sweet_keys.c | 160 ++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 160 insertions(+)
+ bsd/dev/sweet_keys.c | 162 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 162 insertions(+)
 
-diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
-index 1c68940..a88eae8 100644
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -568,6 +568,166 @@ river_wcnss_probe(void)
+@@ -566,6 +566,168 @@
+         ri_rd(region, off + rx + 24), ri_rd(region, off + rx + 28),
+         ri_rd(region, off + rx + 32));
     }
-   }
-  }
++  }
++ }
 + uint32_t rpm_vote = 0;
 + if (PE_parse_boot_argn("riverwcnssrpm", &rpm_vote, sizeof(rpm_vote)) && rpm_vote) {
-+  vm_offset_t ipc = ml_io_map_unmappable(0x0b011000, 0x1000, VM_WIMG_IO);
-+  if (!ipc) {
++  vm_offset_t ipc_page = ml_io_map_unmappable(0x0b010000, 0x4000, VM_WIMG_IO);
++  if (!ipc_page) {
 +   printf("RIVER WCNSS: APCS IPC map failed\n");
 +  } else if (!auxmem) {
 +   printf("RIVER WCNSS: RPM SMD auxmem unavailable for handshake\n");
-+   ml_io_unmap(ipc, 0x1000);
++   ml_io_unmap(ipc_page, 0x4000);
 +  } else {
++   vm_offset_t ipc_reg = ipc_page + 0x1008;
++   printf("RIVER WCNSS: APCS IPC mapped at %p (reg %p)\n", (void *)ipc_page, (void *)ipc_reg);
 +   enum {
 +    SMD_CLOSED = 0,
 +    SMD_OPENING = 1,
@@ -43,7 +45,7 @@ index 1c68940..a88eae8 100644
 +    ri_wr(auxmem, 8, 0);
 +    ri_wr(auxmem, 12, 0);
 +    ri_wr(auxmem, 28, 1);
-+    ri_wr(ipc, 8, 1);
++    ri_wr(ipc_reg, 0, 1);
 +    for (unsigned w = 0; w < 50; w++) {
 +     rx_st = ri_rd(auxmem, 44);
 +     if (rx_st == SMD_CLOSED || rx_st == SMD_OPENING || rx_st == SMD_OPENED) break;
@@ -56,7 +58,7 @@ index 1c68940..a88eae8 100644
 +   ri_wr(auxmem, 12, 0);
 +   ri_wr(auxmem, 0, SMD_OPENING);
 +   ri_wr(auxmem, 28, 1);
-+   ri_wr(ipc, 8, 1);
++   ri_wr(ipc_reg, 0, 1);
 +   for (unsigned w = 0; w < 100; w++) {
 +    rx_st = ri_rd(auxmem, 44);
 +    if (rx_st == SMD_OPENING || rx_st == SMD_OPENED) break;
@@ -68,7 +70,7 @@ index 1c68940..a88eae8 100644
 +   ri_wr(auxmem, 12, 1);
 +   ri_wr(auxmem, 0, SMD_OPENED);
 +   ri_wr(auxmem, 28, 1);
-+   ri_wr(ipc, 8, 1);
++   ri_wr(ipc_reg, 0, 1);
 +   for (unsigned w = 0; w < 100; w++) {
 +    rx_st = ri_rd(auxmem, 44);
 +    if (rx_st == SMD_OPENED) break;
@@ -132,7 +134,7 @@ index 1c68940..a88eae8 100644
 +     head = (head + sizeof(pkt)) & 1023;
 +     ri_wr(auxmem, 40, head);
 +     ri_wr(auxmem, 20, 1);
-+     ri_wr(ipc, 8, 1);
++     ri_wr(ipc_reg, 0, 1);
 +     printf("RIVER WCNSS: sent RPM request for %s (msg_id %u, %u uV) new head %#x\n",
 +         targets[t].name, cur_msg_id, targets[t].uV, head);
 +     bool acked = false;
@@ -150,7 +152,7 @@ index 1c68940..a88eae8 100644
 +       rx_t = (rx_t + total_resp) & 1023;
 +       ri_wr(auxmem, 44 + 36, rx_t);
 +       ri_wr(auxmem, 44 + 24, 1);
-+       ri_wr(ipc, 8, 1);
++       ri_wr(ipc_reg, 0, 1);
 +       acked = true;
 +       break;
 +      }
@@ -172,11 +174,10 @@ index 1c68940..a88eae8 100644
 +     }
 +    }
 +   }
-+   ml_io_unmap(ipc, 0x1000);
-+  }
-+ }
++   ml_io_unmap(ipc_page, 0x4000);
+   }
+  }
   if (auxmem) ml_io_unmap(auxmem, 0x8000);
-  ml_io_unmap(smem, SMEM_SIZE);
- 
+
 -- 
 2.54.0 (Apple Git-156)
