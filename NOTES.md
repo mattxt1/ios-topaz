@@ -158,6 +158,21 @@ Patch 0218 (`04b46cd` scratch XNU) changes the reserved DDR mapping from
 Device to write-combining, matching Linux WCNSS's `devm_ioremap_wc`, and
 prints markers before/after the first word and every MiB of copy. Its local
 River compile passed; CI and phone test pending. Do not repeat r87 unchanged.
+CI run 40060485225 on pushed commit `104cb5a` passed. Built the RAM-only
+`shim-river/out/river-r88-wcnssmem-boot.img` (SHA-256
+`82aced7edc426bf1bc040c552daabbdb13fc3605f9266b707956abd6f11d88ce`).
+Its unpacked payload matched the built payload, with identical boot arguments
+and private firmware bytes to r87. The r88 phone log showed WCNSS INIT_IMAGE
+status 0/result 0, then stopped after the PAS MEM_SETUP pre-call marker.
+No MEM_SETUP result or firmware copy marker was captured; USB networking
+stopped and fastboot did not appear. This does not establish that WC writes
+were attempted. User requested fixing and booting the next image when ready,
+without first restoring r86. User recovered the phone to fastboot; do not flash.
+Patch 0219 (`da0860c` scratch XNU) moves the WC mapping after successful
+PAS_MEM_SETUP and logs before/after the map, isolating the call from the
+mapping. Local River compile passed; CI and phone test pending. Preserve the
+earlier r86 image as a known-good fallback, but honor the user's instruction
+to boot the corrected image next.
 
 ## River performance and app follow-up (2026-10-23)
 

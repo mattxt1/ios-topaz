@@ -1,0 +1,48 @@
+From da0860cb6b10bd2de96afbc286bc7393b033522d Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Sat, 24 Oct 2026 00:10:26 -0400
+Subject: [PATCH] RIVER: establish WCNSS carveout before mapping it
+
+---
+ bsd/dev/sweet_keys.c | 18 ++++++++++--------
+ 1 file changed, 10 insertions(+), 8 deletions(-)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 78524ad..7f97108 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -374,13 +374,6 @@ river_wcnss_probe(void)
+   printf("RIVER WCNSS: rejected image blob %#llx+%#llx\n", image_pa, image_len);
+   return;
+  }
+- /* Linux's WCNSS driver uses ioremap_wc for this reserved DDR carveout.
+-  * Device memory attributes are for MMIO registers, not bulk RAM writes. */
+- vm_offset_t carveout = ml_io_map_unmappable(WCNSS_PA, WCNSS_SIZE, VM_WIMG_WCOMB);
+- if (!carveout) {
+-  printf("RIVER WCNSS: firmware carveout map failed\n");
+-  return;
+- }
+  const uint32_t *image = (const uint32_t *)ml_static_ptovirt((vm_offset_t)image_pa);
+  printf("RIVER WCNSS: PAS mem_setup about to call for %#x+%#x (image %#llx)\n",
+      WCNSS_PA, WCNSS_SIZE, image_pa);
+@@ -388,7 +381,16 @@ river_wcnss_probe(void)
+  res = 0;
+  st = river_scm(0x02, 0x02, 3, 6, WCNSS_PA, WCNSS_SIZE, &res);
+  printf("RIVER WCNSS: PAS mem_setup status %lld result %llu\n", st, res);
+- if (st || res) { ml_io_unmap(carveout, WCNSS_SIZE); return; }
++ if (st || res) return;
++ /* TrustZone establishes the carveout before XNU maps it. Linux uses
++  * ioremap_wc for the reserved DDR region after PAS_MEM_SETUP. */
++ printf("RIVER WCNSS: mapping firmware carveout WC\n");
++ vm_offset_t carveout = ml_io_map_unmappable(WCNSS_PA, WCNSS_SIZE, VM_WIMG_WCOMB);
++ if (!carveout) {
++  printf("RIVER WCNSS: firmware carveout map failed\n");
++  return;
++ }
++ printf("RIVER WCNSS: firmware carveout mapped at %#lx\n", (unsigned long)carveout);
+  volatile uint32_t *dest = (volatile uint32_t *)carveout;
+  printf("RIVER WCNSS: begin WC firmware copy, first source word %#x\n", image[0]);
+  dest[0] = image[0];
+-- 
+2.54.0 (Apple Git-156)
+
