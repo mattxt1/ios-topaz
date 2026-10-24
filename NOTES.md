@@ -7,8 +7,22 @@ read-only survey after the WCNSS power survey. It bounds checks the River
 SMEM global heap and reads SMD allocation tables 13 and 266 for RPM edge 15
 and WCNSS edge 6 channel names, IDs and flags. It does not change any
 channel, request a rail vote or release the radio. Local River single-file
-compile passed. CI, RAM image and phone test are pending. The r94 phone is
-running from RAM; return it to fastboot before the next image.
+compile and CI run 40065694455 passed. The verified RAM-only r95 image
+`shim-river/out/river-r95-wcnss-smem-boot.img` has SHA-256
+`fe70d8651787464a888d30f847f2da267aecdb6eb1d4032c6f600871b2895d7e`.
+The downloaded kernel matched its manifest; unpacked payload, 575-byte
+boot line and private blobs matched their inputs. `fastboot boot` succeeded;
+PAS INIT_IMAGE and MEM_SETUP returned status 0/result 0, and the paced
+firmware copy completed through 0x657000. SMEM at 0x86300000 reported
+initialized 1, free offset 0x6b90, SBL version 0xb0000 and `$TOC` partition
+table magic. Global allocation item 13 is present at offset 0x6310, size
+0x800; slot 4 contains packet SMD channel `rpm_requests`, edge 15, CID 4,
+flags 0x20f, refs 1. Alternate table item 266 is absent. USB ping succeeded.
+Private snapshot: `../logs-private/r95-wcnss-smem-snapshot.txt`. The radio
+remains in reset; WCNSS edge 6 has no allocated channel yet. Inspect SMEM
+items 18 (channel info) and 342 (FIFO) next, then implement a bounded
+SMD/RPM transport before requesting L9/L19 votes. The r95 phone is running
+from RAM; return it to fastboot before another image.
 
 ## River WCNSS power status survey (2026-10-24)
 
