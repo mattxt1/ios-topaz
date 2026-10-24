@@ -1,0 +1,78 @@
+From 3326d084512ee379b8df42797ef4bc804c6d4804 Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Sat, 24 Oct 2026 00:21:12 -0400
+Subject: [PATCH] RIVER: preserve Qualcomm SCM arguments on interrupted calls
+
+---
+ bsd/dev/sweet_keys.c | 41 +++++++++++++++++++++++++++--------------
+ 1 file changed, 27 insertions(+), 14 deletions(-)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 7f97108..ec687d8 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -265,25 +265,39 @@ river_gpu_power_on(vm_offset_t g, vm_offset_t ldo)
+  * Qualcomm SCM call, ARM SMCCC SMC64 standard call with SIP owner, as
+  * qcom_scm-smc.c: x0 = fn id, x1 = arginfo, x2.. = args; TZ returns status
+  * in x0 (1 = interrupted, call again with x0 = 1) and results in x1..x3.
++ * Qualcomm's SMCCC x6 quirk carries state between interrupted calls, while
++ * the original x1..x5 inputs must be resent on every retry.
+  */
+ static int64_t
+ river_scm(uint32_t svc, uint32_t cmd, uint64_t arginfo, uint64_t a0, uint64_t a1,
+     uint64_t a2, uint64_t *r1)
+ {
+- register uint64_t x0 __asm__("x0") = 0x42000000ULL | ((svc & 0xff) << 8) | (cmd & 0xff);
+- register uint64_t x1 __asm__("x1") = arginfo;
+- register uint64_t x2 __asm__("x2") = a0;
+- register uint64_t x3 __asm__("x3") = a1;
+- register uint64_t x4 __asm__("x4") = a2;
+- register uint64_t x5 __asm__("x5") = 0;
+- do {
++ uint64_t call = 0x42000000ULL | ((svc & 0xff) << 8) | (cmd & 0xff);
++ uint64_t quirk_x6 = 0;
++ for (unsigned retry = 0; retry < 1024; retry++) {
++  register uint64_t x0 __asm__("x0") = call;
++  register uint64_t x1 __asm__("x1") = arginfo;
++  register uint64_t x2 __asm__("x2") = a0;
++  register uint64_t x3 __asm__("x3") = a1;
++  register uint64_t x4 __asm__("x4") = a2;
++  register uint64_t x5 __asm__("x5") = 0;
++  register uint64_t x6 __asm__("x6") = quirk_x6;
++  register uint64_t x7 __asm__("x7") = 0;
+   __asm__ volatile("smc #0"
+-      : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5)
++      : "+r"(x0), "+r"(x1), "+r"(x2), "+r"(x3), "+r"(x4), "+r"(x5),
++        "+r"(x6), "+r"(x7)
+       :
+-      : "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
+- } while (x0 == 1);
+- if (r1) *r1 = x1;
+- return (int64_t)x0;
++      : "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16", "x17", "memory");
++  quirk_x6 = x6;
++  if (x0 != 1) {
++   if (r1) *r1 = x1;
++   return (int64_t)x0;
++  }
++  call = 1;
++ }
++ if (r1) *r1 = 0;
++ printf("RIVER SCM: interrupted call %#x/%#x exceeded retry limit\n", svc, cmd);
++ return -1;
+ }
+ 
+ /* Read-only first gate for River's distinct WCNSS/Pronto WLAN subsystem.
+@@ -382,8 +396,7 @@ river_wcnss_probe(void)
+  st = river_scm(0x02, 0x02, 3, 6, WCNSS_PA, WCNSS_SIZE, &res);
+  printf("RIVER WCNSS: PAS mem_setup status %lld result %llu\n", st, res);
+  if (st || res) return;
+- /* TrustZone establishes the carveout before XNU maps it. Linux uses
+-  * ioremap_wc for the reserved DDR region after PAS_MEM_SETUP. */
++ /* Map reserved DDR as write combining after TrustZone sets up PAS memory. */
+  printf("RIVER WCNSS: mapping firmware carveout WC\n");
+  vm_offset_t carveout = ml_io_map_unmappable(WCNSS_PA, WCNSS_SIZE, VM_WIMG_WCOMB);
+  if (!carveout) {
+-- 
+2.54.0 (Apple Git-156)
+

@@ -173,6 +173,22 @@ PAS_MEM_SETUP and logs before/after the map, isolating the call from the
 mapping. Local River compile passed; CI and phone test pending. Preserve the
 earlier r86 image as a known-good fallback, but honor the user's instruction
 to boot the corrected image next.
+CI run 40061343512 on pushed commit `756a27b` passed. The verified r89
+RAM-only image `shim-river/out/river-r89-wcnssmem-boot.img` has SHA-256
+`d8a57017b70b30920a2b716076c1faa11365d491c0e317f18a18f893f0bd7bb8`.
+Its unpacked payload matched the built payload; arguments and three private
+blobs matched r87. Phone r89 again reached WCNSS PAS INIT_IMAGE status
+0/result 0, then stopped after the PAS MEM_SETUP pre-call marker. No mapping
+or copy marker was reached; USB networking stopped. The private log snapshot
+is `../logs-private/r89-wcnssmem-stall-snapshot.txt`. User recovered phone to
+fastboot and requested a corrected image next, not r86 recovery.
+Patch 0220 (`3326d08` scratch XNU) corrects the Qualcomm SCM SMC64 wrapper:
+on an interrupted call it resends original x1..x5 inputs, retains Qualcomm's
+x6 quirk state, initializes x7, and limits retries to 1024. The previous
+wrapper reused TrustZone-returned argument registers and discarded x6, a
+concrete ABI error that could explain intermittent PAS_MEM_SETUP stalls. It
+does not prove whether a particular SMC call returned interrupted. Local
+River compile passed; CI and RAM-only phone test pending.
 
 ## River performance and app follow-up (2026-10-23)
 
