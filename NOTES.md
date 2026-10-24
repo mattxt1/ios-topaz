@@ -7,9 +7,19 @@ completed mode-3 firmware copy. It reads Pronto v3 PMU cfg/spare at the
 live DT's 0x0a21b000 register window and reads raw PM8953 L5/L7/L9/L19
 type/subtype/status/enable bytes via existing SPMI observer logic. It only
 writes observer read commands, makes no PMIC/RPM vote and does not release
-WCNSS reset. The River single-file compile passed. CI, RAM image and phone
-test are pending. Use the observed rail state to design proper RPM-SMD votes;
-do not assume bootloader state is sufficient or write PMIC registers directly.
+WCNSS reset. The River single-file compile and CI run 40065043731 passed.
+The verified RAM-only r94 image `shim-river/out/river-r94-wcnss-power-boot.img`
+has SHA-256 `86741e9aa34df0d68698aff6374a367216628d82d260e3710f7c5ab311669e07`.
+The downloaded kernel matched its manifest, and the unpacked payload,
+558-byte boot line and all three private blobs matched their inputs.
+`fastboot boot` succeeded; PAS INIT_IMAGE and MEM_SETUP returned status 0,
+result 0, and the paced copy completed through 0x657000. The read-only
+survey found PMU cfg 0x400000, spare 0; PM8953 L5 status 0x82/enable 0x80,
+L7 status 0x82/enable 0x80, L9 status 0/enable 0, and L19 status 0x1/enable 0.
+USB ping succeeded after the survey. Private log snapshot:
+`../logs-private/r94-wcnss-power-snapshot.txt`. The radio remains in reset.
+The absent L9/L19 enable votes require the proper RPM-SMD regulator path
+before PAS AUTH_AND_RESET. Do not write PMIC registers directly.
 
 ## River firmware load complete (2026-10-24)
 
