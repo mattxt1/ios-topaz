@@ -1,17 +1,17 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 18:20:00 -0400
-Subject: [PATCH] RIVER: configure Iris PMU/XO, invoke PAS 6, and monitor WCNSS SMD
+Date: Sat, 24 Oct 2026 18:40:00 -0400
+Subject: [PATCH] RIVER: initialize outbound SMP2P, ring APCS IPC, and monitor WCNSS SMD
 
 ---
- bsd/dev/sweet_keys.c | 99 ++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 99 insertions(+)
+ bsd/dev/sweet_keys.c | 156 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 156 insertions(+)
 
 diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
 index a88eae8..8899aabb 100644
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -750,6 +750,105 @@ river_wcnss_probe(void)
+@@ -750,6 +750,162 @@ river_wcnss_probe(void)
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -47,6 +47,49 @@ index a88eae8..8899aabb 100644
 +  printf("RIVER WCNSS: PAS 6 auth_and_reset status %lld result %llu\n", ast, ares);
 +  if (ast == 0 && ares == 0) {
 +   printf("RIVER WCNSS: Pronto v3 brought out of reset!\n");
++   unsigned ent451 = SMEM_TOC + 451 * SMEM_ENTRY;
++   uint32_t alloc451 = ri_rd(smem, ent451);
++   uint32_t smp_buf = 0;
++   if (!alloc451) {
++    uint32_t foff = ri_rd(smem, 0xc4);
++    uint32_t favail = ri_rd(smem, 0xc8);
++    uint32_t req_sz = 344;
++    if (favail >= req_sz && foff + req_sz <= SMEM_SIZE) {
++     smp_buf = foff;
++     ri_wr(smem, ent451 + 4, foff);
++     ri_wr(smem, ent451 + 8, req_sz);
++     ri_wr(smem, ent451 + 12, 0);
++     __asm__ volatile("dmb sy" ::: "memory");
++     ri_wr(smem, ent451, 1);
++     ri_wr(smem, 0xc4, foff + req_sz);
++     ri_wr(smem, 0xc8, favail - req_sz);
++     printf("RIVER WCNSS: allocated SMEM item 451 at offset %#x size %u\n", smp_buf, req_sz);
++    }
++   } else {
++    smp_buf = ri_rd(smem, ent451 + 4);
++    printf("RIVER WCNSS: SMEM item 451 already allocated at offset %#x\n", smp_buf);
++   }
++   if (smp_buf && smp_buf < SMEM_SIZE) {
++    for (unsigned i = 0; i < 344; i += 4) ri_wr(smem, smp_buf + i, 0);
++    ri_wr(smem, smp_buf + 0, 0x504d5324);
++    ri_wr(smem, smp_buf + 8, (4u << 16) | 0u);
++    ri_wr(smem, smp_buf + 12, (1u << 16) | 16u);
++    ri_wr(smem, smp_buf + 16, 0);
++    ri_wr(smem, smp_buf + 20, 0x7473616d);
++    ri_wr(smem, smp_buf + 24, 0x6b2d7265);
++    ri_wr(smem, smp_buf + 28, 0x656e7265);
++    ri_wr(smem, smp_buf + 32, 0x0000006c);
++    ri_wr(smem, smp_buf + 36, 0);
++    __asm__ volatile("dmb sy" ::: "memory");
++    ri_wr(smem, smp_buf + 4, 2);
++    printf("RIVER WCNSS: initialized SMP2P item 451 master-kernel (version 2)\n");
++   }
++   vm_offset_t ipc_page2 = ml_io_map_unmappable(0x0b010000, 0x4000, VM_WIMG_IO);
++   if (ipc_page2) {
++    vm_offset_t ipc_reg2 = ipc_page2 + 0x1008;
++    ri_wr(ipc_reg2, 0, (1u << 18) | (1u << 17));
++    printf("RIVER WCNSS: rang APCS IPC doorbells (bits 17 and 18, %#x)\n", (1u << 18) | (1u << 17));
++   }
 +   for (unsigned w = 0; w < 30; w++) {
 +    delay(100000);
 +    unsigned ent422 = SMEM_TOC + 422 * SMEM_ENTRY;
@@ -69,8 +112,21 @@ index a88eae8..8899aabb 100644
 +    if (ri_rd(smem, ent431)) {
 +     uint32_t o431 = ri_rd(smem, ent431 + 4);
 +     uint32_t l431 = ri_rd(smem, ent431 + 8);
-+     printf("RIVER WCNSS: SMP2P-in item 431 alloc 1 offset %#x size %#x words: %#x %#x %#x %#x\n",
-+         o431, l431, ri_rd(smem, o431), ri_rd(smem, o431 + 4), ri_rd(smem, o431 + 8), ri_rd(smem, o431 + 12));
++     if (o431 < SMEM_SIZE && l431 >= 20) {
++      uint32_t m431 = ri_rd(smem, o431);
++      uint32_t v431 = ri_rd(smem, o431 + 4);
++      uint32_t p431 = ri_rd(smem, o431 + 8);
++      uint32_t e431 = ri_rd(smem, o431 + 12);
++      char ename[17];
++      for (unsigned j = 0; j < 16; j++) {
++       unsigned char c = *(volatile unsigned char *)(smem + o431 + 20 + j);
++       ename[j] = (c >= 0x20 && c <= 0x7e) ? (char)c : 0;
++      }
++      ename[16] = 0;
++      uint32_t eval = ri_rd(smem, o431 + 36);
++      printf("RIVER WCNSS: SMP2P-in 431 magic %#x ver %#x pids %#x ent %#x entry0 '%s' val %#x (waited %u ms)\n",
++          m431, v431, p431, e431, ename, eval, (w + 1) * 100);
++     }
 +    }
 +    static const unsigned tbls[] = { 13, 266 };
 +    for (unsigned t = 0; t < sizeof(tbls) / sizeof(tbls[0]); t++) {
@@ -100,6 +156,7 @@ index a88eae8..8899aabb 100644
 +     }
 +    }
 +   }
++   if (ipc_page2) ml_io_unmap(ipc_page2, 0x4000);
 +   printf("RIVER WCNSS: surveying allocated SMEM items post-reset:\n");
 +   for (unsigned id = 0; id < 512; id++) {
 +    unsigned ent = SMEM_TOC + id * SMEM_ENTRY;
