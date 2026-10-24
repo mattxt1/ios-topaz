@@ -1,5 +1,14 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River RPM SMD auxiliary control survey (2026-10-24)
+
+Patch 0227 (`4de25f2` scratch XNU) follows the live DT's `aux-mem1`
+region at physical 0x60000+0x8000 and reads the bounded item 18 control
+pair through the auxiliary mapping. It reports word-aligned TX/RX states,
+head/tail pointers and flags; item 342's FIFO extent is checked. It makes
+no channel or RPM write. Local River single-file compile passed. CI, RAM
+image and phone test are pending.
+
 ## River RPM SMD channel layout survey (2026-10-24)
 
 Patch 0226 (`65ca790` scratch XNU) extends the opt-in SMEM survey to

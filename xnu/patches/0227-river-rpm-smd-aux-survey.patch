@@ -1,0 +1,65 @@
+From 4de25f237ca0fae2292abf9191bc4ac44938ed47 Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Sat, 24 Oct 2026 01:34:44 -0400
+Subject: [PATCH] RIVER: read RPM SMD control from auxiliary SMEM
+
+---
+ bsd/dev/sweet_keys.c | 28 +++++++++++++++++++++++-----
+ 1 file changed, 23 insertions(+), 5 deletions(-)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 1d30cb9..1c68940 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -530,6 +530,8 @@ river_wcnss_probe(void)
+  }
+  /* The observed rpm_requests channel is CID 4 in the legacy table:
+   * info item 14+4 and FIFO item 338+4. Check exact layout before writing. */
++ vm_offset_t auxmem = ml_io_map_unmappable(0x60000, 0x8000, VM_WIMG_IO);
++ if (!auxmem) printf("RIVER WCNSS: RPM SMD aux-mem1 read-only map failed\n");
+  static const unsigned rpm_items[] = { 18, 342 };
+  for (unsigned i = 0; i < sizeof(rpm_items) / sizeof(rpm_items[0]); i++) {
+   unsigned id = rpm_items[i], ent = SMEM_TOC + id * SMEM_ENTRY;
+@@ -539,18 +541,34 @@ river_wcnss_probe(void)
+   uint32_t aux = ri_rd(smem, ent + 12);
+   printf("RIVER WCNSS: RPM SMD item %u alloc %u offset %#x size %#x aux %#x (read-only)\n",
+       id, allocated, off, len, aux);
+-  if (!allocated || aux || off >= SMEM_SIZE || len > SMEM_SIZE - off)
+-   continue;
++  vm_offset_t region = 0;
++  unsigned limit = 0;
++  if (aux == 0) { region = smem; limit = SMEM_SIZE; }
++  if (aux == 0x60000) { region = auxmem; limit = 0x8000; }
++  if (!allocated || !region || off >= limit || len > limit - off) continue;
+   if (id == 18 && (len == 40 || len == 88)) {
+    unsigned rx = len / 2;
+    unsigned tail = len == 88 ? 36 : 12;
+    unsigned head = tail + 4;
+    printf("RIVER WCNSS: RPM SMD info tx state %#x tail %#x head %#x rx state %#x tail %#x head %#x (read-only)\n",
+-       ri_rd(smem, off), ri_rd(smem, off + tail), ri_rd(smem, off + head),
+-       ri_rd(smem, off + rx), ri_rd(smem, off + rx + tail),
+-       ri_rd(smem, off + rx + head));
++       ri_rd(region, off), ri_rd(region, off + tail), ri_rd(region, off + head),
++       ri_rd(region, off + rx), ri_rd(region, off + rx + tail),
++       ri_rd(region, off + rx + head));
++   if (len == 88) {
++    printf("RIVER WCNSS: RPM SMD tx flags DSR %#x CTS %#x CD %#x HEAD %#x TAIL %#x STATE %#x BLOCK %#x (read-only)\n",
++        ri_rd(region, off + 4), ri_rd(region, off + 8),
++        ri_rd(region, off + 12), ri_rd(region, off + 20),
++        ri_rd(region, off + 24), ri_rd(region, off + 28),
++        ri_rd(region, off + 32));
++    printf("RIVER WCNSS: RPM SMD rx flags DSR %#x CTS %#x CD %#x HEAD %#x TAIL %#x STATE %#x BLOCK %#x (read-only)\n",
++        ri_rd(region, off + rx + 4), ri_rd(region, off + rx + 8),
++        ri_rd(region, off + rx + 12), ri_rd(region, off + rx + 20),
++        ri_rd(region, off + rx + 24), ri_rd(region, off + rx + 28),
++        ri_rd(region, off + rx + 32));
++   }
+   }
+  }
++ if (auxmem) ml_io_unmap(auxmem, 0x8000);
+  ml_io_unmap(smem, SMEM_SIZE);
+ 
+ }
+-- 
+2.54.0 (Apple Git-156)
+
