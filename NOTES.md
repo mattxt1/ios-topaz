@@ -1,5 +1,15 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River RPM SMD channel layout survey (2026-10-24)
+
+Patch 0226 (`65ca790` scratch XNU) extends the opt-in SMEM survey to
+read item 18, the live `rpm_requests` channel control pair, and item 342,
+its FIFO pair. It validates TOC bounds and reports the pair's size, TX/RX
+state and pointers without writing either item. Local River single-file
+compile passed. CI, RAM image and phone test are pending. Use the result
+to implement the SMD handshake and RPM regulator votes; do not change
+PMIC registers directly.
+
 ## River SMEM/SMD channel survey (2026-10-24)
 
 Patch 0225 (`56a6829` scratch XNU) adds an opt-in `riverwcnsssmem=1`
