@@ -1,0 +1,72 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Sat, 24 Oct 2026 16:45:00 -0400
+Subject: [PATCH] RIVER: invoke PAS 6 auth_and_reset and monitor SMEM/SMD for Pronto v3
+
+---
+ bsd/dev/sweet_keys.c | 51 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 51 insertions(+)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index a88eae8..8899aabb 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -750,6 +750,57 @@ river_wcnss_probe(void)
+    ml_io_unmap(ipc_page, 0x4000);
+   }
+  }
++ uint32_t reset = 0;
++ if (PE_parse_boot_argn("riverwcnssreset", &reset, sizeof(reset)) && reset) {
++  printf("RIVER WCNSS: invoking PAS 6 auth_and_reset...\n");
++  uint64_t ares = 0;
++  int64_t ast = river_scm(0x02, 0x05, 1, 6, 0, 0, &ares);
++  printf("RIVER WCNSS: PAS 6 auth_and_reset status %lld result %llu\n", ast, ares);
++  if (ast == 0 && ares == 0) {
++   printf("RIVER WCNSS: Pronto v3 brought out of reset!\n");
++   for (unsigned w = 0; w < 100; w++) {
++    delay(10000);
++    unsigned ent422 = SMEM_TOC + 422 * SMEM_ENTRY;
++    uint32_t alloc422 = ri_rd(smem, ent422);
++    if (alloc422) {
++     uint32_t off422 = ri_rd(smem, ent422 + 4);
++     uint32_t len422 = ri_rd(smem, ent422 + 8);
++     uint32_t aux422 = ri_rd(smem, ent422 + 12);
++     printf("RIVER WCNSS: SMEM item 422 alloc %u offset %#x size %#x aux %#x (waited %u ms)\n",
++         alloc422, off422, len422, aux422, (w + 1) * 10);
++     if (off422 < SMEM_SIZE && len422 >= 16) {
++      printf("RIVER WCNSS: SMEM item 422 words: %#x %#x %#x %#x\n",
++          ri_rd(smem, off422), ri_rd(smem, off422 + 4),
++          ri_rd(smem, off422 + 8), ri_rd(smem, off422 + 12));
++     }
++     break;
++    }
++   }
++   unsigned ent13 = SMEM_TOC + 13 * SMEM_ENTRY;
++   uint32_t off13 = ri_rd(smem, ent13 + 4);
++   uint32_t len13 = ri_rd(smem, ent13 + 8);
++   if (off13 < SMEM_SIZE && len13 >= 64 * 32) {
++    for (unsigned i = 0; i < 64; i++) {
++     unsigned e = off13 + i * 32;
++     uint32_t cid = ri_rd(smem, e + 20);
++     uint32_t flags = ri_rd(smem, e + 24);
++     uint32_t refs = ri_rd(smem, e + 28);
++     unsigned edge = flags & 0xff;
++     if (refs && edge == 6) {
++      char name[21];
++      for (unsigned j = 0; j < 20; j++) {
++       unsigned char c = *(volatile unsigned char *)(smem + e + j);
++       name[j] = c >= 0x20 && c <= 0x7e ? (char)c : 0;
++      }
++      name[20] = 0;
++      printf("RIVER WCNSS: Pronto SMD edge 6 slot %u cid %u flags %#x name %s\n",
++          i, cid, flags, name);
++     }
++    }
++   }
++  }
++ }
+  if (auxmem) ml_io_unmap(auxmem, 0x8000);
+  ml_io_unmap(smem, SMEM_SIZE);
+ 
+-- 
+2.54.0 (Apple Git-156)
