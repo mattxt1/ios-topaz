@@ -1,17 +1,17 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 18:40:00 -0400
-Subject: [PATCH] RIVER: initialize outbound SMP2P, ring APCS IPC, and monitor WCNSS SMD
+Date: Sat, 24 Oct 2026 19:25:00 -0400
+Subject: [PATCH] RIVER: ring periodic doorbells, monitor GIC and WCNSS SMD/SMP2P
 
 ---
- bsd/dev/sweet_keys.c | 156 +++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 156 insertions(+)
+ bsd/dev/sweet_keys.c | 175 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 175 insertions(+)
 
 diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
 index a88eae8..8899aabb 100644
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -750,6 +750,162 @@ river_wcnss_probe(void)
+@@ -750,6 +750,181 @@ river_wcnss_probe(void)
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -81,20 +81,34 @@ index a88eae8..8899aabb 100644
 +    ri_wr(smem, smp_buf + 32, 0x0000006c);
 +    ri_wr(smem, smp_buf + 36, 0);
 +    __asm__ volatile("dmb sy" ::: "memory");
-+    ri_wr(smem, smp_buf + 4, 2);
-+    printf("RIVER WCNSS: initialized SMP2P item 451 master-kernel (version 2)\n");
++    ri_wr(smem, smp_buf + 4, 1);
++    printf("RIVER WCNSS: initialized SMP2P item 451 master-kernel (version 1)\n");
 +   }
 +   vm_offset_t ipc_page2 = ml_io_map_unmappable(0x0b010000, 0x4000, VM_WIMG_IO);
-+   if (ipc_page2) {
-+    vm_offset_t ipc_reg2 = ipc_page2 + 0x1008;
-+    ri_wr(ipc_reg2, 0, (1u << 18) | (1u << 17));
-+    printf("RIVER WCNSS: rang APCS IPC doorbells (bits 17 and 18, %#x)\n", (1u << 18) | (1u << 17));
++   vm_offset_t ipc_reg2 = ipc_page2 ? (ipc_page2 + 0x1008) : 0;
++   if (ipc_reg2) {
++    ri_wr(ipc_reg2, 0, (1u << 19) | (1u << 18) | (1u << 17));
++    printf("RIVER WCNSS: rang initial APCS IPC doorbells (bits 17..19, %#x)\n",
++        (1u << 19) | (1u << 18) | (1u << 17));
 +   }
-+   for (unsigned w = 0; w < 30; w++) {
++   vm_offset_t gic = ml_io_map_unmappable(0x0b000000, 0x4000, VM_WIMG_IO);
++   uint32_t last_gic = 0;
++   for (unsigned w = 0; w < 40; w++) {
 +    delay(100000);
++    if (ipc_reg2 && (w % 2 == 1)) {
++     ri_wr(ipc_reg2, 0, (1u << 19) | (1u << 18) | (1u << 17));
++    }
++    if (gic) {
++     uint32_t gp = ri_rd(gic, 0x214);
++     if (gp != last_gic || ((w + 1) % 5 == 0)) {
++      printf("RIVER WCNSS: GICD_ISPENDR5 = %#x (smd=%u smp=%u smsm=%u rdy=%u wdog=%u, waited %u ms)\n",
++          gp, (gp >> 14) & 1, (gp >> 15) & 1, (gp >> 16) & 1, (gp >> 19) & 1, (gp >> 21) & 1, (w + 1) * 100);
++      last_gic = gp;
++     }
++    }
 +    unsigned ent422 = SMEM_TOC + 422 * SMEM_ENTRY;
 +    uint32_t alloc422 = ri_rd(smem, ent422);
-+    if (alloc422) {
++    if (alloc422 && ((w + 1) % 5 == 0 || w == 0)) {
 +     uint32_t off422 = ri_rd(smem, ent422 + 4);
 +     uint32_t len422 = ri_rd(smem, ent422 + 8);
 +     if (off422 < SMEM_SIZE && len422 >= 16) {
@@ -137,26 +151,56 @@ index a88eae8..8899aabb 100644
 +     uint32_t tlen = ri_rd(smem, ent + 8);
 +     if (toff < SMEM_SIZE && tlen >= 64 * 32) {
 +      for (unsigned i = 0; i < 64; i++) {
++       if (i == 4 || i == 8) continue;
 +       unsigned e = toff + i * 32;
 +       uint32_t cid = ri_rd(smem, e + 20);
 +       uint32_t flags = ri_rd(smem, e + 24);
 +       uint32_t refs = ri_rd(smem, e + 28);
-+       unsigned edge = flags & 0xff;
-+       if (refs && edge == 6) {
++       if (refs) {
 +        char name[21];
 +        for (unsigned j = 0; j < 20; j++) {
 +         unsigned char c = *(volatile unsigned char *)(smem + e + j);
 +         name[j] = (c >= 0x20 && c <= 0x7e) ? (char)c : 0;
 +        }
 +        name[20] = 0;
-+        printf("RIVER WCNSS: Pronto SMD edge 6 slot %u cid %u flags %#x refs %u name %s (waited %u ms)\n",
-+            i, cid, flags, refs, name, (w + 1) * 100);
++        printf("RIVER WCNSS: SMD tbl %u slot %u cid %u flags %#x refs %u name '%s' (waited %u ms)\n",
++            tid, i, cid, flags, refs, name, (w + 1) * 100);
 +       }
 +      }
 +     }
 +    }
 +   }
 +   if (ipc_page2) ml_io_unmap(ipc_page2, 0x4000);
++   if (gic) ml_io_unmap(gic, 0x4000);
++   unsigned ent333 = SMEM_TOC + 333 * SMEM_ENTRY;
++   if (ri_rd(smem, ent333)) {
++    uint32_t o333 = ri_rd(smem, ent333 + 4);
++    uint32_t l333 = ri_rd(smem, ent333 + 8);
++    if (o333 < SMEM_SIZE && l333 >= 16) {
++     char vstr[81];
++     unsigned vlen = l333 < 80 ? l333 : 80;
++     for (unsigned j = 0; j < vlen; j++) {
++      unsigned char c = *(volatile unsigned char *)(smem + o333 + j);
++      vstr[j] = (c >= 0x20 && c <= 0x7e) ? (char)c : ' ';
++     }
++     vstr[vlen] = 0;
++     printf("RIVER WCNSS: SMEM 333 image version: [%s]\n", vstr);
++    }
++   }
++   unsigned ent78 = SMEM_TOC + 78 * SMEM_ENTRY;
++   unsigned ent79 = SMEM_TOC + 79 * SMEM_ENTRY;
++   if (ri_rd(smem, ent78) && ri_rd(smem, ent79)) {
++    uint32_t o78 = ri_rd(smem, ent78 + 4);
++    uint32_t o79 = ri_rd(smem, ent79 + 4);
++    uint32_t l79 = ri_rd(smem, ent79 + 8);
++    if (o78 < SMEM_SIZE && o79 < SMEM_SIZE) {
++     uint32_t idx0 = ri_rd(smem, o78);
++     uint32_t idx1 = ri_rd(smem, o78 + 4);
++     printf("RIVER WCNSS: SMEM 78/79 log: idx0=%#x idx1=%#x len79=%#x head=%#x %#x %#x %#x\n",
++         idx0, idx1, l79,
++         ri_rd(smem, o79), ri_rd(smem, o79 + 4), ri_rd(smem, o79 + 8), ri_rd(smem, o79 + 12));
++    }
++   }
 +   printf("RIVER WCNSS: surveying allocated SMEM items post-reset:\n");
 +   for (unsigned id = 0; id < 512; id++) {
 +    unsigned ent = SMEM_TOC + id * SMEM_ENTRY;
