@@ -1,0 +1,105 @@
+From 89e37ce9f3ed83930364e78fc471de59780e5962 Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Sat, 24 Oct 2026 00:44:49 -0400
+Subject: [PATCH] RIVER: copy WCNSS image in logged 16 KiB pages
+
+---
+ bsd/dev/sweet_keys.c | 78 +++++++++++++++-----------------------------
+ 1 file changed, 27 insertions(+), 51 deletions(-)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 1afae6f..f026986 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -396,61 +396,37 @@ river_wcnss_probe(void)
+  st = river_scm(0x02, 0x02, 3, 6, WCNSS_PA, WCNSS_SIZE, &res);
+  printf("RIVER WCNSS: PAS mem_setup status %lld result %llu\n", st, res);
+  if (st || res) return;
+- if (load != 2) {
+-  printf("RIVER WCNSS: only bounded diagnostic mode 2 is enabled after r90 stall\n");
++ if (load != 2 && load != 3) {
++  printf("RIVER WCNSS: only pagewise diagnostic modes 2 and 3 are enabled after r90 stall\n");
+   return;
+  }
+- /* Diagnostic mode isolates the first 256 KiB above the r90 stall marker.
+-  * No earlier bulk copy is attempted, and each 16 KiB page has its own WC
+-  * mapping.  A marker after every barrier identifies the last completed
+-  * physical page even if the next access stops the USB console. */
+- if (load == 2) {
+-  enum { PROBE_START = 0x400000, PROBE_END = 0x440000, PROBE_PAGE = 0x4000 };
+-  for (unsigned off = PROBE_START; off < PROBE_END; off += PROBE_PAGE) {
+-   uint32_t first = image[off / 4];
+-   uint32_t last = image[(off + PROBE_PAGE - 4) / 4];
+-   printf("RIVER WCNSS: probe source %#x first %#x last %#x; mapping PA %#x\n",
+-       off, first, last, WCNSS_PA + off);
+-   vm_offset_t page = ml_io_map_unmappable(WCNSS_PA + off, PROBE_PAGE, VM_WIMG_WCOMB);
+-   if (!page) {
+-    printf("RIVER WCNSS: probe map failed at %#x\n", off);
+-    return;
+-   }
+-   printf("RIVER WCNSS: probe mapped %#x at %#lx; write begins\n",
+-       off, (unsigned long)page);
+-   volatile uint32_t *d = (volatile uint32_t *)page;
+-   for (unsigned i = 0; i < PROBE_PAGE / 4; i++) d[i] = image[off / 4 + i];
+-   __asm__ volatile("dsb sy" ::: "memory");
+-   printf("RIVER WCNSS: probe wrote through %#x\n", off + PROBE_PAGE);
+-   ml_io_unmap(page, PROBE_PAGE);
++ /* Mode 2 isolates the first 256 KiB above r90's last marker.  Mode 3
++  * copies the full verified image extent with a separate WC mapping for
++  * each 16 KiB page.  Log both sides of every mapping/write/barrier so a
++  * stalled boot identifies the last completed physical page. */
++ enum { PROBE_PAGE = 0x4000 };
++ unsigned start = load == 2 ? 0x400000 : 0;
++ unsigned end = load == 2 ? 0x440000 : WCNSS_SIZE;
++ printf("RIVER WCNSS: pagewise mode %u range %#x..%#x\n", load, start, end);
++ for (unsigned off = start; off < end; off += PROBE_PAGE) {
++  unsigned count = end - off < PROBE_PAGE ? end - off : PROBE_PAGE;
++  uint32_t first = image[off / 4];
++  uint32_t last = image[(off + count - 4) / 4];
++  printf("RIVER WCNSS: page %#x+%#x source %#x/%#x mapping PA %#x\n",
++      off, count, first, last, WCNSS_PA + off);
++  vm_offset_t page = ml_io_map_unmappable(WCNSS_PA + off, PROBE_PAGE, VM_WIMG_WCOMB);
++  if (!page) {
++   printf("RIVER WCNSS: page map failed at %#x\n", off);
++   return;
+   }
+-  printf("RIVER WCNSS: bounded page probe complete; radio remains in reset\n");
+-  return;
+- }
+- /* Map reserved DDR as write combining after TrustZone sets up PAS memory. */
+- printf("RIVER WCNSS: mapping firmware carveout WC\n");
+- vm_offset_t carveout = ml_io_map_unmappable(WCNSS_PA, WCNSS_SIZE, VM_WIMG_WCOMB);
+- if (!carveout) {
+-  printf("RIVER WCNSS: firmware carveout map failed\n");
+-  return;
++  volatile uint32_t *d = (volatile uint32_t *)page;
++  for (unsigned i = 0; i < count / 4; i++) d[i] = image[off / 4 + i];
++  __asm__ volatile("dsb sy" ::: "memory");
++  printf("RIVER WCNSS: page write complete through %#x\n", off + count);
++  ml_io_unmap(page, PROBE_PAGE);
+  }
+- printf("RIVER WCNSS: firmware carveout mapped at %#lx\n", (unsigned long)carveout);
+- volatile uint32_t *dest = (volatile uint32_t *)carveout;
+- printf("RIVER WCNSS: begin WC firmware copy, first source word %#x\n", image[0]);
+- dest[0] = image[0];
+- __asm__ volatile("dsb sy" ::: "memory");
+- printf("RIVER WCNSS: first firmware word copied\n");
+- for (unsigned o = 1; o < WCNSS_SIZE / 4; o++) {
+-  dest[o] = image[o];
+-  if ((o & 0x3ffff) == 0) {
+-   __asm__ volatile("dsb sy" ::: "memory");
+-   printf("RIVER WCNSS: firmware copy reached %#x bytes\n", o * 4);
+-  }
+- }
+- __asm__ volatile("dsb sy" ::: "memory");
+- printf("RIVER WCNSS: copied %#x staged firmware bytes to reserved memory; radio remains in reset\n",
+-     WCNSS_SIZE);
+- ml_io_unmap(carveout, WCNSS_SIZE);
++ printf("RIVER WCNSS: pagewise mode %u complete; radio remains in reset\n", load);
++
+ }
+ 
+ static void
+-- 
+2.54.0 (Apple Git-156)
+

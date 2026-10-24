@@ -1,5 +1,32 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River pagewise WCNSS diagnostic (2026-10-24)
+
+Patch 0221 (`4b8748a` scratch XNU; repo `33d3894`) added an opt-in
+`riverwcnssmem=2` bounded 16 KiB mapping/copy probe at offsets
+0x400000..0x440000, with a source/map/completion marker for each page.
+The previous uninstrumented bulk mode is disabled. Local single-file River
+compile and CI run 40063022683 passed. The verified RAM-only r91 image
+`shim-river/out/river-r91-wcnsspage-boot.img` has SHA-256
+`6389a5366c5d64efd8dc2a1bc23b95579e6973b534f82a95b84610fe060f6837`.
+The r90 packaging recipe was reproduced byte-for-byte before r91 packaging;
+r91's downloaded kernel matched its CI manifest, and its unpacked payload,
+540-byte boot arguments and three private blobs matched the staged inputs.
+`fastboot boot` succeeded with no partition flash. WCNSS PAS ID 6 INIT_IMAGE
+and MEM_SETUP again returned status 0/result 0. All sixteen 16 KiB pages from
+offset 0x400000 through 0x440000 copied and passed a barrier. USB networking
+remained alive; ping succeeded. Private evidence:
+`../logs-private/r91-wcnsspage-success-snapshot.txt`. This rules out an
+immediate physical write fault at 4 MiB, but the r90 stall could be later in
+the 4-5 MiB range or related to the large WC mapping/bulk copy. The radio
+remains in reset; Wi-Fi is not yet available.
+
+Patch 0222 (`89e37ce` scratch XNU) replaces the old bulk mode with a separate
+`riverwcnssmem=3` full-extent copy through 16 KiB WC mappings, logging before
+and after every page. It retains bounded mode 2 and does not auth/reset the
+radio. Local compile passed; CI, packaging and phone test are pending.
+The phone is running the r91 RAM boot; recover to fastboot before a new boot.
+
 ## River native Wi-Fi focus (2026-10-23)
 
 User prioritized built-in Wi-Fi. Read-only `phone-tools/netprobe.c` was
