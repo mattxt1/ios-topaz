@@ -1,17 +1,17 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 16:45:00 -0400
+Date: Sat, 24 Oct 2026 17:25:00 -0400
 Subject: [PATCH] RIVER: invoke PAS 6 auth_and_reset and monitor SMEM/SMD for Pronto v3
 
 ---
- bsd/dev/sweet_keys.c | 50 ++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 50 insertions(+)
+ bsd/dev/sweet_keys.c | 82 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 82 insertions(+)
 
 diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
 index a88eae8..8899aabb 100644
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -750,6 +750,56 @@ river_wcnss_probe(void)
+@@ -750,6 +750,88 @@ river_wcnss_probe(void)
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -37,31 +37,63 @@ index a88eae8..8899aabb 100644
 +      printf("RIVER WCNSS: SMEM item 422 words: %#x %#x %#x %#x\n",
 +          ri_rd(smem, off422), ri_rd(smem, off422 + 4),
 +          ri_rd(smem, off422 + 8), ri_rd(smem, off422 + 12));
++      char sfr[81];
++      unsigned slen = len422 < 80 ? len422 : 80;
++      for (unsigned j = 0; j < slen; j++) {
++       unsigned char c = *(volatile unsigned char *)(smem + off422 + j);
++       sfr[j] = (c >= 0x20 && c <= 0x7e) ? (char)c : ' ';
++      }
++      sfr[slen] = 0;
++      printf("RIVER WCNSS: SMEM item 422 SFR text: [%s]\n", sfr);
 +     }
 +     break;
 +    }
 +   }
-+   unsigned ent13 = SMEM_TOC + 13 * SMEM_ENTRY;
-+   uint32_t off13 = ri_rd(smem, ent13 + 4);
-+   uint32_t len13 = ri_rd(smem, ent13 + 8);
-+   if (off13 < SMEM_SIZE && len13 >= 64 * 32) {
-+    for (unsigned i = 0; i < 64; i++) {
-+     unsigned e = off13 + i * 32;
-+     uint32_t cid = ri_rd(smem, e + 20);
-+     uint32_t flags = ri_rd(smem, e + 24);
-+     uint32_t refs = ri_rd(smem, e + 28);
-+     unsigned edge = flags & 0xff;
-+     if (refs && edge == 6) {
-+      char name[21];
-+      for (unsigned j = 0; j < 20; j++) {
-+       unsigned char c = *(volatile unsigned char *)(smem + e + j);
-+       name[j] = c >= 0x20 && c <= 0x7e ? (char)c : 0;
++   delay(200000);
++   printf("RIVER WCNSS: surveying allocated SMEM items post-reset:\n");
++   for (unsigned id = 0; id < 512; id++) {
++    unsigned ent = SMEM_TOC + id * SMEM_ENTRY;
++    uint32_t a = ri_rd(smem, ent);
++    if (a) {
++     uint32_t o = ri_rd(smem, ent + 4);
++     uint32_t l = ri_rd(smem, ent + 8);
++     uint32_t u = ri_rd(smem, ent + 12);
++     printf("RIVER WCNSS: post-reset SMEM item %u alloc %u offset %#x size %#x aux %#x\n",
++         id, a, o, l, u);
++    }
++   }
++   static const unsigned tbls[] = { 13, 266 };
++   for (unsigned t = 0; t < sizeof(tbls) / sizeof(tbls[0]); t++) {
++    unsigned tid = tbls[t];
++    unsigned ent = SMEM_TOC + tid * SMEM_ENTRY;
++    if (!ri_rd(smem, ent)) continue;
++    uint32_t toff = ri_rd(smem, ent + 4);
++    uint32_t tlen = ri_rd(smem, ent + 8);
++    if (toff < SMEM_SIZE && tlen >= 64 * 32) {
++     for (unsigned i = 0; i < 64; i++) {
++      unsigned e = toff + i * 32;
++      uint32_t cid = ri_rd(smem, e + 20);
++      uint32_t flags = ri_rd(smem, e + 24);
++      uint32_t refs = ri_rd(smem, e + 28);
++      unsigned edge = flags & 0xff;
++      if (refs) {
++       char name[21];
++       for (unsigned j = 0; j < 20; j++) {
++        unsigned char c = *(volatile unsigned char *)(smem + e + j);
++        name[j] = (c >= 0x20 && c <= 0x7e) ? (char)c : 0;
++       }
++       name[20] = 0;
++       printf("RIVER WCNSS: post-reset table %u slot %u edge %u cid %u flags %#x refs %u name %s\n",
++           tid, i, edge, cid, flags, refs, name);
 +      }
-+      name[20] = 0;
-+      printf("RIVER WCNSS: Pronto SMD edge 6 slot %u cid %u flags %#x name %s\n",
-+          i, cid, flags, name);
 +     }
 +    }
++   }
++   vm_offset_t wmmio = ml_io_map_unmappable(0x0a000000, 0x1000, VM_WIMG_IO);
++   if (wmmio) {
++    printf("RIVER WCNSS: MMIO 0x0a000000 mapped: %#x %#x %#x %#x\n",
++        ri_rd(wmmio, 0), ri_rd(wmmio, 4), ri_rd(wmmio, 8), ri_rd(wmmio, 12));
++    ml_io_unmap(wmmio, 0x1000);
 +   }
 +  }
 + }
