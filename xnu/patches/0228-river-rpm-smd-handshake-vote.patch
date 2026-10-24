@@ -1,0 +1,182 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Sat, 24 Oct 2026 02:40:00 -0400
+Subject: [PATCH] RIVER: RPM SMD channel handshake and regulator votes for L9/L19
+
+---
+ bsd/dev/sweet_keys.c | 160 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 160 insertions(+)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 1c68940..a88eae8 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -568,6 +568,166 @@ river_wcnss_probe(void)
+    }
+   }
+  }
++ uint32_t rpm_vote = 0;
++ if (PE_parse_boot_argn("riverwcnssrpm", &rpm_vote, sizeof(rpm_vote)) && rpm_vote) {
++  vm_offset_t ipc = ml_io_map_unmappable(0x0b011000, 0x1000, VM_WIMG_IO);
++  if (!ipc) {
++   printf("RIVER WCNSS: APCS IPC map failed\n");
++  } else if (!auxmem) {
++   printf("RIVER WCNSS: RPM SMD auxmem unavailable for handshake\n");
++   ml_io_unmap(ipc, 0x1000);
++  } else {
++   enum {
++    SMD_CLOSED = 0,
++    SMD_OPENING = 1,
++    SMD_OPENED = 2,
++    SMD_FLUSHING = 3,
++    SMD_CLOSING = 4,
++    SMD_RESET = 5,
++    SMD_RESET_OPENING = 6,
++   };
++   uint32_t tx_st = ri_rd(auxmem, 0);
++   uint32_t rx_st = ri_rd(auxmem, 44);
++   printf("RIVER WCNSS: RPM SMD starting handshake, initial tx state %u rx state %u\n",
++       tx_st, rx_st);
++   if (rx_st == SMD_CLOSING || rx_st == SMD_RESET) {
++    ri_wr(auxmem, 0, SMD_CLOSED);
++    ri_wr(auxmem, 4, 0);
++    ri_wr(auxmem, 8, 0);
++    ri_wr(auxmem, 12, 0);
++    ri_wr(auxmem, 28, 1);
++    ri_wr(ipc, 8, 1);
++    for (unsigned w = 0; w < 50; w++) {
++     rx_st = ri_rd(auxmem, 44);
++     if (rx_st == SMD_CLOSED || rx_st == SMD_OPENING || rx_st == SMD_OPENED) break;
++     delay(1000);
++    }
++    printf("RIVER WCNSS: RPM SMD remote after close ack rx state %u\n", rx_st);
++   }
++   ri_wr(auxmem, 4, 0);
++   ri_wr(auxmem, 8, 0);
++   ri_wr(auxmem, 12, 0);
++   ri_wr(auxmem, 0, SMD_OPENING);
++   ri_wr(auxmem, 28, 1);
++   ri_wr(ipc, 8, 1);
++   for (unsigned w = 0; w < 100; w++) {
++    rx_st = ri_rd(auxmem, 44);
++    if (rx_st == SMD_OPENING || rx_st == SMD_OPENED) break;
++    delay(1000);
++   }
++   printf("RIVER WCNSS: RPM SMD remote enter opening/opened wait result rx state %u\n", rx_st);
++   ri_wr(auxmem, 4, 1);
++   ri_wr(auxmem, 8, 1);
++   ri_wr(auxmem, 12, 1);
++   ri_wr(auxmem, 0, SMD_OPENED);
++   ri_wr(auxmem, 28, 1);
++   ri_wr(ipc, 8, 1);
++   for (unsigned w = 0; w < 100; w++) {
++    rx_st = ri_rd(auxmem, 44);
++    if (rx_st == SMD_OPENED) break;
++    delay(1000);
++   }
++   tx_st = ri_rd(auxmem, 0);
++   printf("RIVER WCNSS: RPM SMD channel established: tx state %u rx state %u\n", tx_st, rx_st);
++   if (tx_st == SMD_OPENED && rx_st == SMD_OPENED) {
++    vm_offset_t tx_fifo = auxmem + 0x800;
++    vm_offset_t rx_fifo = auxmem + 0xc00;
++    static const struct {
++     uint32_t id;
++     uint32_t uV;
++     uint32_t mA;
++     const char *name;
++    } targets[] = {
++     { 19, 1300000, 10, "L19 vddrfa" },
++     { 9,  3300000, 10, "L9 vddpa" },
++    };
++    static uint32_t next_msg_id = 1;
++    for (unsigned t = 0; t < sizeof(targets) / sizeof(targets[0]); t++) {
++     uint32_t cur_msg_id = next_msg_id++;
++     struct {
++      uint32_t smd_hdr[5];
++      uint32_t service_type;
++      uint32_t length;
++      uint32_t msg_id;
++      uint32_t flags;
++      uint32_t type;
++      uint32_t id;
++      uint32_t data_len;
++      struct {
++       uint32_t key;
++       uint32_t nbytes;
++       uint32_t value;
++      } kv[3];
++     } pkt;
++     memset(&pkt, 0, sizeof(pkt));
++     pkt.smd_hdr[0] = sizeof(pkt) - 20;
++     pkt.service_type = 0x00716572;
++     pkt.length = 20 + 36;
++     pkt.msg_id = cur_msg_id;
++     pkt.flags = 0;
++     pkt.type = 0x616f646c;
++     pkt.id = targets[t].id;
++     pkt.data_len = 36;
++     pkt.kv[0].key = 0x6e657773;
++     pkt.kv[0].nbytes = 4;
++     pkt.kv[0].value = 1;
++     pkt.kv[1].key = 0x00007675;
++     pkt.kv[1].nbytes = 4;
++     pkt.kv[1].value = targets[t].uV;
++     pkt.kv[2].key = 0x0000616d;
++     pkt.kv[2].nbytes = 4;
++     pkt.kv[2].value = targets[t].mA;
++     uint32_t head = ri_rd(auxmem, 40);
++     for (unsigned b = 0; b < sizeof(pkt); b += 4) {
++      unsigned woff = (head + b) & 1023;
++      *(volatile uint32_t *)(tx_fifo + woff) = *(uint32_t *)((char *)&pkt + b);
++     }
++     head = (head + sizeof(pkt)) & 1023;
++     ri_wr(auxmem, 40, head);
++     ri_wr(auxmem, 20, 1);
++     ri_wr(ipc, 8, 1);
++     printf("RIVER WCNSS: sent RPM request for %s (msg_id %u, %u uV) new head %#x\n",
++         targets[t].name, cur_msg_id, targets[t].uV, head);
++     bool acked = false;
++     for (unsigned wait_ms = 0; wait_ms < 500; wait_ms++) {
++      uint32_t rx_h = ri_rd(auxmem, 44 + 40);
++      uint32_t rx_t = ri_rd(auxmem, 44 + 36);
++      if (rx_h != rx_t) {
++       uint32_t resp_smd_len = ri_rd(rx_fifo, rx_t & 1023);
++       uint32_t resp_srv = ri_rd(rx_fifo, (rx_t + 20) & 1023);
++       uint32_t resp_type = ri_rd(rx_fifo, (rx_t + 28) & 1023);
++       uint32_t resp_msg_id = ri_rd(rx_fifo, (rx_t + 36) & 1023);
++       printf("RIVER WCNSS: RPM ACK received for %s: smd_len %u srv %#x type %#x resp_msg_id %u\n",
++           targets[t].name, resp_smd_len, resp_srv, resp_type, resp_msg_id);
++       unsigned total_resp = 20 + ((resp_smd_len + 3) & ~3);
++       rx_t = (rx_t + total_resp) & 1023;
++       ri_wr(auxmem, 44 + 36, rx_t);
++       ri_wr(auxmem, 44 + 24, 1);
++       ri_wr(ipc, 8, 1);
++       acked = true;
++       break;
++      }
++      delay(1000);
++     }
++     if (!acked) {
++      printf("RIVER WCNSS: RPM request for %s timed out waiting for ACK\n", targets[t].name);
++     }
++    }
++    if (core) {
++     for (unsigned i = 0; i < sizeof(targets) / sizeof(targets[0]); i++) {
++      unsigned ppid = (targets[i].id == 9) ? 0x148 : 0x152;
++      vm_offset_t obs = ri_spmi_obs(core, ppid);
++      uint32_t status = 0, enable = 0;
++      if (obs && ri_spmi_read(obs, 0x08, 1, &status) && ri_spmi_read(obs, 0x46, 1, &enable)) {
++       printf("RIVER WCNSS: post-vote %s status %#x enable %#x\n",
++           targets[i].name, status & 0xff, enable & 0xff);
++      }
++     }
++    }
++   }
++   ml_io_unmap(ipc, 0x1000);
++  }
++ }
+  if (auxmem) ml_io_unmap(auxmem, 0x8000);
+  ml_io_unmap(smem, SMEM_SIZE);
+ 
+-- 
+2.54.0 (Apple Git-156)

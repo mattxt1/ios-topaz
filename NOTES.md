@@ -1,5 +1,18 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River RPM SMD handshake and regulator votes (2026-10-24)
+
+Patch 0228 adds an opt-in `riverwcnssrpm=1` sequence after the read-only
+RPM survey. It maps the APCS IPC register at physical 0x0b011008 (bit 0)
+and performs the AP-side SMD handshake on channel `rpm_requests` (item 18
+in `aux-mem1` at 0x60000) transitioning to `SMD_CHANNEL_OPENED`. Over the
+TX FIFO (item 342 at offset 0x800), it formats and transmits RPM regulator
+request packets (`service_type` 0x00716572 "req\0") for PM8953 L19 (1.3V,
+10 mA) and L9 (3.3V, 10 mA) with software enable `RPM_KEY_SWEN=1`. It waits
+for RPM's ACK in the RX FIFO, updates ring buffer pointers, and verifies
+via SPMI that L9 and L19 status/enable bits transition to powered.
+Local River single-file compile passed.
+
 ## River RPM SMD auxiliary control survey (2026-10-24)
 
 Patch 0227 (`4de25f2` scratch XNU) follows the live DT's `aux-mem1`
