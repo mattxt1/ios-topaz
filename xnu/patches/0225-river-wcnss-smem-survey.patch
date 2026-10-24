@@ -1,0 +1,76 @@
+From 56a6829ab5d63a5abed99241f79318cbc630e62d Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Sat, 24 Oct 2026 01:17:32 -0400
+Subject: [PATCH] RIVER: survey WCNSS and RPM SMD allocation tables read-only
+
+---
+ bsd/dev/sweet_keys.c | 53 ++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 53 insertions(+)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index e995ac2..49b49eb 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -476,6 +476,59 @@ river_wcnss_probe(void)
+   printf("RIVER WCNSS: %s type %#x subtype %#x status %#x enable %#x (read-only)\n",
+       rails[i].name, type & 0xff, sub & 0xff, status & 0xff, enable & 0xff);
+  }
++ uint32_t smem_probe = 0;
++ if (!PE_parse_boot_argn("riverwcnsssmem", &smem_probe, sizeof(smem_probe)) ||
++     !smem_probe) return;
++ /* River DT reserves 0x86300000+1 MiB for Qualcomm SMEM. This survey
++  * follows only bounded global-heap TOC entries; it changes no channel
++  * state and sends no RPM request. */
++ enum { SMEM_SIZE = 0x100000, SMEM_TOC = 0xd0, SMEM_ENTRY = 16 };
++ vm_offset_t smem = ml_io_map_unmappable(0x86300000, SMEM_SIZE, VM_WIMG_IO);
++ if (!smem) {
++  printf("RIVER WCNSS: SMEM read-only map failed\n");
++  return;
++ }
++ uint32_t initialized = ri_rd(smem, 0xc0);
++ uint32_t free_off = ri_rd(smem, 0xc4);
++ uint32_t available = ri_rd(smem, 0xc8);
++ uint32_t version = ri_rd(smem, 0x40 + 7 * 4);
++ uint32_t ptable = ri_rd(smem, SMEM_SIZE - 0x1000);
++ printf("RIVER WCNSS: SMEM init %#x free %#x avail %#x SBL version %#x ptable %#x (read-only)\n",
++     initialized, free_off, available, version, ptable);
++ if (initialized != 1 || free_off >= SMEM_SIZE) {
++  ml_io_unmap(smem, SMEM_SIZE);
++  return;
++ }
++ static const unsigned table_ids[] = { 13, 266 };
++ for (unsigned t = 0; t < sizeof(table_ids) / sizeof(table_ids[0]); t++) {
++  unsigned id = table_ids[t];
++  unsigned ent = SMEM_TOC + id * SMEM_ENTRY;
++  uint32_t allocated = ri_rd(smem, ent);
++  uint32_t off = ri_rd(smem, ent + 4);
++  uint32_t len = ri_rd(smem, ent + 8);
++  uint32_t aux = ri_rd(smem, ent + 12);
++  printf("RIVER WCNSS: SMEM item %u alloc %u offset %#x size %#x aux %#x\n",
++      id, allocated, off, len, aux);
++  if (!allocated || aux || off >= SMEM_SIZE || len < 64 * 32 ||
++      len > SMEM_SIZE - off) continue;
++  for (unsigned i = 0; i < 64; i++) {
++   unsigned e = off + i * 32;
++   uint32_t cid = ri_rd(smem, e + 20);
++   uint32_t flags = ri_rd(smem, e + 24);
++   uint32_t refs = ri_rd(smem, e + 28);
++   unsigned edge = flags & 0xff;
++   if (!refs || (edge != 15 && edge != 6)) continue;
++   char name[21];
++   for (unsigned j = 0; j < 20; j++) {
++    unsigned char c = *(volatile unsigned char *)(smem + e + j);
++    name[j] = c >= 0x20 && c <= 0x7e ? (char)c : 0;
++   }
++   name[20] = 0;
++   printf("RIVER WCNSS: SMD table %u slot %u edge %u cid %u flags %#x refs %u name %s (read-only)\n",
++       id, i, edge, cid, flags, refs, name);
++  }
++ }
++ ml_io_unmap(smem, SMEM_SIZE);
+ 
+ }
+ 
+-- 
+2.54.0 (Apple Git-156)
+

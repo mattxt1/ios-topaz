@@ -1,5 +1,15 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River SMEM/SMD channel survey (2026-10-24)
+
+Patch 0225 (`56a6829` scratch XNU) adds an opt-in `riverwcnsssmem=1`
+read-only survey after the WCNSS power survey. It bounds checks the River
+SMEM global heap and reads SMD allocation tables 13 and 266 for RPM edge 15
+and WCNSS edge 6 channel names, IDs and flags. It does not change any
+channel, request a rail vote or release the radio. Local River single-file
+compile passed. CI, RAM image and phone test are pending. The r94 phone is
+running from RAM; return it to fastboot before the next image.
+
 ## River WCNSS power status survey (2026-10-24)
 
 Patch 0224 (`6a1c3b4` scratch XNU) adds `riverwcnsspower=1` after a
