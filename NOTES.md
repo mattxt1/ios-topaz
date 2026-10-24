@@ -1,5 +1,30 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River full WCNSS page-copy test (2026-10-24)
+
+Patch 0222 (`89e37ce` scratch XNU, repo `3f058a3`) passed local compile and
+CI run 40063578369. The verified RAM-only r92 image
+`shim-river/out/river-r92-wcnsspages-boot.img` has SHA-256
+`a088a0e4a06841a31ce04a4273e5ef3b653dee1baeb070b3c8828d48b8248bc5`.
+Its downloaded kernel matched SHA256SUMS, unpacked payload matched the new
+payload, boot line selected `riverwcnssmem=3`, and all three private blobs
+matched their staged sources. `fastboot boot` succeeded. INIT_IMAGE and
+MEM_SETUP again returned status 0/result 0. The USB log captured pagewise
+copy markers through a completed offset 0x5f0000 and a subsequent pre-copy
+marker at 0x5f4000. However it dropped at least 235 of the expected 812
+page marker lines in large bursts and did not capture the final completion
+marker. Ping and ordinary OS log traffic continued. Thus this test does not
+prove either a copy stall or full completion; do not interpret the last
+received marker as the first failing page. Private snapshot:
+`../logs-private/r92-wcnss-pages-ambiguous-snapshot.txt`.
+
+Patch 0223 (`9df27f5` scratch XNU) paces full pagewise mode 3 by 20 ms per
+16 KiB page, waits 2 seconds after copying, and repeats its completion
+marker three times with 1-second spacing. Local River compile passed. CI,
+packaging and RAM-only phone test are pending. The phone is running r92;
+return it to fastboot before testing another image. The radio remains in
+reset, and Wi-Fi is not yet operational.
+
 ## River pagewise WCNSS diagnostic (2026-10-24)
 
 Patch 0221 (`4b8748a` scratch XNU; repo `33d3894`) added an opt-in

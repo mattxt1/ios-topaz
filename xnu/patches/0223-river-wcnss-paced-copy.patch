@@ -1,0 +1,32 @@
+From 9df27f5f28a0779aa1195078f3198eb694c9c166 Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Sat, 24 Oct 2026 00:55:40 -0400
+Subject: [PATCH] RIVER: pace WCNSS page copy logging and repeat completion
+
+---
+ bsd/dev/sweet_keys.c | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index f026986..367243b 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -424,8 +424,14 @@ river_wcnss_probe(void)
+   __asm__ volatile("dsb sy" ::: "memory");
+   printf("RIVER WCNSS: page write complete through %#x\n", off + count);
+   ml_io_unmap(page, PROBE_PAGE);
++  if (load == 3) ri_wait(20); /* pace USB console records for diagnosis */
++ }
++ if (load == 3) ri_wait(2000); /* drain queued page markers before completion */
++ for (unsigned repeat = 0; repeat < 3; repeat++) {
++  printf("RIVER WCNSS: pagewise mode %u complete through %#x; radio remains in reset\n",
++      load, end);
++  if (load == 3) ri_wait(1000);
+  }
+- printf("RIVER WCNSS: pagewise mode %u complete; radio remains in reset\n", load);
+ 
+ }
+ 
+-- 
+2.54.0 (Apple Git-156)
+
