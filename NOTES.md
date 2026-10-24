@@ -138,6 +138,13 @@ to the reserved carveout through a device mapping. It never calls
 AUTH_AND_RESET. The local River single-file compile passed. CI, image
 packaging and phone test pending. Private staged image SHA-256:
 `c9e5186cf7bc33a8d071c6950c43be65df875a4e944d6efaa1bc8d58bf4df5b6`.
+CI run 40059656466 on pushed commit `c1127ef` passed. Built
+`shim-river/out/river-r87-wcnssmem-boot.img` (SHA-256
+`d0755429b50be5cdf250dffb37eef602ed310a99de95b6725b9d5f6411721233`)
+with 540-byte boot arguments including `riverwcnssmem=1`. Its staged private
+metadata is 0x1c9c bytes at 0x1a5e8000; the SHA-verified 7 MiB firmware
+image is at 0x1a5ec000 in the boot payload. Awaiting user fastboot handoff
+for the RAM-only phone test.
 
 ## River performance and app follow-up (2026-10-23)
 
