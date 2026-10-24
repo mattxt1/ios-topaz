@@ -130,6 +130,14 @@ the radio. The r86 phone is currently running. No partition was flashed.
 Next: opt-in PAS_MEM_SETUP of the verified 0x8e700000 firmware carveout and
 copy of the staged segments, then implement Pronto power/regulator and SMD
 control prerequisites before auth/reset.
+Patch 0217 (`1e7556e` scratch XNU) adds `riverwcnssmem=1` after a successful
+metadata result. It requires a private `RiverWCNSSImage` boot blob of exactly
+7 MiB, calls PAS_MEM_SETUP for ID 6 at 0x8e700000+0x657000 (the aligned
+extent of the nine loadable segments), and copies that verified staged image
+to the reserved carveout through a device mapping. It never calls
+AUTH_AND_RESET. The local River single-file compile passed. CI, image
+packaging and phone test pending. Private staged image SHA-256:
+`c9e5186cf7bc33a8d071c6950c43be65df875a4e944d6efaa1bc8d58bf4df5b6`.
 
 ## River performance and app follow-up (2026-10-23)
 

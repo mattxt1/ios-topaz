@@ -1,0 +1,111 @@
+From 1e7556ebc7479cd651569eafb5646a9053a31123 Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Fri, 23 Oct 2026 23:45:52 -0400
+Subject: [PATCH] RIVER: stage WCNSS firmware in reserved memory behind opt-in
+
+---
+ bsd/dev/sweet_keys.c | 53 ++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 46 insertions(+), 7 deletions(-)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index a3e3293..b5db81f 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -15,6 +15,7 @@
+ #include <vm/pmap.h>
+ #include <vm/vm_kern.h>
+ extern vm_offset_t ml_io_map_unmappable(vm_offset_t, vm_size_t, uint32_t);
++extern void ml_io_unmap(vm_offset_t, vm_size_t);
+ extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
+ extern void sweet_hid_key(int, int);
+ extern void sweet_hid_touch(int, int, int, int);
+@@ -266,13 +267,14 @@ river_gpu_power_on(vm_offset_t g, vm_offset_t ldo)
+  * in x0 (1 = interrupted, call again with x0 = 1) and results in x1..x3.
+  */
+ static int64_t
+-river_scm(uint32_t svc, uint32_t cmd, uint64_t arginfo, uint64_t a0, uint64_t a1, uint64_t *r1)
++river_scm(uint32_t svc, uint32_t cmd, uint64_t arginfo, uint64_t a0, uint64_t a1,
++    uint64_t a2, uint64_t *r1)
+ {
+  register uint64_t x0 __asm__("x0") = 0x42000000ULL | ((svc & 0xff) << 8) | (cmd & 0xff);
+  register uint64_t x1 __asm__("x1") = arginfo;
+  register uint64_t x2 __asm__("x2") = a0;
+  register uint64_t x3 __asm__("x3") = a1;
+- register uint64_t x4 __asm__("x4") = 0;
++ register uint64_t x4 __asm__("x4") = a2;
+  register uint64_t x5 __asm__("x5") = 0;
+  do {
+   __asm__ volatile("smc #0"
+@@ -292,8 +294,8 @@ river_wcnss_probe(void)
+  uint32_t enabled = 0;
+  if (!PE_parse_boot_argn("riverwcnssprobe", &enabled, sizeof(enabled)) || !enabled) return;
+  uint64_t avail = 0, supported = 0;
+- int64_t a = river_scm(0x06, 0x01, 1, 0x42000201ULL, 0, &avail);
+- int64_t s = river_scm(0x02, 0x07, 1, 6, 0, &supported);
++ int64_t a = river_scm(0x06, 0x01, 1, 0x42000201ULL, 0, 0, &avail);
++ int64_t s = river_scm(0x02, 0x07, 1, 6, 0, 0, &supported);
+  printf("RIVER WCNSS: read-only PAS init_image call avail status %lld result %llu; PAS 6 support status %lld result %llu\n",
+      a, avail, s, supported);
+ 
+@@ -351,9 +353,46 @@ river_wcnss_probe(void)
+  /* Let the USB console receiver persist the marker if TZ resets the SoC. */
+  ri_wait(12000);
+  uint64_t res = 0;
+- int64_t st = river_scm(0x02, 0x01, 2 | (2 << 6), 6, mpa, &res);
++ int64_t st = river_scm(0x02, 0x01, 2 | (2 << 6), 6, mpa, 0, &res);
+  printf("RIVER WCNSS: PAS init_image metadata %#llx+%#llx status %lld result %llu (no reset)\n",
+      mpa, len, st, res);
++ uint32_t load = 0;
++ if (st || res || !PE_parse_boot_argn("riverwcnssmem", &load, sizeof(load)) || !load)
++  return;
++ /* Linux qcom_mdt_load uses the relocatable image's exact aligned extent
++  * for PAS_MEM_SETUP, then copies segments into its reserved memory.  These
++  * values are verified from this River phone's split wcnss.mdt/.bNN files. */
++ enum { WCNSS_PA = 0x8e700000, WCNSS_SIZE = 0x657000, WCNSS_BLOB = 0x700000 };
++ if (SecureDTGetProperty(mm, "RiverWCNSSImage", &prop, &psize) != kSuccess || psize != 16) {
++  printf("RIVER WCNSS: no RiverWCNSSImage boot blob\n");
++  return;
++ }
++ uint64_t image_pa = ((const uint64_t *)prop)[0], image_len = ((const uint64_t *)prop)[1];
++ if ((image_pa & 0xfff) || image_pa < 0x18000000ULL ||
++     image_pa >= 0x81800000ULL || image_len != WCNSS_BLOB ||
++     image_pa + image_len > 0x81800000ULL) {
++  printf("RIVER WCNSS: rejected image blob %#llx+%#llx\n", image_pa, image_len);
++  return;
++ }
++ vm_offset_t carveout = ml_io_map_unmappable(WCNSS_PA, WCNSS_SIZE, VM_WIMG_IO);
++ if (!carveout) {
++  printf("RIVER WCNSS: firmware carveout map failed\n");
++  return;
++ }
++ const uint32_t *image = (const uint32_t *)ml_static_ptovirt((vm_offset_t)image_pa);
++ printf("RIVER WCNSS: PAS mem_setup about to call for %#x+%#x (image %#llx)\n",
++     WCNSS_PA, WCNSS_SIZE, image_pa);
++ ri_wait(12000);
++ res = 0;
++ st = river_scm(0x02, 0x02, 3, 6, WCNSS_PA, WCNSS_SIZE, &res);
++ printf("RIVER WCNSS: PAS mem_setup status %lld result %llu\n", st, res);
++ if (st || res) { ml_io_unmap(carveout, WCNSS_SIZE); return; }
++ volatile uint32_t *dest = (volatile uint32_t *)carveout;
++ for (unsigned o = 0; o < WCNSS_SIZE / 4; o++) dest[o] = image[o];
++ __asm__ volatile("dsb sy" ::: "memory");
++ printf("RIVER WCNSS: copied %#x staged firmware bytes to reserved memory; radio remains in reset\n",
++     WCNSS_SIZE);
++ ml_io_unmap(carveout, WCNSS_SIZE);
+ }
+ 
+ static void
+@@ -411,8 +450,8 @@ river_gpu_probe(void)
+   * (SVC_INFO 0x06 / IS_CALL_AVAIL 0x01) first, for the log.
+   */
+  uint64_t avail = 0, res = 0;
+- int64_t st0 = river_scm(0x06, 0x01, 1, 0x02000c02ULL, 0, &avail);
+- int64_t st1 = river_scm(0x0c, 0x02, 2, 18, 0, &res);
++ int64_t st0 = river_scm(0x06, 0x01, 1, 0x02000c02ULL, 0, 0, &avail);
++ int64_t st1 = river_scm(0x0c, 0x02, 2, 18, 0, 0, &res);
+  printf("RIVER GPU: TZ restore_sec_cfg available %lld/%llu; restore(18,0) status %lld result %#llx\n",
+      st0, avail, st1, res);
+  if (st1 != 0 || res != 0) { printf("RIVER GPU: TZ restore failed; GPU registers not read\n"); return; }
+-- 
+2.54.0 (Apple Git-156)
+
