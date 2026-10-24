@@ -100,8 +100,20 @@ SSH and read-only `netprobe` worked: `ue0` present, no `IONetworkController`.
 No partition was flashed. The result note is in a local commit; its push
 was rejected by automatic approval review because the remote's ownership and
 the note's data egress lack user-authored authorization. Do not retry the push
-without resolving that approval. Next work: arrange post-USB diagnostic logging and
-an actually noncached, contiguous metadata buffer before another PAS call.
+without resolving that approval. The user explicitly authorized pushing the
+River bring-up branch to `mattxt1/ios-topaz` on 2026-10-23.
+
+Patch 0216 (`137accc` scratch XNU) defers the WCNSS probe to a separate
+thread after input/GPU setup. With `riverwcnssinit=1`, it waits 45 seconds
+for USB logging, validates the staged blob, checks the GPU PAS prerequisite,
+copies the MDT metadata into a permanent contiguous page, cleans that page to
+PoC, logs its physical address, waits 12 seconds, then calls PAS INIT_IMAGE.
+The existing GPU zap path successfully votes crypto clocks and calls PAS
+INIT_IMAGE/SETUP/AUTH on the r84 control boot; 0216 only attempts WCNSS after
+that path reports success. Both changed sources compiled locally with
+`tools/river-cc.py`; CI and phone test pending. It still does not allocate a
+noncached page, so even a successful metadata result is only one bring-up
+milestone, not Wi-Fi operation.
 
 ## River performance and app follow-up (2026-10-23)
 
