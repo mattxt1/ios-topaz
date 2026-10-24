@@ -189,6 +189,22 @@ wrapper reused TrustZone-returned argument registers and discarded x6, a
 concrete ABI error that could explain intermittent PAS_MEM_SETUP stalls. It
 does not prove whether a particular SMC call returned interrupted. Local
 River compile passed; CI and RAM-only phone test pending.
+CI run 40062032634 on pushed commit `3bb16ce` passed. Built and verified
+RAM-only `shim-river/out/river-r90-wcnssmem-boot.img` (SHA-256
+`c1c0224ddb69a97efae2bc1f91e53f18dd23465590b6dc9ab5728b9abc362353`):
+the downloaded kernel passed SHA256SUMS, the unpacked boot payload matched,
+and the command line and three private blobs matched r87. On the phone, PAS
+INIT_IMAGE and MEM_SETUP each returned status 0/result 0, the WC map succeeded,
+and copying reached 0x400000 bytes before USB logging and network stopped.
+No 0x500000 or completion marker was captured. Private snapshot:
+`../logs-private/r90-wcnssmem-4m-stall-snapshot.txt`. The physical firmware
+region is 0x8e700000+0x700000; offset 0x400000 is 0x8eb00000. The first
+access that failed is not established. No auth/reset was attempted and no
+partition was flashed. User recovered the phone to fastboot and requests
+handoff to a new chat. Do not boot an older image; continue with a corrected
+diagnostic. Next: inspect the carveout boundary and map/write behavior at
+offset 4 MiB, then implement a bounded segment-only or page/chunk diagnostic
+with markers around the boundary. Avoid an uninstrumented bulk retry.
 
 ## River performance and app follow-up (2026-10-23)
 
