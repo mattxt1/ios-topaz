@@ -1,20 +1,20 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 03:40:00 -0400
+Date: Sat, 24 Oct 2026 05:46:00 -0400
 Subject: [PATCH] RIVER: RPM SMD channel handshake and regulator votes for L9/L19
 
 ---
  bsd/dev/sweet_keys.c | 185 ++++++++++++++++++++++++++++++++++++++++++++++++
  1 file changed, 185 insertions(+)
 
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index 1c68940..a88eae8 100644
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -566,6 +566,191 @@
-         ri_rd(region, off + rx + 24), ri_rd(region, off + rx + 28),
-         ri_rd(region, off + rx + 32));
+@@ -568,6 +568,191 @@ river_wcnss_probe(void)
     }
-+  }
-+ }
+   }
+  }
 + uint32_t rpm_vote = 0;
 + if (PE_parse_boot_argn("riverwcnssrpm", &rpm_vote, sizeof(rpm_vote)) && rpm_vote) {
 +  vm_offset_t ipc_page = ml_io_map_unmappable(0x0b010000, 0x4000, VM_WIMG_IO);
@@ -198,8 +198,10 @@ Subject: [PATCH] RIVER: RPM SMD channel handshake and regulator votes for L9/L19
 +    }
 +   }
 +   ml_io_unmap(ipc_page, 0x4000);
-   }
-  }
++  }
++ }
   if (auxmem) ml_io_unmap(auxmem, 0x8000);
+  ml_io_unmap(smem, SMEM_SIZE);
+ 
 -- 
 2.54.0 (Apple Git-156)
