@@ -1,5 +1,32 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River firmware load complete (2026-10-24)
+
+Patch 0223 (`9df27f5` scratch XNU, repo `48182a3`) passed local River
+single-file compile and CI run 40064273996. The verified RAM-only r93 image
+`shim-river/out/river-r93-wcnss-paced-boot.img` has SHA-256
+`cb8bcc12409f371e538c387759a1b923696aac970f0eb7f36a0566103020ad53`.
+Its downloaded kernel matched SHA256SUMS; unpacked payload, 540-byte boot
+line with `riverwcnssmem=3`, and all three private blobs matched their inputs.
+`fastboot boot` succeeded. WCNSS PAS ID 6 INIT_IMAGE and MEM_SETUP returned
+status 0/result 0, and the paced pagewise copy reached its exact aligned
+extent 0x657000. Three delayed completion markers were captured. USB ping
+succeeded after the copy, showing the phone remained responsive. Private
+snapshot: `../logs-private/r93-wcnss-copy-complete-snapshot.txt`. No
+AUTH_AND_RESET, partition flash, or Wi-Fi interface was attempted. The radio
+remains in reset; native Wi-Fi is not yet working.
+
+Next: implement the Pronto v3 power/regulator and clock prerequisites before
+PAS AUTH_AND_RESET, then ready/stop signals, WCNSS_CTRL/NV over SMD, DXE and
+iOS network publication. The saved live DTB ties WCNSS to RPM-SMD regulators
+pm8953_s7_level_ao (vddmx), pm8953_s2_level (vddcx), pm8953_l5
+(vddpx/vdddig), pm8953_l7 (vddxo/PLL), pm8953_l19 (vddrfa), and pm8953_l9
+(vddpa), plus XO and SCM clocks. Do not assume these rails remain on after
+fastboot. Linux `qcom_wcnss.c` starts Pronto only after its power domains,
+regulators and Iris XO are prepared, then calls PAS_AUTH_AND_RESET and waits
+for a ready signal. XNU has no River RPM-SMD/SMD driver yet. The r93 phone is
+currently running from RAM; recover to fastboot before another boot.
+
 ## River full WCNSS page-copy test (2026-10-24)
 
 Patch 0222 (`89e37ce` scratch XNU, repo `3f058a3`) passed local compile and
