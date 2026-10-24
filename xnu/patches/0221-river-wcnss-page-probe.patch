@@ -1,0 +1,54 @@
+From 4b8748a7d0111a11ac65ea504cd3970b3945c8b7 Mon Sep 17 00:00:00 2001
+From: mattxt1 <matttysonx1@gmail.com>
+Date: Sat, 24 Oct 2026 00:35:52 -0400
+Subject: [PATCH] RIVER: isolate WCNSS copy above 4 MiB with bounded pages
+
+---
+ bsd/dev/sweet_keys.c | 31 +++++++++++++++++++++++++++++++
+ 1 file changed, 31 insertions(+)
+
+diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
+index ec687d8..1afae6f 100644
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -396,6 +396,37 @@ river_wcnss_probe(void)
+  st = river_scm(0x02, 0x02, 3, 6, WCNSS_PA, WCNSS_SIZE, &res);
+  printf("RIVER WCNSS: PAS mem_setup status %lld result %llu\n", st, res);
+  if (st || res) return;
++ if (load != 2) {
++  printf("RIVER WCNSS: only bounded diagnostic mode 2 is enabled after r90 stall\n");
++  return;
++ }
++ /* Diagnostic mode isolates the first 256 KiB above the r90 stall marker.
++  * No earlier bulk copy is attempted, and each 16 KiB page has its own WC
++  * mapping.  A marker after every barrier identifies the last completed
++  * physical page even if the next access stops the USB console. */
++ if (load == 2) {
++  enum { PROBE_START = 0x400000, PROBE_END = 0x440000, PROBE_PAGE = 0x4000 };
++  for (unsigned off = PROBE_START; off < PROBE_END; off += PROBE_PAGE) {
++   uint32_t first = image[off / 4];
++   uint32_t last = image[(off + PROBE_PAGE - 4) / 4];
++   printf("RIVER WCNSS: probe source %#x first %#x last %#x; mapping PA %#x\n",
++       off, first, last, WCNSS_PA + off);
++   vm_offset_t page = ml_io_map_unmappable(WCNSS_PA + off, PROBE_PAGE, VM_WIMG_WCOMB);
++   if (!page) {
++    printf("RIVER WCNSS: probe map failed at %#x\n", off);
++    return;
++   }
++   printf("RIVER WCNSS: probe mapped %#x at %#lx; write begins\n",
++       off, (unsigned long)page);
++   volatile uint32_t *d = (volatile uint32_t *)page;
++   for (unsigned i = 0; i < PROBE_PAGE / 4; i++) d[i] = image[off / 4 + i];
++   __asm__ volatile("dsb sy" ::: "memory");
++   printf("RIVER WCNSS: probe wrote through %#x\n", off + PROBE_PAGE);
++   ml_io_unmap(page, PROBE_PAGE);
++  }
++  printf("RIVER WCNSS: bounded page probe complete; radio remains in reset\n");
++  return;
++ }
+  /* Map reserved DDR as write combining after TrustZone sets up PAS memory. */
+  printf("RIVER WCNSS: mapping firmware carveout WC\n");
+  vm_offset_t carveout = ml_io_map_unmappable(WCNSS_PA, WCNSS_SIZE, VM_WIMG_WCOMB);
+-- 
+2.54.0 (Apple Git-156)
+
