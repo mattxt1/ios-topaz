@@ -1,17 +1,17 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 19:25:00 -0400
+Date: Sat, 24 Oct 2026 19:35:00 -0400
 Subject: [PATCH] RIVER: ring periodic doorbells, monitor GIC and WCNSS SMD/SMP2P
 
 ---
- bsd/dev/sweet_keys.c | 175 +++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 175 insertions(+)
+ bsd/dev/sweet_keys.c | 200 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 200 insertions(+)
 
 diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
-index a88eae8..8899aabb 100644
+index 64d5c62..cfdca30 100644
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -750,6 +750,181 @@ river_wcnss_probe(void)
+@@ -753,6 +753,206 @@ river_wcnss_probe(void)
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
