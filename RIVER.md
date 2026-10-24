@@ -2100,3 +2100,25 @@ failing CGBitmapContextCreate parameters and unslid callers. Also: AegirPoster
 SIGABRT loop (~30/boot), Siri TTS synth loops, extension check-in timeouts.
 Folder cleaned: images r1-r73 deleted (rebuildable), kernels r1-r73 moved to
 archive/kernels/; tools/river-mkimage.sh builds images.
+
+## Display fit investigation (2026-10-23; no phone changes)
+
+The current 1125x2436 iPhone X canvas is cropped to the 1080x2270 panel.
+`AppleCLCD::present` subtracts `fOffX=20` and `fOffY=83`, clips each layer,
+then `river_gpu_blit` copies equal-sized source and destination rectangles.
+The r77 live swap log starts with full-screen 1125x2436 single-layer surfaces,
+so that common path can be isolated for a scaling experiment. `riverzc=0`
+keeps `directPresent` disabled by default. A proportional fit is 1048x2270,
+centered at panel x=16, leaving 16-pixel side bars. `SweetHIDTouch::touch`
+currently maps `(x+20)/1125, (y+83)/2436`; fit would map and clamp
+`(x-16)/1048, y/2270` instead.
+
+Do not assume the existing A5xx 2D blit scales: local Mesa
+`fd5_blitter.c::can_do_blit` explicitly rejects unequal source and destination
+width or height with the comment “until we figure out a few more registers.”
+The Pixel 4 ios-flame fit runs on Adreno 640 (A6xx), whereas river has Adreno
+506 (A5xx). A safe next test is a boot-arg-gated 0207 experiment that gives
+`river_gpu_blit` separate source and destination rectangles, tests a known
+pattern on the full-screen path, and retains the working crop path as default.
+Only after scaling is visually confirmed should touch mapping and multi-layer
+composition be changed. No kernel build, boot, or root write was done here.
