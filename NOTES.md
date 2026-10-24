@@ -114,6 +114,22 @@ that path reports success. Both changed sources compiled locally with
 `tools/river-cc.py`; CI and phone test pending. It still does not allocate a
 noncached page, so even a successful metadata result is only one bring-up
 milestone, not Wi-Fi operation.
+CI run 40058923274 on pushed repo commit `b5d3cb4` passed. Built the
+RAM-only image `shim-river/out/river-r86-wcnssmeta-boot.img` (SHA-256
+`5f978fc6c7e9ae31a53f8ac60952f854522a2f66d1a4205dcb872bc3ed84102a`).
+Private 7324-byte staged metadata SHA-256 is
+`f01a1063d9c885ec379dc33d0704acc35e3297a845078ca01bbbf1079936f979`
+at physical 0x1a5e8000; boot arguments are the same 524 bytes as r85.
+Phone r86 RAM boot succeeded after user fastboot handoff. USB Ethernet and
+SSH stayed up. Private live log snapshot
+`../logs-private/r86-wcnssmeta-success-snapshot.txt` records GPU PAS success,
+the delayed WCNSS probe, and WCNSS PAS ID 6 `INIT_IMAGE` status 0/result 0
+on a contiguous metadata page at 0x1d270000. `netprobe` still reports no
+`IONetworkController`: this authenticated metadata only and did not start
+the radio. The r86 phone is currently running. No partition was flashed.
+Next: opt-in PAS_MEM_SETUP of the verified 0x8e700000 firmware carveout and
+copy of the staged segments, then implement Pronto power/regulator and SMD
+control prerequisites before auth/reset.
 
 ## River performance and app follow-up (2026-10-23)
 
