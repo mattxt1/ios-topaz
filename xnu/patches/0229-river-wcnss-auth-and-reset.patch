@@ -45,7 +45,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
   printf("RIVER WCNSS: PAS mem_setup about to call for %#x+%#x (image %#llx)\n",
       WCNSS_PA, WCNSS_SIZE, image_pa);
   ri_wait(12000);
-@@ -753,6 +775,561 @@
+@@ -753,6 +775,652 @@
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -143,6 +143,9 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +   bool version_req_sent = false, version_rsp_received = false;
 +   bool nv_download_sent = false, nv_download_acked = false;
 +   bool wlan_start_sent = false, wlan_start_acked = false;
++   bool wlan_nv_done = false;
++   unsigned wlan_frag = 0, wlan_fm_offset = 0;
++   bool wlan_frag_in_flight = false;
 +   for (unsigned w = 0; w < 80; w++) {
 +    delay(100000);
 +    if (ipc_reg2 && (w % 2 == 1)) {
@@ -401,7 +404,80 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +       if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
 +       printf("RIVER WCNSS: WLAN_CTRL transitioned tx to SMD_OPENED\n");
 +      }
-+      if (wlan_tx == 2 && wlan_rx == 2 && !wlan_start_sent && nv_download_acked) {
++      if (wlan_tx == 2 && wlan_rx == 2 && nv_download_acked && !wlan_nv_done && nv_bytes) {
++       for (unsigned spin = 0; spin < 50 && !wlan_nv_done; spin++) {
++        if (!wlan_frag_in_flight) {
++         uint32_t head = ri_rd(smem, wcnss_wlan_info + 16);
++         uint32_t table_len = (nv_len > 4) ? (uint32_t)(nv_len - 4) : 0;
++         if (wlan_fm_offset >= table_len) {
++          wlan_nv_done = true;
++          break;
++         }
++         uint32_t rem = table_len - wlan_fm_offset;
++         uint32_t chunk = (rem > 3072) ? 3072 : rem;
++         uint16_t last_frag = (chunk == rem) ? 1 : 0;
++         uint32_t msg_len = 16 + chunk;
++         ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 0) & 8191), msg_len);
++         ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 4) & 8191), 0);
++         ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 8) & 8191), 0);
++         ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 12) & 8191), 0);
++         ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 16) & 8191), 0);
++         ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 20) & 8191), 55u); /* WCN36XX_HAL_DOWNLOAD_NV_REQ */
++         ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 24) & 8191), msg_len);
++         ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 28) & 8191), ((uint32_t)last_frag << 16) | (wlan_frag & 0xffff));
++         ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 32) & 8191), chunk);
++         for (uint32_t b = 0; b < chunk; b += 4) {
++          uint32_t remain_bytes = chunk - b;
++          uint32_t wval = 0;
++          if (remain_bytes >= 4) {
++           wval = *(const uint32_t *)(nv_bytes + 4 + wlan_fm_offset + b);
++          } else {
++           for (unsigned k = 0; k < remain_bytes; k++) {
++            wval |= ((uint32_t)nv_bytes[4 + wlan_fm_offset + b + k]) << (k * 8);
++           }
++          }
++          ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 36 + b) & 8191), wval);
++         }
++         unsigned adv = 20 + ((msg_len + 3) & ~3);
++         head = (head + adv) & 8191;
++         ri_wr(smem, wcnss_wlan_info + 16, head);
++         ri_wr(smem, wcnss_wlan_info + 8, 1u | (1u << 16));
++         __asm__ volatile("dmb sy" ::: "memory");
++         if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
++         wlan_frag_in_flight = true;
++         printf("RIVER WCNSS: sent WLAN NV frag %u (chunk=%u, last=%u, head=%u)\n",
++             wlan_frag, chunk, last_frag, head);
++        }
++        uint32_t rx_fifo_off = wcnss_wlan_fifo + 8192;
++        uint32_t rx_h = ri_rd(smem, wcnss_wlan_info + 36);
++        uint32_t rx_t = ri_rd(smem, wcnss_wlan_info + 32);
++        if (rx_h != rx_t) {
++         uint32_t smd_len = ri_fifo_rd32(smem, rx_fifo_off + (rx_t & 8191));
++         uint32_t r_type_ver = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 20) & 8191));
++         uint16_t r_type = r_type_ver & 0xffff;
++         uint32_t r_status = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 28) & 8191));
++         if (r_type == 56) {
++          printf("RIVER WCNSS: received WLAN NV RSP for frag %u! status=%u\n", wlan_frag, r_status);
++          wlan_fm_offset += (wlan_frag == 10) ? 999 : 3072;
++          wlan_frag++;
++          wlan_frag_in_flight = false;
++          if (wlan_frag >= 11) {
++           wlan_nv_done = true;
++           printf("RIVER WCNSS: WLAN NV download COMPLETE (all 11 frags acked)!\n");
++          }
++         }
++         unsigned adv = 20 + ((smd_len + 3) & ~3);
++         rx_t = (rx_t + adv) & 8191;
++         ri_wr(smem, wcnss_wlan_info + 32, rx_t);
++         ri_wr(smem, wcnss_wlan_info + 28, (1u << 8) | (1u << 16));
++         __asm__ volatile("dmb sy" ::: "memory");
++         if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
++        } else {
++         delay(2000);
++        }
++       }
++      }
++      if (wlan_tx == 2 && wlan_rx == 2 && wlan_nv_done && !wlan_start_sent) {
 +       static const uint32_t wcn36xx_default_cfgs[] = {
 +        0x00040001, 0x00000000, 0x00000001,
 +        0x00040002, 0x00000000, 0x00000001,
@@ -465,7 +541,8 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +       for (uint32_t i = 0; i < n_cfgs; i++) {
 +        ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 36 + i * 4) & 8191), wcn36xx_default_cfgs[i]);
 +       }
-+       head = (head + 20 + msg_len) & 8191;
++       unsigned adv = 20 + ((msg_len + 3) & ~3);
++       head = (head + adv) & 8191;
 +       ri_wr(smem, wcnss_wlan_info + 16, head);
 +       ri_wr(smem, wcnss_wlan_info + 8, 1u | (1u << 16));
 +       __asm__ volatile("dmb sy" ::: "memory");
@@ -473,47 +550,61 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +       wlan_start_sent = true;
 +       printf("RIVER WCNSS: sent WCN36XX_HAL_START_REQ (%u cfgs, %u bytes, head=%u)!\n", n_cfgs / 3, msg_len, head);
 +      }
-+      if (wlan_start_sent && wcnss_wlan_fifo) {
++      if (wcnss_wlan_fifo) {
 +       uint32_t rx_fifo_off = wcnss_wlan_fifo + 8192;
 +       uint32_t rx_h = ri_rd(smem, wcnss_wlan_info + 36);
 +       uint32_t rx_t = ri_rd(smem, wcnss_wlan_info + 32);
-+       if (rx_h != rx_t) {
++       while (rx_h != rx_t) {
 +        uint32_t smd_len = ri_fifo_rd32(smem, rx_fifo_off + (rx_t & 8191));
 +        uint32_t r_type_ver = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 20) & 8191));
 +        uint16_t r_type = r_type_ver & 0xffff;
 +        uint16_t r_ver = (r_type_ver >> 16) & 0xffff;
 +        uint32_t r_len = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 24) & 8191));
 +        uint32_t r_st_sta = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 28) & 8191));
-+        uint16_t status = r_st_sta & 0xffff;
-+        uint8_t stations = (r_st_sta >> 16) & 0xff;
-+        uint8_t bssids = (r_st_sta >> 24) & 0xff;
-+        uint32_t r_ver_word = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 32) & 8191));
-+        uint8_t rev = r_ver_word & 0xff;
-+        uint8_t ver = (r_ver_word >> 8) & 0xff;
-+        uint8_t min = (r_ver_word >> 16) & 0xff;
-+        uint8_t maj = (r_ver_word >> 24) & 0xff;
-+        char crm[65];
-+        char wlan[65];
-+        for (int i = 0; i < 64; i++) {
-+         crm[i] = (char)(ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 36 + (i & ~3)) & 8191)) >> ((i & 3) * 8));
-+         wlan[i] = (char)(ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 100 + (i & ~3)) & 8191)) >> ((i & 3) * 8));
++        if (r_type == 56) {
++         printf("RIVER WCNSS: received WLAN NV RSP for frag %u! status=%u\n", wlan_frag, r_st_sta);
++         wlan_fm_offset += (wlan_frag == 10) ? 999 : 3072;
++         wlan_frag++;
++         wlan_frag_in_flight = false;
++         if (wlan_frag >= 11) {
++          wlan_nv_done = true;
++          printf("RIVER WCNSS: WLAN NV download COMPLETE (all 11 frags acked)!\n");
++         }
++        } else if (r_type == 1) {
++         uint16_t status = r_st_sta & 0xffff;
++         uint8_t stations = (r_st_sta >> 16) & 0xff;
++         uint8_t bssids = (r_st_sta >> 24) & 0xff;
++         uint32_t r_ver_word = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 32) & 8191));
++         uint8_t rev = r_ver_word & 0xff;
++         uint8_t ver = (r_ver_word >> 8) & 0xff;
++         uint8_t min = (r_ver_word >> 16) & 0xff;
++         uint8_t maj = (r_ver_word >> 24) & 0xff;
++         char crm[65];
++         char wlan[65];
++         for (int i = 0; i < 64; i++) {
++          crm[i] = (char)(ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 36 + (i & ~3)) & 8191)) >> ((i & 3) * 8));
++          wlan[i] = (char)(ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 100 + (i & ~3)) & 8191)) >> ((i & 3) * 8));
++         }
++         crm[64] = 0;
++         wlan[64] = 0;
++         printf("RIVER WCNSS: WLAN_CTRL RX: smd_len=%u type=%u ver=%u len=%u status=%u stations=%u bssids=%u API=%u.%u.%u.%u\n",
++             smd_len, r_type, r_ver, r_len, status, stations, bssids, maj, min, ver, rev);
++         printf("RIVER WCNSS: CRM build: %s\n", crm);
++         printf("RIVER WCNSS: WLAN version: %s\n", wlan);
++         if (status == 0) {
++          printf("RIVER WCNSS: WCN36XX HAL START SUCCESS!\n");
++          wlan_start_acked = true;
++         }
++        } else {
++         printf("RIVER WCNSS: WLAN_CTRL RX unknown packet: type=%u len=%u status=%u\n", r_type, r_len, r_st_sta);
 +        }
-+        crm[64] = 0;
-+        wlan[64] = 0;
-+        printf("RIVER WCNSS: WLAN_CTRL RX: smd_len=%u type=%u ver=%u len=%u status=%u stations=%u bssids=%u API=%u.%u.%u.%u\n",
-+            smd_len, r_type, r_ver, r_len, status, stations, bssids, maj, min, ver, rev);
-+        printf("RIVER WCNSS: CRM build: %s\n", crm);
-+        printf("RIVER WCNSS: WLAN version: %s\n", wlan);
-+        if (r_type == 1 && status == 0) {
-+         printf("RIVER WCNSS: WCN36XX HAL START SUCCESS!\n");
-+         wlan_start_acked = true;
-+        }
-+        unsigned total_adv = 20 + smd_len;
-+        rx_t = (rx_t + total_adv) & 8191;
++        unsigned adv = 20 + ((smd_len + 3) & ~3);
++        rx_t = (rx_t + adv) & 8191;
 +        ri_wr(smem, wcnss_wlan_info + 32, rx_t);
 +        ri_wr(smem, wcnss_wlan_info + 28, (1u << 8) | (1u << 16));
 +        __asm__ volatile("dmb sy" ::: "memory");
 +        if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
++        rx_h = ri_rd(smem, wcnss_wlan_info + 36);
 +       }
 +      }
 +     }
