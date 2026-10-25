@@ -45,7 +45,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
   printf("RIVER WCNSS: PAS mem_setup about to call for %#x+%#x (image %#llx)\n",
       WCNSS_PA, WCNSS_SIZE, image_pa);
   ri_wait(12000);
-@@ -753,6 +775,674 @@
+@@ -753,6 +775,740 @@
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -311,8 +311,9 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +      uint32_t rx_fifo_off = wcnss_ctrl_fifo + 8192;
 +      uint32_t rx_h = ri_rd(smem, wcnss_ctrl_info + 36);
 +      uint32_t rx_t = ri_rd(smem, wcnss_ctrl_info + 32);
-+      if (rx_h != rx_t) {
++      while (rx_h != rx_t) {
 +       uint32_t smd_len = ri_fifo_rd32(smem, rx_fifo_off + (rx_t & 8191));
++       if (smd_len == 0) break;
 +       uint32_t r_type = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 20) & 8191));
 +       uint32_t r_len = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 24) & 8191));
 +       uint32_t r_ver = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 28) & 8191));
@@ -328,13 +329,16 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +       } else if (r_type == 0x01000003) {
 +        printf("RIVER WCNSS: received WCNSS_NVBIN_DNLD_RSP! status=%#x\n", r_ver);
 +        nv_download_acked = true;
++       } else if (r_type == 0x0100000c) {
++        printf("RIVER WCNSS: received WCNSS_CBC_COMPLETE_IND!\n");
 +       }
-+       unsigned total_adv = 20 + ((smd_len + 3) & ~3);
++       unsigned total_adv = 20 + smd_len;
 +       rx_t = (rx_t + total_adv) & 8191;
 +       ri_wr(smem, wcnss_ctrl_info + 32, rx_t);
 +       ri_wr(smem, wcnss_ctrl_info + 28, (1u << 8) | (1u << 16)); /* fTAIL=1, fSTATE=1 */
 +       __asm__ volatile("dmb sy" ::: "memory");
 +       if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
++       rx_h = ri_rd(smem, wcnss_ctrl_info + 36);
 +      }
 +     }
 +     if (version_rsp_received && !nv_download_sent && nv_bytes && nv_len >= 16) {
@@ -489,79 +493,130 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +        ml_io_unmap(tlmm, 0x100000);
 +        delay(5000);
 +       }
-+       vm_offset_t wcn_mmio = ml_io_map_unmappable(0x0a200000, 0x8000, VM_WIMG_IO);
-+       if (wcn_mmio) {
-+        uint32_t old_dxe = ri_rd(wcn_mmio, 0x2000);
-+        ri_wr(wcn_mmio, 0x2000, 0x5c89); /* WCN36XX_DXE_REG_RESET */
-+        uint32_t new_dxe = ri_rd(wcn_mmio, 0x2000);
-+        uint32_t old_int = ri_rd(wcn_mmio, 0x50dc);
-+        ri_wr(wcn_mmio, 0x50dc, 0x000a0011); /* DXE INT SELECT PRONTO */
-+        printf("RIVER WCNSS: DXE CSR was %#x, after reset %#x; CCU int_select was %#x, now %#x\n",
-+            old_dxe, new_dxe, old_int, ri_rd(wcn_mmio, 0x50dc));
-+        ml_io_unmap(wcn_mmio, 0x8000);
++       unsigned ent85 = SMEM_TOC + 85 * SMEM_ENTRY;
++       if (ri_rd(smem, ent85)) {
++        uint32_t off85 = ri_rd(smem, ent85 + 4);
++        uint32_t sz85 = ri_rd(smem, ent85 + 8);
++        if (off85 < SMEM_SIZE && sz85 >= 4) {
++         uint32_t apps_smsm = ri_rd(smem, off85);
++         uint32_t new_apps = (apps_smsm | (1u << 9)) & ~(1u << 10);
++         ri_wr(smem, off85, new_apps);
++         __asm__ volatile("dmb sy" ::: "memory");
++         if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
++         printf("RIVER WCNSS: SMSM item 85 apps_state was %#x, now %#x (TX_RINGS_EMPTY set)\n",
++             apps_smsm, new_apps);
++        }
 +       }
-+       static const uint32_t wcn36xx_default_cfgs[] = {
-+        0x00040001, 0x00000000, 0x00000001,
-+        0x00040002, 0x00000000, 0x00000001,
-+        0x00040003, 0x00000000, 0x00000000,
-+        0x00040004, 0x00000000, 0x00000311,
-+        0x00040005, 0x00000000, 0x00000005,
-+        0x00040006, 0x00000000, 0x00000001,
-+        0x00040007, 0x00000000, 0x00000000,
-+        0x00040008, 0x00000000, 0x00000003,
-+        0x00040009, 0x00000000, 0x00001770,
-+        0x0004000a, 0x00000000, 0x00000040,
-+        0x0004000b, 0x00000000, 0x0000092b,
-+        0x0004000c, 0x00000000, 0x0000000f,
-+        0x0004000d, 0x00000000, 0x0000000f,
-+        0x0004000e, 0x00000000, 0x00001f40,
-+        0x0004000f, 0x00000000, 0x00000005,
-+        0x00040010, 0x00000000, 0x0000000a,
-+        0x00040011, 0x00000000, 0x0000000f,
-+        0x00040012, 0x00000000, 0x00000000,
-+        0x00040013, 0x00000000, 0x00000004,
-+        0x00040014, 0x00000000, 0x00000000,
-+        0x00040015, 0x00000000, 0x00000000,
-+        0x00040016, 0x00000000, 0x00000005,
-+        0x00040017, 0x00000000, 0x00000001,
-+        0x00040018, 0x00000000, 0x00000005,
-+        0x0004001a, 0x00000000, 0x00000005,
-+        0x0004001b, 0x00000000, 0x00000028,
-+        0x0004001c, 0x00000000, 0x000000c8,
-+        0x0004001d, 0x00000000, 0x00000001,
-+        0x0004001e, 0x00000000, 0x00000001,
-+        0x0004001f, 0x00000000, 0x00000014,
-+        0x00040020, 0x00000000, 0x0000000a,
-+        0x00040021, 0x00000000, 0x00007530,
-+        0x00040022, 0x00000000, 0x00000000,
-+        0x00040028, 0x00000000, 0x00000080,
-+        0x00040029, 0x00000000, 0x00000a00,
-+        0x00040039, 0x00000000, 0x00000000,
-+        0x00040040, 0x00000000, 0x00000001,
-+        0x0004004b, 0x00000000, 0x00000001,
-+        0x00040063, 0x00000000, 0x00000000,
-+        0x00040057, 0x00000000, 0x0001d4c0,
-+        0x0004005b, 0x00000000, 0x00007530,
-+        0x00040062, 0x00000000, 0x0000000a,
-+        0x00040064, 0x00000000, 0x00000000,
-+        0x000400d2, 0x00000000, 0x00000085,
-+        0x000400d7, 0x00000000, 0x000003e8,
++       static const uint32_t wcn3680_default_cfgs[] = {
++        0x00040001, 0x00000000, 0x00000001, /* CURRENT_TX_ANTENNA = 1 */
++        0x00040002, 0x00000000, 0x00000001, /* CURRENT_RX_ANTENNA = 1 */
++        0x00040003, 0x00000000, 0x00000000, /* LOW_GAIN_OVERRIDE = 0 */
++        0x00040004, 0x00000000, 0x00000311, /* POWER_STATE_PER_CHAIN = 785 */
++        0x00040005, 0x00000000, 0x00000005, /* CAL_PERIOD = 5 */
++        0x00040006, 0x00000000, 0x00000001, /* CAL_CONTROL = 1 */
++        0x00040007, 0x00000000, 0x00000000, /* PROXIMITY = 0 */
++        0x00040008, 0x00000000, 0x00000003, /* NETWORK_DENSITY = 3 */
++        0x00040009, 0x00000000, 0x00001000, /* MAX_MEDIUM_TIME = 4096 */
++        0x0004000a, 0x00000000, 0x00000040, /* MAX_MPDUS_IN_AMPDU = 64 */
++        0x0004000b, 0x00000000, 0x0000092b, /* RTS_THRESHOLD = 2347 */
++        0x0004000c, 0x00000000, 0x0000000f, /* SHORT_RETRY_LIMIT = 15 */
++        0x0004000d, 0x00000000, 0x0000000f, /* LONG_RETRY_LIMIT = 15 */
++        0x0004000e, 0x00000000, 0x00001f40, /* FRAGMENTATION_THRESHOLD = 8000 */
++        0x0004000f, 0x00000000, 0x00000005, /* DYNAMIC_THRESHOLD_ZERO = 5 */
++        0x00040010, 0x00000000, 0x0000000a, /* DYNAMIC_THRESHOLD_ONE = 10 */
++        0x00040011, 0x00000000, 0x0000000f, /* DYNAMIC_THRESHOLD_TWO = 15 */
++        0x00040012, 0x00000000, 0x00000000, /* FIXED_RATE = 0 */
++        0x00040013, 0x00000000, 0x00000004, /* RETRYRATE_POLICY = 4 */
++        0x00040014, 0x00000000, 0x00000000, /* RETRYRATE_SECONDARY = 0 */
++        0x00040015, 0x00000000, 0x00000000, /* RETRYRATE_TERTIARY = 0 */
++        0x00040016, 0x00000000, 0x00000005, /* FORCE_POLICY_PROTECTION = 5 */
++        0x00040017, 0x00000000, 0x00000001, /* FIXED_RATE_MULTICAST_24GHZ = 1 */
++        0x00040018, 0x00000000, 0x00000005, /* FIXED_RATE_MULTICAST_5GHZ = 5 */
++        0x00040019, 0x00000000, 0x00000001, /* DEFAULT_RATE_INDEX_24GHZ = 1 */
++        0x0004001a, 0x00000000, 0x00000005, /* DEFAULT_RATE_INDEX_5GHZ = 5 */
++        0x0004001b, 0x00000000, 0x00000028, /* MAX_BA_SESSIONS = 40 */
++        0x0004001c, 0x00000000, 0x000000c8, /* PS_DATA_INACTIVITY_TIMEOUT = 200 */
++        0x0004001d, 0x00000000, 0x00000001, /* PS_ENABLE_BCN_FILTER = 1 */
++        0x0004001e, 0x00000000, 0x00000001, /* PS_ENABLE_RSSI_MONITOR = 1 */
++        0x0004001f, 0x00000000, 0x00000014, /* NUM_BEACON_PER_RSSI_AVERAGE = 20 */
++        0x00040020, 0x00000000, 0x0000000a, /* STATS_PERIOD = 10 */
++        0x00040021, 0x00000000, 0x00007530, /* CFP_MAX_DURATION = 30000 */
++        0x00040022, 0x00000000, 0x00000000, /* FRAME_TRANS_ENABLED = 0 */
++        0x00040028, 0x00000000, 0x00000080, /* BA_THRESHOLD_HIGH = 128 */
++        0x00040029, 0x00000000, 0x00000a00, /* MAX_BA_BUFFERS = 2560 */
++        0x00040039, 0x00000000, 0x00000000, /* DYNAMIC_PS_POLL_VALUE = 0 */
++        0x00040040, 0x00000000, 0x00000001, /* TX_PWR_CTRL_ENABLE = 1 */
++        0x0004004b, 0x00000000, 0x00000001, /* ENABLE_CLOSE_LOOP = 1 */
++        0x00040063, 0x00000000, 0x00000000, /* ENABLE_LPWR_IMG_TRANSITION = 0 */
++        0x00040057, 0x00000000, 0x0001d4c0, /* BTC_STATIC_LEN_LE_BT = 120000 */
++        0x0004005b, 0x00000000, 0x00007530, /* BTC_STATIC_LEN_LE_WLAN = 30000 */
++        0x00040062, 0x00000000, 0x0000000a, /* MAX_ASSOC_LIMIT = 10 */
++        0x00040064, 0x00000000, 0x00000000, /* ENABLE_MCC_ADAPTIVE_SCHEDULER = 0 */
++        0x0004006d, 0x00000000, 0x00000000, /* TDLS_PUAPSD_MASK = 0 */
++        0x0004006c, 0x00000000, 0x00000001, /* TDLS_PUAPSD_BUFFER_STA_CAPABLE = 1 */
++        0x0004006e, 0x00000000, 0x00000000, /* TDLS_PUAPSD_INACTIVITY_TIME = 0 */
++        0x0004006f, 0x00000000, 0x0000000a, /* TDLS_PUAPSD_RX_FRAME_THRESHOLD = 10 */
++        0x00040074, 0x00000000, 0x00000001, /* TDLS_OFF_CHANNEL_CAPABLE = 1 */
++        0x00040073, 0x00000000, 0x00000001, /* ENABLE_ADAPTIVE_RX_DRAIN = 1 */
++        0x00040072, 0x00000000, 0x00000000, /* FLEXCONNECT_POWER_FACTOR = 0 */
++        0x00040070, 0x00000000, 0x00000003, /* ANTENNA_DIVERSITY = 3 */
++        0x00040071, 0x00000000, 0x00000000, /* ATH_DISABLE = 0 */
++        0x000400a6, 0x00000000, 0x0000ea60, /* BTC_STATIC_OPP_WLAN_ACTIVE_WLAN_LEN = 60000 */
++        0x000400a7, 0x00000000, 0x00015f90, /* BTC_STATIC_OPP_WLAN_ACTIVE_BT_LEN = 90000 */
++        0x000400a8, 0x00000000, 0x00007530, /* BTC_SAP_STATIC_OPP_ACTIVE_WLAN_LEN = 30000 */
++        0x000400a9, 0x00000000, 0x00007530, /* BTC_SAP_STATIC_OPP_ACTIVE_BT_LEN = 30000 */
++        0x000400ab, 0x00000000, 0x00000032, /* ASD_PROBE_INTERVAL = 50 */
++        0x000400ac, 0x00000000, 0xffffffc4, /* ASD_TRIGGER_THRESHOLD = -60 */
++        0x000400ad, 0x00000000, 0x00000003, /* ASD_RTT_RSSI_HYST_THRESHOLD = 3 */
++        0x000400ae, 0x00000000, 0x00000000, /* BTC_CTS2S_ON_STA_DURING_SCO = 0 */
++        0x000400c2, 0x00000000, 0x00000000, /* RA_FILTER_ENABLE = 0 */
++        0x000400c3, 0x00000000, 0x0000003c, /* RA_RATE_LIMIT_INTERVAL = 60 */
++        0x000400c4, 0x00000000, 0x00000002, /* BTC_FATAL_HID_NSNIFF_BLK = 2 */
++        0x000400c5, 0x00000000, 0x00000001, /* BTC_CRITICAL_HID_NSNIFF_BLK = 1 */
++        0x000400c6, 0x00000000, 0x00000000, /* BTC_DYN_A2DP_TX_QUEUE_THOLD = 0 */
++        0x000400c7, 0x00000000, 0x00000001, /* BTC_DYN_OPP_TX_QUEUE_THOLD = 1 */
++        0x000400c9, 0x00000000, 0x0000000a, /* MAX_UAPSD_CONSEC_SP = 10 */
++        0x000400ca, 0x00000000, 0x00000032, /* MAX_UAPSD_CONSEC_RX_CNT = 50 */
++        0x000400cb, 0x00000000, 0x00000032, /* MAX_UAPSD_CONSEC_TX_CNT = 50 */
++        0x000400cd, 0x00000000, 0x000001f4, /* MAX_UAPSD_CONSEC_TX_CNT_MEAS_WINDOW = 500 */
++        0x000400cc, 0x00000000, 0x000001f4, /* MAX_UAPSD_CONSEC_RX_CNT_MEAS_WINDOW = 500 */
++        0x000400ce, 0x00000000, 0x00000000, /* MAX_PSPOLL_IN_WMM_UAPSD_PS_MODE = 0 */
++        0x000400cf, 0x00000000, 0x0000000a, /* MAX_UAPSD_INACTIVITY_INTERVALS = 10 */
++        0x000400d0, 0x00000000, 0x00000001, /* ENABLE_DYNAMIC_WMMPS = 1 */
++        0x000400d1, 0x00000000, 0x00000000, /* BURST_MODE_BE_TXOP_VALUE = 0 */
++        0x000400d2, 0x00000000, 0x00000088, /* ENABLE_DYNAMIC_RA_START_RATE = 136 */
++        0x000400d3, 0x00000000, 0x00000001, /* BTC_FAST_WLAN_CONN_PREF = 1 */
++        0x000400d4, 0x00000000, 0x00000000, /* ENABLE_RTSCTS_HTVHT = 0 */
++        0x000400d5, 0x00000000, 0x00007530, /* BTC_STATIC_OPP_WLAN_IDLE_WLAN_LEN = 30000 */
++        0x000400d6, 0x00000000, 0x0001d4c0, /* BTC_STATIC_OPP_WLAN_IDLE_BT_LEN = 120000 */
++        0x000400d7, 0x00000000, 0x000003e8, /* LINK_FAIL_TX_CNT = 1000 */
++        0x000400d8, 0x00000000, 0x00000000, /* TOGGLE_ARP_BDRATES = 0 */
++        0x000400d9, 0x00000000, 0x00000000, /* OPTIMIZE_CA_EVENT = 0 */
++        0x000400da, 0x00000000, 0x00000000, /* EXT_SCAN_CONC_MODE = 0 */
++        0x000400db, 0x00000000, 0x00000000, /* BAR_WAKEUP_HOST_DISABLE = 0 */
++        0x000400dc, 0x00000000, 0x00000000, /* SAR_BOFFSET_CORRECTION_ENABLE = 0 */
++        0x000400df, 0x00000000, 0x00000005, /* BTC_DISABLE_WLAN_LINK_CRITICAL = 5 */
++        0x000400e0, 0x00000000, 0x00000002, /* DISABLE_SCAN_DURING_SCO = 2 */
++        0x000400de, 0x00000000, 0x00000000, /* CONS_BCNMISS_COUNT = 0 */
++        0x000400dd, 0x00000000, 0x00000000, /* UNITS_OF_BCN_WAIT_TIME = 0 */
++        0x000400e1, 0x00000000, 0x00000000, /* TRIGGER_NULLFRAME_BEFORE_HB = 0 */
++        0x000400e2, 0x00000000, 0x00000000, /* ENABLE_POWERSAVE_OFFLOAD = 0 */
 +       };
 +       uint32_t head = ri_rd(smem, wcnss_wlan_info + 16);
-+       uint32_t n_cfgs = sizeof(wcn36xx_default_cfgs) / sizeof(wcn36xx_default_cfgs[0]);
++       uint32_t n_cfgs = sizeof(wcn3680_default_cfgs) / sizeof(wcn3680_default_cfgs[0]);
 +       uint32_t cfg_bytes = n_cfgs * 4;
-+       uint32_t msg_len = 16 + cfg_bytes; /* 556 bytes */
++       uint32_t msg_len = 16 + cfg_bytes; /* 1132 bytes */
 +       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 0) & 8191), msg_len);
 +       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 4) & 8191), 0);
 +       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 8) & 8191), 0);
 +       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 12) & 8191), 0);
 +       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 16) & 8191), 0);
 +       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 20) & 8191), 0); /* WCN36XX_HAL_START_REQ (type=0, ver=0) */
-+       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 24) & 8191), msg_len); /* header.len = 556 */
++       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 24) & 8191), msg_len); /* header.len = 1132 */
 +       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 28) & 8191), 0); /* params.type = DRIVER_TYPE_PRODUCTION */
-+       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 32) & 8191), cfg_bytes); /* params.len = 540 */
++       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 32) & 8191), cfg_bytes); /* params.len = 1116 */
 +       for (uint32_t i = 0; i < n_cfgs; i++) {
-+        ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 36 + i * 4) & 8191), wcn36xx_default_cfgs[i]);
++        ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 36 + i * 4) & 8191), wcn3680_default_cfgs[i]);
 +       }
 +       unsigned adv = 20 + ((msg_len + 3) & ~3);
 +       head = (head + adv) & 8191;
@@ -570,7 +625,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +       __asm__ volatile("dmb sy" ::: "memory");
 +       if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
 +       wlan_start_sent = true;
-+       printf("RIVER WCNSS: sent WCN36XX_HAL_START_REQ (%u cfgs, %u bytes, head=%u)!\n", n_cfgs / 3, msg_len, head);
++       printf("RIVER WCNSS: sent WCN3680 HAL_START_REQ (%u cfgs, %u bytes, head=%u)!\n", n_cfgs / 3, msg_len, head);
 +      }
 +      if (wcnss_wlan_fifo) {
 +       uint32_t rx_fifo_off = wcnss_wlan_fifo + 8192;
@@ -616,6 +671,17 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +         if (status == 0) {
 +          printf("RIVER WCNSS: WCN36XX HAL START SUCCESS!\n");
 +          wlan_start_acked = true;
++          vm_offset_t wcn_mmio = ml_io_map_unmappable(0x0a200000, 0x8000, VM_WIMG_IO);
++          if (wcn_mmio) {
++           uint32_t old_dxe = ri_rd(wcn_mmio, 0x2000);
++           ri_wr(wcn_mmio, 0x2000, 0x5c89); /* WCN36XX_DXE_REG_RESET */
++           uint32_t new_dxe = ri_rd(wcn_mmio, 0x2000);
++           uint32_t old_int = ri_rd(wcn_mmio, 0x50dc);
++           ri_wr(wcn_mmio, 0x50dc, 0x000a0011); /* DXE INT SELECT PRONTO */
++           printf("RIVER WCNSS: DXE CSR was %#x, after reset %#x; CCU int_select was %#x, now %#x\n",
++               old_dxe, new_dxe, old_int, ri_rd(wcn_mmio, 0x50dc));
++           ml_io_unmap(wcn_mmio, 0x8000);
++          }
 +         }
 +        } else {
 +         printf("RIVER WCNSS: WLAN_CTRL RX unknown packet: type=%u len=%u status=%u\n", r_type, r_len, r_st_sta);
