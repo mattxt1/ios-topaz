@@ -1,5 +1,24 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River r143 encrypted DHCP and ifnet observed; USB access stalled (2026-10-25)
+
+r143 kernel0f68cf9 / Actions40240439732 passed CI and verified private RAM
+packaging. Temporary fastboot boot succeeded. Live USB capture shows WPA
+success, a protected DHCP OFFER matching the probe on attempt1, and wl0
+creation with IPv4-plumb0. Peer signature returned0 in this run. Queue0
+change plus retries therefore restored the bounded probe result, but this
+single test does not isolate causality between changes. No partition flash.
+
+USB logs then stopped shortly after persistent polling began, and USB ping/
+SSH timed out despite the host link remaining UP. The temporary helper upload
+failed at connection, so no userland lease or TCP test occurred. No full
+console-ring readback obtained for r143; evidence is live USB capture only.
+Phone/UI state question pending. Do not claim usable IP connectivity or a
+proven freeze/cause. Next distinguish USB link loss from a phone stall; if
+frozen, recover and read the persisted console ring before another XNU boot.
+Detailed private evidence remains in the current chat work/outputs handoff.
+No reconnect/rekey/renewal/native Wi-Fi UI support yet.
+
 ## River r142 hardware result; r143 data TX correction (2026-10-25)
 
 r142 daea611 / Actions40239587003 passed CI and temporary RAM boot.
