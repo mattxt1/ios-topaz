@@ -21,7 +21,14 @@ like existing River GPU DMA. Each RX descriptor owns a 4 KiB buffer;
 TX descriptors remain invalid. RX channels 1/3 are enabled; channel IRQs
 stay masked until a reclaim/IRQ implementation exists. It prints register
 readback and a 100ms error snapshot. No TX frames, RX reclaim, scan, BSS,
-association or iOS Wi-Fi interface exists yet. CI and RAM test pending.
+association or iOS Wi-Fi interface exists yet. Actions 40231286067 passed; verified local RAM image is ready at current
+chat outputs/river-r136-wcnss-boot.img, SHA256
+473bc9cbdc50c695388a2ad9e4d205d570432d2245cd44151cd9fde47c9d74b5.
+Kernel manifest matched; payload roundtrip and all four firmware blobs
+matched; cmdline remains 504 bytes. Hardware test is pending return to
+fastboot (requested from user); r135 was last observed running. Do not
+claim DXE hardware initialization until the new image is booted and readbacks
+are captured. r135 full ring capture was saved and decoded successfully.
 
 ## River r134 result and r135 RF prerequisites (2026-10-25)
 
