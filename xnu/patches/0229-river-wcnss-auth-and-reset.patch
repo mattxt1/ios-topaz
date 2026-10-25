@@ -45,7 +45,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
   printf("RIVER WCNSS: PAS mem_setup about to call for %#x+%#x (image %#llx)\n",
       WCNSS_PA, WCNSS_SIZE, image_pa);
   ri_wait(12000);
-@@ -753,6 +775,678 @@
+@@ -753,6 +775,674 @@
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -489,20 +489,16 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +        ml_io_unmap(tlmm, 0x100000);
 +        delay(5000);
 +       }
-+       vm_offset_t dxe_reg = ml_io_map_unmappable(0x0a202000, 0x1000, VM_WIMG_IO);
-+       vm_offset_t ccu_reg = ml_io_map_unmappable(0x0a204000, 0x2000, VM_WIMG_IO);
-+       if (dxe_reg) {
-+        uint32_t old_dxe = ri_rd(dxe_reg, 0);
-+        ri_wr(dxe_reg, 0, 0x5c89); /* WCN36XX_DXE_REG_RESET */
-+        uint32_t new_dxe = ri_rd(dxe_reg, 0);
-+        printf("RIVER WCNSS: DXE CSR 0x0a202000 was %#x, after reset %#x\n", old_dxe, new_dxe);
-+        ml_io_unmap(dxe_reg, 0x1000);
-+       }
-+       if (ccu_reg) {
-+        uint32_t old_int = ri_rd(ccu_reg, 0x10dc);
-+        ri_wr(ccu_reg, 0x10dc, 0x000a0011); /* DXE INT SELECT PRONTO */
-+        printf("RIVER WCNSS: CCU DXE INT SELECT 0x0a2050dc was %#x, now %#x\n", old_int, ri_rd(ccu_reg, 0x10dc));
-+        ml_io_unmap(ccu_reg, 0x2000);
++       vm_offset_t wcn_mmio = ml_io_map_unmappable(0x0a200000, 0x8000, VM_WIMG_IO);
++       if (wcn_mmio) {
++        uint32_t old_dxe = ri_rd(wcn_mmio, 0x2000);
++        ri_wr(wcn_mmio, 0x2000, 0x5c89); /* WCN36XX_DXE_REG_RESET */
++        uint32_t new_dxe = ri_rd(wcn_mmio, 0x2000);
++        uint32_t old_int = ri_rd(wcn_mmio, 0x50dc);
++        ri_wr(wcn_mmio, 0x50dc, 0x000a0011); /* DXE INT SELECT PRONTO */
++        printf("RIVER WCNSS: DXE CSR was %#x, after reset %#x; CCU int_select was %#x, now %#x\n",
++            old_dxe, new_dxe, old_int, ri_rd(wcn_mmio, 0x50dc));
++        ml_io_unmap(wcn_mmio, 0x8000);
 +       }
 +       static const uint32_t wcn36xx_default_cfgs[] = {
 +        0x00040001, 0x00000000, 0x00000001,
