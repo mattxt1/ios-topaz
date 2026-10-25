@@ -4,8 +4,8 @@ Date: Sun, 25 Oct 2026 00:05:00 -0400
 Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 
 ---
- bsd/dev/sweet_keys.c | 510 +++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 510 insertions(+)
+ bsd/dev/sweet_keys.c | 616 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 616 insertions(+)
 
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
@@ -45,7 +45,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
   printf("RIVER WCNSS: PAS mem_setup about to call for %#x+%#x (image %#llx)\n",
       WCNSS_PA, WCNSS_SIZE, image_pa);
   ri_wait(12000);
-@@ -753,6 +775,652 @@
+@@ -753,6 +775,600 @@
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
