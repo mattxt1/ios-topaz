@@ -371,7 +371,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +        }
 +        ri_fifo_wr32(smem, wcnss_ctrl_fifo + ((head + 36 + b) & 8191), wval);
 +       }
-+       unsigned adv = 20 + smd_len;
++       unsigned adv = 20 + ((smd_len + 3) & ~3);
 +       head = (head + adv) & 8191;
 +       ri_wr(smem, wcnss_ctrl_info + 16, head);
 +       ri_wr(smem, wcnss_ctrl_info + 8, 1u | (1u << 16)); /* fHEAD=1, fSTATE=1 */
@@ -438,7 +438,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +          }
 +          ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 36 + b) & 8191), wval);
 +         }
-+         unsigned adv = 20 + msg_len;
++         unsigned adv = 20 + ((msg_len + 3) & ~3);
 +         head = (head + adv) & 8191;
 +         ri_wr(smem, wcnss_wlan_info + 16, head);
 +         ri_wr(smem, wcnss_wlan_info + 8, 1u | (1u << 16));
@@ -466,7 +466,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +           printf("RIVER WCNSS: WLAN NV download COMPLETE (all 11 frags acked)!\n");
 +          }
 +         }
-+         unsigned adv = 20 + smd_len;
++         unsigned adv = 20 + ((smd_len + 3) & ~3);
 +         rx_t = (rx_t + adv) & 8191;
 +         ri_wr(smem, wcnss_wlan_info + 32, rx_t);
 +         ri_wr(smem, wcnss_wlan_info + 28, (1u << 8) | (1u << 16));
@@ -553,7 +553,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +       for (uint32_t i = 0; i < n_cfgs; i++) {
 +        ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 36 + i * 4) & 8191), wcn36xx_default_cfgs[i]);
 +       }
-+       unsigned adv = 20 + msg_len;
++       unsigned adv = 20 + ((msg_len + 3) & ~3);
 +       head = (head + adv) & 8191;
 +       ri_wr(smem, wcnss_wlan_info + 16, head);
 +       ri_wr(smem, wcnss_wlan_info + 8, 1u | (1u << 16));
@@ -610,7 +610,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +        } else {
 +         printf("RIVER WCNSS: WLAN_CTRL RX unknown packet: type=%u len=%u status=%u\n", r_type, r_len, r_st_sta);
 +        }
-+        unsigned adv = 20 + smd_len;
++        unsigned adv = 20 + ((smd_len + 3) & ~3);
 +        rx_t = (rx_t + adv) & 8191;
 +        ri_wr(smem, wcnss_wlan_info + 32, rx_t);
 +        ri_wr(smem, wcnss_wlan_info + 28, (1u << 8) | (1u << 16));
