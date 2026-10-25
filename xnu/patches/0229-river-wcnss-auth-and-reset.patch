@@ -1,11 +1,11 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 23:20:00 -0400
-Subject: [PATCH] RIVER: WCNSS_CTRL channel handshake, version req, NV download, and WLAN_CTRL
+Date: Sat, 24 Oct 2026 23:45:00 -0400
+Subject: [PATCH] RIVER: WCNSS_CTRL NV download and WLAN_CTRL WCN36XX_HAL_START_REQ
 
 ---
- bsd/dev/sweet_keys.c | 450 +++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 450 insertions(+)
+ bsd/dev/sweet_keys.c | 490 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 490 insertions(+)
 
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
@@ -24,7 +24,7 @@ Subject: [PATCH] RIVER: WCNSS_CTRL channel handshake, version req, NV download, 
   printf("RIVER WCNSS: PAS mem_setup about to call for %#x+%#x (image %#llx)\n",
       WCNSS_PA, WCNSS_SIZE, image_pa);
   ri_wait(12000);
-@@ -753,6 +761,445 @@
+@@ -753,6 +761,491 @@
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -121,7 +121,8 @@ Subject: [PATCH] RIVER: WCNSS_CTRL channel handshake, version req, NV download, 
 +   uint32_t wcnss_wlan_info = 0, wcnss_wlan_fifo = 0;
 +   bool version_req_sent = false, version_rsp_received = false;
 +   bool nv_download_sent = false, nv_download_acked = false;
-+   for (unsigned w = 0; w < 60; w++) {
++   bool wlan_start_sent = false, wlan_start_acked = false;
++   for (unsigned w = 0; w < 80; w++) {
 +    delay(100000);
 +    if (ipc_reg2 && (w % 2 == 1)) {
 +     ri_wr(ipc_reg2, 0, (1u << 19) | (1u << 18) | (1u << 17));
@@ -304,7 +305,7 @@ Subject: [PATCH] RIVER: WCNSS_CTRL channel handshake, version req, NV download, 
 +        printf("RIVER WCNSS: received WCNSS_NVBIN_DNLD_RSP! status=%#x\n", r_ver);
 +        nv_download_acked = true;
 +       }
-+       unsigned total_adv = 20 + ((smd_len + 3) & ~3);
++       unsigned total_adv = 20 + smd_len;
 +       rx_t = (rx_t + total_adv) & 8191;
 +       ri_wr(smem, wcnss_ctrl_info + 32, rx_t);
 +       ri_wr(smem, wcnss_ctrl_info + 28, (1u << 8) | (1u << 16)); /* fTAIL=1, fSTATE=1 */
@@ -378,6 +379,51 @@ Subject: [PATCH] RIVER: WCNSS_CTRL channel handshake, version req, NV download, 
 +       __asm__ volatile("dmb sy" ::: "memory");
 +       if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
 +       printf("RIVER WCNSS: WLAN_CTRL transitioned tx to SMD_OPENED\n");
++      }
++      if (wlan_tx == 2 && wlan_rx == 2 && !wlan_start_sent && nv_download_acked) {
++       uint32_t head = ri_rd(smem, wcnss_wlan_info + 16);
++       ri_wr(smem, wcnss_wlan_fifo + ((head + 0) & 8191), 20);
++       ri_wr(smem, wcnss_wlan_fifo + ((head + 4) & 8191), 0);
++       ri_wr(smem, wcnss_wlan_fifo + ((head + 8) & 8191), 0);
++       ri_wr(smem, wcnss_wlan_fifo + ((head + 12) & 8191), 0);
++       ri_wr(smem, wcnss_wlan_fifo + ((head + 16) & 8191), 0);
++       ri_wr(smem, wcnss_wlan_fifo + ((head + 20) & 8191), 0); /* WCN36XX_HAL_START_REQ */
++       ri_wr(smem, wcnss_wlan_fifo + ((head + 24) & 8191), 20); /* header.len */
++       ri_wr(smem, wcnss_wlan_fifo + ((head + 28) & 8191), 1);  /* trans_id */
++       ri_wr(smem, wcnss_wlan_fifo + ((head + 32) & 8191), 0);  /* DRIVER_TYPE_PRODUCTION */
++       ri_wr(smem, wcnss_wlan_fifo + ((head + 36) & 8191), 0);  /* params.len = 0 */
++       head = (head + 40) & 8191;
++       ri_wr(smem, wcnss_wlan_info + 16, head);
++       ri_wr(smem, wcnss_wlan_info + 8, 1u | (1u << 16));
++       __asm__ volatile("dmb sy" ::: "memory");
++       if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
++       wlan_start_sent = true;
++       printf("RIVER WCNSS: sent WCN36XX_HAL_START_REQ on WLAN_CTRL (head=%u)!\n", head);
++      }
++      if (wlan_start_sent && wcnss_wlan_fifo) {
++       uint32_t rx_fifo_off = wcnss_wlan_fifo + 8192;
++       uint32_t rx_h = ri_rd(smem, wcnss_wlan_info + 36);
++       uint32_t rx_t = ri_rd(smem, wcnss_wlan_info + 32);
++       if (rx_h != rx_t) {
++        uint32_t smd_len = ri_rd(smem, rx_fifo_off + (rx_t & 8191));
++        uint32_t r_type_ver = ri_rd(smem, rx_fifo_off + ((rx_t + 20) & 8191));
++        uint16_t r_type = r_type_ver & 0xffff;
++        uint16_t r_ver = (r_type_ver >> 16) & 0xffff;
++        uint32_t r_len = ri_rd(smem, rx_fifo_off + ((rx_t + 24) & 8191));
++        uint32_t r_status = ri_rd(smem, rx_fifo_off + ((rx_t + 28) & 8191));
++        printf("RIVER WCNSS: WLAN_CTRL RX packet: smd_len=%u type=%u ver=%u len=%u status=%u (rx_h=%u rx_t=%u)\n",
++            smd_len, r_type, r_ver, r_len, r_status, rx_h, rx_t);
++        if (r_type == 1) {
++         printf("RIVER WCNSS: WCN36XX HAL START RSP SUCCESS! status=%u\n", r_status);
++         wlan_start_acked = true;
++        }
++        unsigned total_adv = 20 + smd_len;
++        rx_t = (rx_t + total_adv) & 8191;
++        ri_wr(smem, wcnss_wlan_info + 32, rx_t);
++        ri_wr(smem, wcnss_wlan_info + 28, (1u << 8) | (1u << 16));
++        __asm__ volatile("dmb sy" ::: "memory");
++        if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
++       }
 +      }
 +     }
 +    }
