@@ -1,5 +1,31 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River association milestone and generic WPA2 gate (2026-10-25)
+
+r139 kernel09ecfb5 / Actions40236523414 passed RAM-only hardware testing:
+selected-target authentication, association, firmware BSS/STA setup and
+EAPOL receipt were independently confirmed by the console ring. Network
+identity, key material and detailed device results stay in the local chat's
+outputs/work files. Phone remains on r139; no partition was flashed.
+
+Patch0236/r140 adds a narrow initial WPA2-PSK/CCMP gate using existing
+portable kernel crypto. It validates EAPOL framing, replay, MIC, wrapped
+GTK and AP RSN; attempts key installation once and avoids reinstallation
+on M3 retransmission. TX_LOW EAPOL buffers retain permanent DMA lifetime.
+No interface, IP traffic, reconnect or rekey support is added at this stage.
+The generic source contains no target SSID/BSSID, PMK or passphrase. Private
+key staging is performed only during local RAM-image packaging and is not
+uploaded to CI or committed. Credential-bearing image stays local in work/.
+
+Final local arm64 object compile passed. ASan/UBSan host fixtures passed
+HMAC and AES-wrap vectors, independent PTK derivation, handshake success,
+MIC/session rejection, duplicate-message no-reinstall behavior, TX_LOW
+framing/ring wrap/timeout retention. Host fixtures use OpenSSL wrappers;
+kernel crypto uses the established portable providers. CI/device WPA tests
+remain pending. Current chat work/sweet_keys.r140.c holds the staged source;
+previous ci-r133 staging matches it. Read current local handoff for raw
+results and private packaging details. Never flash partitions.
+
 ## River r138 OTA probe exchange verified; r139 association gate (2026-10-25)
 
 r138 e89351e / Actions40234832019 passed CI and RAM-only hardware testing.

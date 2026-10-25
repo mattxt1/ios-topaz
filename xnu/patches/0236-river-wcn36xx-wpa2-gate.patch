@@ -1,0 +1,404 @@
+From: mattxt1 <matttysonx1@gmail.com>
+Subject: [PATCH] RIVER: bounded initial WPA2 PSK CCMP handshake gate
+
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -4,6 +4,9 @@
+  */
+ #if defined(RIVER)
+ #include <sys/param.h>
++#include <sys/random.h>
++#include <libkern/crypto/sha1.h>
++#include <libkern/crypto/aes.h>
+ #include <sys/systm.h>
+ #include <kern/clock.h>
+ #include <kern/thread.h>
+@@ -429,7 +432,8 @@
+ /* The opt-in target is a hex SSID boot argument, never a compiled-in SSID
+  * or credential. Selection requires an exact beacon/probe-response match. */
+ static struct {
+- uint8_t ssid[32], bssid[6], rates[12], rsn[22];
++ uint8_t ssid[32], bssid[6], rates[12], rsn[22], ap_rsn[257];
++ unsigned ap_rsn_len;
+  unsigned ssid_len, nrates, rsn_len, channel, beacon, caps, dtim;
+  bool enabled, found, security_ok, rates_ok;
+ } river_target;
+@@ -537,7 +541,11 @@
+   }
+   if (id == 3 && n == 1) river_target.channel = f[off];
+   if (id == 5 && n >= 2 && f[off+1]) river_target.dtim = f[off+1];
+-  if (id == 48) river_target.security_ok = river_rsn_select(f + off, n);
++  if (id == 48) {
++   river_target.security_ok = river_rsn_select(f + off, n);
++   river_target.ap_rsn_len = n+2; river_target.ap_rsn[0] = 48; river_target.ap_rsn[1] = n;
++   for (unsigned k = 0; k < n; k++) river_target.ap_rsn[k+2] = f[off+k];
++  }
+   off += n;
+  }
+  for (unsigned k = 0; k < 6; k++) river_target.bssid[k] = f[16+k];
+@@ -547,6 +555,123 @@
+      river_target.nrates, river_target.rsn_len ? "WPA2-PSK/CCMP" : "open/other",
+      river_target.security_ok && river_target.rates_ok);
+ }
++/* Narrow WPA2-PSK/CCMP handshake gate. No key material is logged.
++ * SHA1/AES use the existing portable kernel providers; RFC3394 unwrap.
++ * One initial PTK installation only: retransmitted M3 never reinstalls keys. */
++static struct {
++ uint8_t pmk[32], ptk[48], snonce[32], anonce[32], replay[8], m3replay[8];
++ uint8_t pending[512];
++ unsigned pending_len, stage;
++ bool pmk_ready, keys_installed, associated, data_tx_stalled;
++} river_wpa;
++static unsigned river_peer_sta, river_peer_dpu, river_peer_sign;
++static void
++river_secret_clear(void *p, unsigned n)
++{
++ volatile uint8_t *v = p;
++ while (n--) *v++ = 0;
++}
++static bool
++river_constant_equal(const uint8_t *a, const uint8_t *b, unsigned n)
++{
++ unsigned diff = 0;
++ for (unsigned i = 0; i < n; i++) diff |= a[i] ^ b[i];
++ return diff == 0;
++}
++static unsigned
++river_be16(const uint8_t *p)
++{
++ return ((unsigned)p[0] << 8) | p[1];
++}
++static void
++river_be_put16(uint8_t *p, unsigned v)
++{
++ p[0] = v >> 8; p[1] = v;
++}
++static void
++river_hmac_sha1(const uint8_t *key, unsigned nk, const uint8_t *msg, unsigned n, uint8_t out[20])
++{
++ uint8_t pad[64] = {0}, inner[20];
++ SHA1_CTX sha;
++ if (nk > 64) { SHA1Init(&sha); SHA1Update(&sha, key, nk); SHA1Final(pad, &sha); }
++ else memcpy(pad, key, nk);
++ for (unsigned i = 0; i < 64; i++) pad[i] ^= 0x36;
++ SHA1Init(&sha); SHA1Update(&sha, pad, 64); SHA1Update(&sha, msg, n); SHA1Final(inner, &sha);
++ for (unsigned i = 0; i < 64; i++) pad[i] ^= 0x36 ^ 0x5c;
++ SHA1Init(&sha); SHA1Update(&sha, pad, 64); SHA1Update(&sha, inner, 20); SHA1Final(out, &sha);
++ river_secret_clear(&sha, sizeof(sha)); river_secret_clear(pad, sizeof(pad)); river_secret_clear(inner, sizeof(inner));
++}
++static void
++river_derive_ptk(void)
++{
++ uint8_t input[100], digest[20];
++ static const char label[] = "Pairwise key expansion";
++ unsigned off = sizeof(label); memcpy(input, label, off);
++ const uint8_t *a = river_target.bssid, *b = river_test_mac;
++ if (memcmp(a, b, 6) > 0) { a = river_test_mac; b = river_target.bssid; }
++ memcpy(input+off, a, 6); memcpy(input+off+6, b, 6); off += 12;
++ a = river_wpa.anonce; b = river_wpa.snonce;
++ if (memcmp(a, b, 32) > 0) { a = river_wpa.snonce; b = river_wpa.anonce; }
++ memcpy(input+off, a, 32); memcpy(input+off+32, b, 32); off += 64;
++ for (unsigned block = 0, done = 0; done < sizeof(river_wpa.ptk); block++) {
++  input[off] = block;
++  river_hmac_sha1(river_wpa.pmk, 32, input, off+1, digest);
++  unsigned n = sizeof(river_wpa.ptk)-done; if (n > 20) n = 20;
++  memcpy(river_wpa.ptk+done, digest, n); done += n;
++ }
++ river_secret_clear(input, sizeof(input)); river_secret_clear(digest, sizeof(digest));
++}
++static bool
++river_aes_unwrap(const uint8_t kek[16], const uint8_t *input, unsigned n, uint8_t *out)
++{
++ if (n < 24 || n > 408 || (n & 7)) return false;
++ aes_decrypt_ctx ctx;
++ if (aes_decrypt_key128(kek, &ctx)) return false;
++ uint8_t a[8], block[16], plain[16];
++ memcpy(a, input, 8); memcpy(out, input+8, n-8);
++ unsigned count = n/8-1;
++ bool ok = true;
++ for (int j = 5; j >= 0 && ok; j--)
++  for (unsigned i = count; i > 0; i--) {
++   memcpy(block, a, 8); unsigned t = count*j+i;
++   for (unsigned k = 0; k < 8; k++) { block[7-k] ^= t & 255; t >>= 8; }
++   memcpy(block+8, out+8*(i-1), 8);
++   if (aes_decrypt(block, plain, &ctx)) { ok = false; break; }
++   memcpy(a, plain, 8); memcpy(out+8*(i-1), plain+8, 8);
++  }
++ static const uint8_t iv[8] = {166,166,166,166,166,166,166,166};
++ ok = ok && river_constant_equal(a, iv, 8);
++ if (!ok) river_secret_clear(out, n-8);
++ river_secret_clear(&ctx, sizeof(ctx)); river_secret_clear(a, sizeof(a));
++ river_secret_clear(block, sizeof(block)); river_secret_clear(plain, sizeof(plain));
++ return ok;
++}
++static void
++river_wpa_load(void)
++{
++ DTEntry mm; const void *prop; unsigned size;
++ if (SecureDTLookupEntry(NULL, "/chosen/memory-map", &mm) != kSuccess ||
++     SecureDTGetProperty(mm, "RiverWiFiPMK", &prop, &size) != kSuccess || size != 16) return;
++ uint64_t pa = ((const uint64_t *)prop)[0], len = ((const uint64_t *)prop)[1];
++ if ((pa & 0xfff) || pa < 0x18000000ULL || pa >= 0x81800000ULL || len != 32 || pa+len > 0x81800000ULL) return;
++ uint8_t *p = (uint8_t *)ml_static_ptovirt((vm_offset_t)pa);
++ if (!p) return;
++ memcpy(river_wpa.pmk, p, 32); river_secret_clear(p, 32);
++ river_wpa.pmk_ready = true;
++ printf("RIVER WPA: private PMK loaded; key material logging disabled\n");
++}
++static void
++river_wpa_queue(const volatile uint8_t *p, unsigned n)
++{
++ if (!river_wpa.pmk_ready || n < 99 || n > sizeof(river_wpa.pending) || river_wpa.pending_len) return;
++ for (unsigned k = 0; k < n; k++) river_wpa.pending[k] = p[k];
++ if (river_wpa.pending[1] != 3 || river_be16(river_wpa.pending+2)+4 != n ||
++     river_wpa.pending[4] != 2 || river_be16(river_wpa.pending+97)+99 != n) {
++  river_secret_clear(river_wpa.pending, n); return;
++ }
++ river_wpa.pending_len = n;
++}
++
+ static void
+ river_target_rx(const volatile uint8_t *f, unsigned len, unsigned hlen, unsigned fc)
+ {
+@@ -565,6 +690,7 @@
+   static const uint8_t llc[] = {170,170,3,0,0,0,136,142};
+   unsigned k;
+   for (k = 0; k < sizeof(llc) && f[hlen+k] == llc[k]; k++) {}
++  if (k == sizeof(llc)) river_wpa_queue(f+hlen+8, len-hlen-8);
+   if (k == sizeof(llc) && river_eapol_seen++ < 8)
+    printf("RIVER JOIN: received EAPOL frame (%u bytes); controlled port remains unauthorized\n", len-hlen-8);
+  }
+@@ -747,6 +873,57 @@
+  return false;
+ }
+ 
++/* Initial EAPOL uses TX_LOW non-QoS unencrypted 802.11 data. One of64
++ * descriptor pairs at a time is backed by a permanent buffer in the gap.
++ * No reuse until both descriptors return ownership; timeout stops TX. */
++static unsigned river_data_pair;
++static bool
++river_eapol_tx(const uint8_t *eapol, unsigned n)
++{
++ if (n < 99 || n > 512 || !river_dxe_ready || river_wpa.data_tx_stalled) return false;
++ volatile struct river_dxe_desc *ring = (volatile struct river_dxe_desc *)river_dxe_dma;
++ unsigned pair = river_data_pair;
++ volatile struct river_dxe_desc *bd = &ring[2*pair], *data = bd+1;
++ if ((bd->ctrl | data->ctrl) & 1) return false;
++ __asm__ volatile("dmb oshld" ::: "memory");
++ volatile uint8_t *b = (volatile uint8_t *)(river_dxe_dma+0xb800), *f = b+0x100;
++ for (unsigned k = 0; k < 40; k++) b[k] = 0;
++ for (unsigned k = 0; k < 32; k++) f[k] = 0;
++ f[0] = 8; f[1] = 1; /* ToDS data */
++ for (unsigned k = 0; k < 6; k++) { f[4+k] = f[16+k] = river_target.bssid[k]; f[10+k] = river_test_mac[k]; }
++ static const uint8_t llc[] = {170,170,3,0,0,0,136,142};
++ for (unsigned k = 0; k < 8; k++) f[24+k] = llc[k];
++ for (unsigned k = 0; k < n; k++) f[32+k] = eapol[k];
++ river_put_be32(b, (25u<<24) | (river_peer_sign<<21) | 8u);
++ river_put_be32(b+12, (24u<<24) | (40u<<16) | (64u<<7));
++ river_put_be32(b+16, ((n+32)<<16) | (1u<<12));
++ river_put_be32(b+20, (river_peer_dpu<<24) | (river_peer_sta<<16) | (9u<<7));
++ river_put_be32(b+24, 0xbdbdbdbd);
++ bd->src = river_dxe_pa+0xb800; bd->dst = 6; bd->len = 40;
++ data->src = river_dxe_pa+0xb900; data->dst = 6; data->len = n+32;
++ __asm__ volatile("dmb oshst" ::: "memory"); data->ctrl = 0x328a4d;
++ __asm__ volatile("dmb oshst" ::: "memory"); bd->ctrl = 0x308a45;
++ __asm__ volatile("dsb osh" ::: "memory");
++ vm_offset_t dxe = river_dxe_mmio+0x2000;
++ ri_wr(dxe, 0x400, 0x843e8b4d);
++ for (unsigned w = 0; w < 20; w++) {
++  river_dxe_poll(); uint32_t status = ri_rd(dxe, 0x404);
++  if (status & 0x4000) break;
++  if (!((bd->ctrl | data->ctrl) & 1u)) {
++   __asm__ volatile("dmb oshld" ::: "memory");
++   ri_wr(dxe, 0x30, 1);
++   if (status & 0x8000) ri_wr(dxe, 0x38, 1);
++   if (status & 0x2000) ri_wr(dxe, 0x34, 1);
++   river_data_pair = (pair+1)%64;
++   return true;
++  }
++  ri_wait(10);
++ }
++ river_wpa.data_tx_stalled = true;
++ printf("RIVER WPA: EAPOL DMA stalled; buffers retained\n");
++ return false;
++}
++
+ static bool
+ river_probe_tx(void)
+ {
+@@ -844,6 +1021,7 @@
+  memcpy(s+10, river_test_mac, 6);
+  river_le_put(s+16, 10, 2); /* listen interval */
+  s[44] = river_self_sta; s[45] = river_target_bss;
++ if (river_wpa.keys_installed) river_le_put(s+29, 4, 4);
+  river_le_put(s+48, 4, 4); /* STA_11bg, no HT/VHT/WMM advertised */
+  static const uint8_t ordered[] = {2,4,11,22,12,18,24,36,48,72,96,108};
+  unsigned dsss = 0, ofdm = 0;
+@@ -873,6 +1051,7 @@
+  if (!river_scan_xact(smem, info, fifo, ipc, 16, msg, 470) || river_hal_reply_len < 29)
+   return false;
+  river_target_bss = river_hal_reply[12];
++ river_peer_sta = river_hal_reply[19]; river_peer_dpu = river_hal_reply[13]; river_peer_sign = river_hal_reply[14] & 7;
+  printf("RIVER JOIN: CONFIG_BSS update=%u index=%u peer_sta=%u self_sta=%u DPU=%u\n",
+      update, river_target_bss, river_hal_reply[19], river_hal_reply[20], river_hal_reply[13]);
+  return river_target_bss < 2;
+@@ -941,6 +1120,7 @@
+   uint8_t sta[124] = {0}; river_fill_sta(sta+8, river_assoc_aid);
+   ok = river_scan_xact(smem, info, fifo, ipc, 12, sta, 114);
+  }
++ river_wpa.associated = ok;
+  printf("RIVER JOIN: firmware association setup=%u; controlled data port CLOSED, WPA keys absent\n", ok);
+  if (!ok) {
+   if (river_target_bss != 255) {
+@@ -951,10 +1131,143 @@
+  }
+ }
+ 
++static bool
++river_wpa_reply(unsigned info, const uint8_t replay[8], bool snonce, bool rsn)
++{
++ uint8_t msg[121] = {0}, mic[20];
++ unsigned n = 99 + (rsn ? river_target.rsn_len : 0);
++ msg[0] = 2; msg[1] = 3; river_be_put16(msg+2, n-4); msg[4] = 2;
++ river_be_put16(msg+5, info); /* RSN replies leave key_length zero. */ memcpy(msg+9, replay, 8);
++ if (snonce) memcpy(msg+17, river_wpa.snonce, 32);
++ if (rsn) { river_be_put16(msg+97, river_target.rsn_len); memcpy(msg+99, river_target.rsn, river_target.rsn_len); }
++ river_hmac_sha1(river_wpa.ptk, 16, msg, n, mic); memcpy(msg+81, mic, 16);
++ bool ok = river_eapol_tx(msg, n);
++ river_secret_clear(msg, sizeof(msg)); river_secret_clear(mic, sizeof(mic));
++ return ok;
++}
++static bool
++river_wpa_install(vm_offset_t smem, uint32_t info, uint32_t fifo,
++    vm_offset_t ipc, const uint8_t gtk[16], unsigned keyid, const uint8_t rsc[8])
++{
++ if (river_wpa.keys_installed) return false;
++ /* Follow wcn36xx main.c key setup: reconfigure encryption, then PTK/GTK.
++  * Mark installation attempted before commands: never reinstall on retry. */
++ river_wpa.keys_installed = true;
++ if (!river_config_target_bss(smem, info, fifo, ipc, true, river_assoc_aid)) return false;
++ uint8_t sta[124] = {0}; river_fill_sta(sta+8, river_assoc_aid);
++ if (!river_scan_xact(smem, info, fifo, ipc, 12, sta, 114)) return false;
++ uint8_t pairwise[248] = {0};
++ river_le_put(pairwise+8, river_peer_sta, 2); river_le_put(pairwise+10, 4, 4);
++ uint8_t *k = pairwise+19;
++ k[1] = 1; river_le_put(k+2, 2, 4); river_le_put(k+23, 16, 2);
++ memcpy(k+25, river_wpa.ptk+32, 16); pairwise[247] = 1;
++ bool ok = river_scan_xact(smem, info, fifo, ipc, 26, pairwise, sizeof(pairwise));
++ river_secret_clear(pairwise, sizeof(pairwise));
++ if (!ok) return false;
++ uint8_t group[243] = {0}; group[8] = river_target_bss;
++ river_le_put(group+9, 4, 4); group[13] = 1; k = group+14;
++ k[0] = keyid; river_le_put(k+2, 1, 4); memcpy(k+6, rsc, 8);
++ river_le_put(k+23, 16, 2); memcpy(k+25, gtk, 16);
++ ok = river_scan_xact(smem, info, fifo, ipc, 24, group, sizeof(group));
++ river_secret_clear(group, sizeof(group));
++ return ok;
++}
++static bool
++river_wpa_keydata(const uint8_t *data, unsigned n, uint8_t gtk[16], unsigned *keyid)
++{
++ bool have_rsn = false, have_gtk = false;
++ for (unsigned off = 0; off < n;) {
++  /* 802.11 key-data padding is DD followed by zeros. */
++  if (data[off] == 221 && (off+1 == n || data[off+1] == 0)) {
++   for (unsigned j = off+1; j < n; j++) if (data[j]) return false;
++   break;
++  }
++  if (off+2 > n || data[off+1] > n-off-2) return false;
++  unsigned id = data[off], size = data[off+1];
++  const uint8_t *p = data+off+2;
++  if (id == 48) {
++   if (have_rsn || size+2 != river_target.ap_rsn_len ||
++       !river_constant_equal(data+off, river_target.ap_rsn, size+2)) return false;
++   have_rsn = true;
++  }
++  if (id == 221 && size >= 4 && !p[0] && p[1] == 15 && p[2] == 172 && p[3] == 1) {
++   if (have_gtk || size != 22 || (p[4] & 0xf8) || p[5]) return false;
++   *keyid = p[4]&3; memcpy(gtk, p+6, 16); have_gtk = true;
++  }
++  off += size+2;
++ }
++ return have_rsn && have_gtk;
++}
++static void
++river_wpa_step(vm_offset_t smem, uint32_t info, uint32_t fifo, vm_offset_t ipc)
++{
++ if (!river_wpa.associated || !river_wpa.pending_len) return;
++ uint8_t msg[512], mic[20], saved_mic[16];
++ unsigned n = river_wpa.pending_len;
++ memcpy(msg, river_wpa.pending, n); river_secret_clear(river_wpa.pending, n); river_wpa.pending_len = 0;
++ unsigned flags = river_be16(msg+5);
++ /* Pairwise, ACK, HMAC-SHA1/AES descriptor version2, no request/error/index. */
++ if ((flags & 0xecbf) != 0x008a || river_be16(msg+7) != 16) goto done;
++ if (!(flags & 0x100)) {
++  /* M1 must not assert install/secure/encrypted. One nonce per initial M1.
++   * Retransmit M2 only for identical ANonce/replay; reject session changes. */
++  if (flags != 0x008a || n != 99 || river_wpa.keys_installed || river_wpa.stage > 1) goto done;
++  uint8_t zero[32] = {0}; if (river_constant_equal(msg+17, zero, 32)) goto done;
++  if (!river_wpa.stage) {
++   read_random(river_wpa.snonce, 32); memcpy(river_wpa.anonce, msg+17, 32);
++   memcpy(river_wpa.replay, msg+9, 8); river_derive_ptk(); river_wpa.stage = 1;
++  } else if (!river_constant_equal(msg+17, river_wpa.anonce, 32) ||
++      !river_constant_equal(msg+9, river_wpa.replay, 8)) goto done;
++  bool ok = river_wpa_reply(0x010a, msg+9, true, true);
++  printf("RIVER WPA: M1 accepted, M2 DMA=%u\n", ok);
++  goto done;
++ }
++ /* Only M3 (install/secure/encrypted/MIC). Authenticate before decrypting
++  * or touching driver key state; replay must advance beyond M1. */
++ if (flags != 0x13ca || !river_wpa.stage ||
++     !river_constant_equal(msg+17, river_wpa.anonce, 32) ||
++     memcmp(msg+9, river_wpa.replay, 8) <= 0) goto done;
++ memcpy(saved_mic, msg+81, 16); memset(msg+81, 0, 16);
++ river_hmac_sha1(river_wpa.ptk, 16, msg, n, mic);
++ if (!river_constant_equal(mic, saved_mic, 16)) {
++  printf("RIVER WPA: M3 MIC rejected; no key installed\n"); goto done;
++ }
++ if (river_wpa.stage == 2) {
++  if (river_constant_equal(msg+9, river_wpa.m3replay, 8))
++   (void)river_wpa_reply(0x030a, msg+9, false, false);
++  goto done; /* no PTK/GTK reinstallation */
++ }
++ if (river_wpa.keys_installed) goto done;
++ unsigned wrapped = river_be16(msg+97), keyid = 0;
++ uint8_t plain[400] = {0}, gtk[16] = {0};
++ bool ok = river_aes_unwrap(river_wpa.ptk+16, msg+99, wrapped, plain) &&
++     river_wpa_keydata(plain, wrapped-8, gtk, &keyid);
++ if (ok) ok = river_wpa_install(smem, info, fifo, ipc, gtk, keyid, msg+65);
++ river_secret_clear(plain, sizeof(plain)); river_secret_clear(gtk, sizeof(gtk));
++ if (!ok) { printf("RIVER WPA: key validation/installation failed; port closed\n"); goto done; }
++ memcpy(river_wpa.m3replay, msg+9, 8);
++ ok = river_wpa_reply(0x030a, msg+9, false, false);
++ if (ok) { river_wpa.stage = 2; printf("RIVER WPA: PTK/GTK installed once; M4 DMA complete; handshake gate passed\n"); }
++ /* Keep controlled networking unpublished until encrypted traffic is tested. */
++ done:
++ river_secret_clear(msg, sizeof(msg)); river_secret_clear(mic, sizeof(mic)); river_secret_clear(saved_mic, sizeof(saved_mic));
++}
++static void
++river_wpa_run(vm_offset_t smem, uint32_t info, uint32_t fifo, vm_offset_t ipc)
++{
++ if (!river_wpa.pmk_ready || !river_wpa.associated) return;
++ for (unsigned w = 0; w < 1000 && river_dxe_ready; w++) {
++  river_dxe_poll(); river_wpa_step(smem, info, fifo, ipc); ri_wait(10);
++ }
++ printf("RIVER WPA: initial window complete stage=%u keys-attempted=%u; no IP interface published\n",
++     river_wpa.stage, river_wpa.keys_installed);
++}
++
+ static void
+ river_passive_scan(vm_offset_t smem, uint32_t info, uint32_t fifo, vm_offset_t ipc)
+ {
+  river_target_config();
++ river_wpa_load();
+  uint8_t self[18] = {0}; /* packed add_sta_self_req */
+  for (unsigned k = 0; k < 6; k++) self[8 + k] = river_test_mac[k];
+  if (!river_scan_xact(smem, info, fifo, ipc, 125, self, sizeof(self)) || !river_self_ready) {
+@@ -2074,6 +2387,7 @@
+      scan_attempted = true;
+      river_passive_scan(smem, wcnss_wlan_info, wcnss_wlan_fifo, ipc_reg2);
+      river_target_associate(smem, wcnss_wlan_info, wcnss_wlan_fifo, ipc_reg2);
++     river_wpa_run(smem, wcnss_wlan_info, wcnss_wlan_fifo, ipc_reg2);
+     }
+     static const unsigned tbls[] = { 13, 266 };
+     for (unsigned t = 0; t < sizeof(tbls) / sizeof(tbls[0]); t++) {
