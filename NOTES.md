@@ -1,5 +1,32 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River r137 RX reclaim and passive scan (2026-10-25, prepared)
+
+Patch 0233 adds a single-owner WCNSS worker RX path: persistent 10ms
+polling, 64-descriptor budget per channel/pass, acquire/release DMA barriers,
+fixed host buffer offsets, bounded big-endian RX BD validation and a 32-entry
+beacon/probe-response BSSID table. Packets are inspected synchronously before
+buffers return to DMA. DMA pool and MMIO mapping remain permanent. RX errors
+stop software reclaim without freeing DMA storage; IRQs remain masked.
+After the existing HAL startup window it attempts one passive channel1-11
+scan (250ms/channel), with INIT/START/END/FINISH status checks and 2s request
+timeouts. No probe request, association or network interface is implemented;
+TX descriptors remain invalid. Nine-byte channel messages use byte-exact SMD
+lengths, with wrapped word reads and FIFO space/packet completeness checks.
+
+Local arm64 object compile passed. Actual upstream hal.h layout assertions
+passed (INIT48/START9/END9/FINISH53; cb_state offset13; mode2). An ASan/UBSan
+host harness passed RX ownership/rearm, ring wrap and budget, malformed BD,
+BSS parsing, wrapped SMD response and full-FIFO/error-stop paths. Host tests
+replace barriers with no-ops and cannot verify real DMA ordering or radio.
+CI and hardware remain pending. Private scripts/evidence live in the new
+chat directory work/; previous ci-r133 source staging now contains r137.
+
+The phone was observed in fastboot; user confirmed they moved it there
+manually. Existing Python USB capture and Terminal receiver are still running.
+RAM-only fastboot boot remains the only allowed boot operation; never flash.
+Keep firmware blobs and 504-byte display/boot configuration unchanged.
+
 ## River r136 DXE hardware initialization verified (2026-10-25)
 
 RAM-only r136 (kernel commit 7aba467, Actions 40231286067) booted on the
