@@ -11,7 +11,7 @@ diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
 index 64d5c62..dfc10dc 100644
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -753,6 +753,370 @@ river_wcnss_probe(void)
+@@ -753,6 +753,367 @@ river_wcnss_probe(void)
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
