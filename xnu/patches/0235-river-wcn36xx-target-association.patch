@@ -1,0 +1,415 @@
+From: mattxt1 <matttysonx1@gmail.com>
+Subject: [PATCH] RIVER: opt-in targeted BSS authentication and association
+
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -426,6 +426,150 @@
+ static unsigned river_bss_count;
+ static const uint8_t river_test_mac[6] = {0x02, 0, 0, 0x36, 0x60, 1};
+ static uint64_t river_rx_probe_responses, river_rx_probe_ours;
++/* The opt-in target is a hex SSID boot argument, never a compiled-in SSID
++ * or credential. Selection requires an exact beacon/probe-response match. */
++static struct {
++ uint8_t ssid[32], bssid[6], rates[12], rsn[22];
++ unsigned ssid_len, nrates, rsn_len, channel, beacon, caps, dtim;
++ bool enabled, found, security_ok, rates_ok;
++} river_target;
++static bool river_auth_seen, river_assoc_seen;
++static unsigned river_auth_status, river_assoc_status, river_assoc_aid;
++static unsigned river_eapol_seen;
++static uint8_t river_hal_reply[128];
++static unsigned river_hal_reply_len;
++static uint8_t river_target_bss = 255;
++static unsigned
++river_le16(const volatile uint8_t *p)
++{
++ return p[0] | ((unsigned)p[1] << 8);
++}
++static void
++river_le_put(uint8_t *p, unsigned v, unsigned n)
++{
++ for (unsigned i = 0; i < n; i++) p[i] = v >> (8 * i);
++}
++static bool
++river_mac_equal(const volatile uint8_t *a, const uint8_t *b)
++{
++ for (unsigned k = 0; k < 6; k++) if (a[k] != b[k]) return false;
++ return true;
++}
++static void
++river_target_config(void)
++{
++ char hex[65] = {0};
++ if (!PE_parse_boot_argn("riverwifi", hex, sizeof(hex))) return;
++ unsigned n = 0;
++ while (n < 65 && hex[n]) n++;
++ if (!n || n > 64 || (n & 1)) return;
++ for (unsigned i = 0; i < n; i++) {
++  unsigned v;
++  if (hex[i] >= '0' && hex[i] <= '9') v = hex[i] - '0';
++  else if (hex[i] >= 'a' && hex[i] <= 'f') v = hex[i] - 'a' + 10;
++  else if (hex[i] >= 'A' && hex[i] <= 'F') v = hex[i] - 'A' + 10;
++  else return;
++  if (!(i & 1)) river_target.ssid[i / 2] = v << 4;
++  else river_target.ssid[i / 2] |= v;
++ }
++ river_target.ssid_len = n / 2;
++ river_target.enabled = true;
++ printf("RIVER JOIN: target configured (%u SSID bytes)\n", n / 2);
++}
++static bool
++river_rsn_select(const volatile uint8_t *p, unsigned n)
++{
++ /* Only WPA2 PSK/CCMP, with no mandatory protected management frames.
++  * Copy the negotiated suite choice, not the AP's list of alternatives. */
++ if (n < 8 || river_le16(p) != 1 || p[2] || p[3] != 15 || p[4] != 172 || p[5] != 4)
++  return false;
++ unsigned count = river_le16(p + 6), off = 8;
++ bool aes = false, psk = false;
++ if (!count || count > (n - off) / 4) return false;
++ for (unsigned i = 0; i < count; i++, off += 4)
++  if (!p[off] && p[off+1] == 15 && p[off+2] == 172 && p[off+3] == 4) aes = true;
++ if (off + 2 > n) return false;
++ count = river_le16(p + off); off += 2;
++ if (!count || count > (n - off) / 4) return false;
++ for (unsigned i = 0; i < count; i++, off += 4)
++  if (!p[off] && p[off+1] == 15 && p[off+2] == 172 && p[off+3] == 2) psk = true;
++ if (off + 1 == n) return false;
++ if (!aes || !psk || (off + 2 <= n && (river_le16(p + off) & 64))) return false;
++ static const uint8_t rsn[] = {48,20,1,0,0,15,172,4,1,0,0,15,172,4,1,0,0,15,172,2,0,0};
++ memcpy(river_target.rsn, rsn, sizeof(rsn));
++ river_target.rsn_len = sizeof(rsn);
++ return true;
++}
++static void
++river_target_capture(const volatile uint8_t *f, unsigned len)
++{
++ if (!river_target.enabled || river_target.found || len < 36) return;
++ bool match = false;
++ for (unsigned off = 36; off + 2 <= len;) {
++  unsigned id = f[off], n = f[off + 1]; off += 2;
++  if (n > len - off) return;
++  if (id == 0 && n == river_target.ssid_len) {
++   unsigned k;
++   for (k = 0; k < n && f[off + k] == river_target.ssid[k]; k++) {}
++   match = k == n;
++  }
++  off += n;
++ }
++ if (!match) return;
++ river_target.caps = river_le16(f + 34);
++ river_target.beacon = river_le16(f + 32);
++ river_target.channel = river_scan_channel;
++ river_target.dtim = 1; river_target.rates_ok = true;
++ river_target.security_ok = !(river_target.caps & 16);
++ static const uint8_t supported[] = {2,4,11,22,12,18,24,36,48,72,96,108};
++ for (unsigned off = 36; off + 2 <= len;) {
++  unsigned id = f[off], n = f[off+1]; off += 2;
++  if (n > len - off) return;
++  if (id == 1 || id == 50) {
++   for (unsigned k = 0; k < n; k++) {
++    unsigned v = f[off+k], j;
++    for (j = 0; j < sizeof(supported) && (v & 127) != supported[j]; j++) {}
++    if (j == sizeof(supported)) { if (v & 128) river_target.rates_ok = false; continue; }
++    for (j = 0; j < river_target.nrates && (river_target.rates[j] & 127) != (v & 127); j++) {}
++    if (j < river_target.nrates) river_target.rates[j] |= v & 128;
++    else if (j < 12) river_target.rates[river_target.nrates++] = v;
++   }
++  }
++  if (id == 3 && n == 1) river_target.channel = f[off];
++  if (id == 5 && n >= 2 && f[off+1]) river_target.dtim = f[off+1];
++  if (id == 48) river_target.security_ok = river_rsn_select(f + off, n);
++  off += n;
++ }
++ for (unsigned k = 0; k < 6; k++) river_target.bssid[k] = f[16+k];
++ river_target.found = true;
++ printf("RIVER JOIN: target beacon channel=%u caps=%#x interval=%u DTIM=%u rates=%u security=%s supported=%u\n",
++     river_target.channel, river_target.caps, river_target.beacon, river_target.dtim,
++     river_target.nrates, river_target.rsn_len ? "WPA2-PSK/CCMP" : "open/other",
++     river_target.security_ok && river_target.rates_ok);
++}
++static void
++river_target_rx(const volatile uint8_t *f, unsigned len, unsigned hlen, unsigned fc)
++{
++ if (!river_target.found || !river_mac_equal(f + 4, river_test_mac) ||
++     !river_mac_equal(f + 10, river_target.bssid)) return;
++ if ((fc & 0xfcu) == 0xb0 && len >= 30 && river_le16(f+24) == 0 && river_le16(f+26) == 2) {
++  river_auth_seen = true; river_auth_status = river_le16(f+28);
++  printf("RIVER JOIN: authentication response status=%u\n", river_auth_status);
++ }
++ if ((fc & 0xfcu) == 0x10 && len >= 30) {
++  river_assoc_seen = true; river_assoc_status = river_le16(f+26);
++  river_assoc_aid = river_le16(f+28) & 0x3fff;
++  printf("RIVER JOIN: association response status=%u AID=%u\n", river_assoc_status, river_assoc_aid);
++ }
++ if ((fc & 0x0cu) == 8 && hlen <= len && len - hlen >= 8) {
++  static const uint8_t llc[] = {170,170,3,0,0,0,136,142};
++  unsigned k;
++  for (k = 0; k < sizeof(llc) && f[hlen+k] == llc[k]; k++) {}
++  if (k == sizeof(llc) && river_eapol_seen++ < 8)
++   printf("RIVER JOIN: received EAPOL frame (%u bytes); controlled port remains unauthorized\n", len-hlen-8);
++ }
++}
++
+ static uint32_t
+ river_bd_word(const volatile uint8_t *p)
+ {
+@@ -453,8 +597,10 @@
+   printf("RIVER RX: frame %llu channel=%u fc=%#x len=%u RSSI=%d\n",
+       river_rx_packets, river_scan_channel, fc, len,
+       (int)(river_bd_word(p + 28) >> 24) - 100);
++ river_target_rx(f, len, hlen, fc);
+  if ((fc & 0xfcu) != 0x80 && (fc & 0xfcu) != 0x50) return;
+  if (len < 36) { river_rx_bad++; return; }
++ river_target_capture(f, len);
+  river_rx_beacons++;
+  if ((fc & 0xfcu) == 0x50) {
+   river_rx_probe_responses++;
+@@ -545,8 +691,9 @@
+  p[0] = value >> 24; p[1] = value >> 16; p[2] = value >> 8; p[3] = value;
+ }
+ static bool
+-river_probe_tx(void)
+-{
++river_mgmt_tx(const uint8_t *payload, unsigned len, bool broadcast)
++{
++ if (len < 24 || len > 512 || !payload) return false;
+  if (!river_dxe_ready || !river_self_ready || river_tx_stalled) return false;
+  unsigned slot = river_tx_slot, off = 0x6000 + slot * 0x1100;
+  volatile struct river_dxe_desc *ring =
+@@ -557,27 +704,17 @@
+  volatile uint8_t *b = (volatile uint8_t *)(river_dxe_dma + off);
+  volatile uint8_t *f = b + 0x100;
+  for (unsigned k = 0; k < 40; k++) b[k] = 0;
+- for (unsigned k = 0; k < 36; k++) f[k] = 0;
+- /* Probe request: broadcast DA/BSSID, local test SA, wildcard SSID.
+-  * Advertise only legacy rates supported on 2.4GHz; no association. */
+- f[0] = 0x40;
+- for (unsigned k = 0; k < 6; k++) {
+-  f[4 + k] = f[16 + k] = 255;
+-  f[10 + k] = river_test_mac[k];
+- }
+- f[24] = 0; f[25] = 0; f[26] = 1; f[27] = 8;
+- static const uint8_t rates[] = {0x82, 0x84, 0x8b, 0x96, 12, 18, 24, 36};
+- for (unsigned k = 0; k < 8; k++) f[28 + k] = rates[k];
++ for (unsigned k = 0; k < len; k++) f[k] = payload[k];
+  /* WCN36xx TX BD is 40 bytes, big-endian words. BMU25, no encryption,
+-  * broadcast/no ACK, management rate, firmware non-QoS sequence number. */
+- river_put_be32(b, (25u << 24) | (1u << 7) | (1u << 3));
++  * management queue and rate, firmware non-QoS sequence number. */
++ river_put_be32(b, (25u << 24) | (broadcast ? (1u << 7) : 0) | (1u << 3));
+  river_put_be32(b + 12, (24u << 24) | (40u << 16) | (64u << 7));
+- river_put_be32(b + 16, (36u << 16) | (1u << 12) | (7u << 8));
++ river_put_be32(b + 16, (len << 16) | (1u << 12) | (7u << 8));
+  river_put_be32(b + 20, ((uint32_t)river_self_dpu << 24) |
+-     ((uint32_t)river_self_sta << 16) | (1u << 14) | (2u << 12) | (10u << 7));
++     ((uint32_t)river_self_sta << 16) | (broadcast ? (1u << 14) : 0) | (2u << 12) | ((broadcast ? 10u : 9u) << 7));
+  river_put_be32(b + 24, 0xbdbdbdbd);
+  bd->src = (uint32_t)(river_dxe_pa + off); bd->dst = 6; bd->len = 40;
+- frame->src = (uint32_t)(river_dxe_pa + off + 0x100); frame->dst = 6; frame->len = 36;
++ frame->src = (uint32_t)(river_dxe_pa + off + 0x100); frame->dst = 6; frame->len = len;
+  __asm__ volatile("dmb oshst" ::: "memory");
+  frame->ctrl = 0x32ce4d; /* valid, EOP, descriptor completion */
+  __asm__ volatile("dmb oshst" ::: "memory");
+@@ -597,17 +734,28 @@
+    if (status & 0x2000) ri_wr(dxe, 0x34, 16);
+    river_tx_completed++;
+    river_tx_slot = (slot + 1) % 5;
+-   printf("RIVER TX: DMA complete probe=%u slot=%u channel=%u status=%#x (no OTA ACK)\n",
++   printf("RIVER TX: DMA complete mgmt=%u slot=%u channel=%u status=%#x (not an ACK indication)\n",
+        river_tx_completed, slot, river_scan_channel, status);
+    return true;
+   }
+   ri_wait(10);
+  }
+  river_tx_stalled = true;
+- printf("RIVER TX: stalled probe=%u slot=%u channel=%u BD=%#x payload=%#x status=%#x errors=%#x; buffers retained\n",
++ printf("RIVER TX: stalled mgmt=%u slot=%u channel=%u BD=%#x payload=%#x status=%#x errors=%#x; buffers retained\n",
+      river_tx_submitted, slot, river_scan_channel, bd->ctrl, frame->ctrl,
+      ri_rd(dxe, 0x504), ri_rd(dxe, 0x10));
+  return false;
++}
++
++static bool
++river_probe_tx(void)
++{
++ uint8_t f[36] = {0}; f[0] = 0x40;
++ for (unsigned k = 0; k < 6; k++) { f[4+k] = f[16+k] = 255; f[10+k] = river_test_mac[k]; }
++ f[26] = 1; f[27] = 8;
++ static const uint8_t rates[] = {0x82,0x84,0x8b,0x96,12,18,24,36};
++ memcpy(f+28, rates, sizeof(rates));
++ return river_mgmt_tx(f, sizeof(f), true);
+ }
+ 
+ /* Single outstanding HAL request, using byte-exact SMD packet lengths.
+@@ -624,16 +772,17 @@
+ river_scan_xact(vm_offset_t smem, uint32_t info, uint32_t fifo,
+     vm_offset_t ipc, unsigned type, uint8_t *msg, unsigned len)
+ {
+- if (len < 8 || len > 64 || !ipc) return false;
++ if (len < 8 || len > 1024 || !ipc) return false;
+  msg[0] = type; msg[1] = msg[2] = msg[3] = 0;
+- msg[4] = len; msg[5] = msg[6] = msg[7] = 0;
++ river_le_put(msg+4, len, 4);
++ river_hal_reply_len = 0;
+  uint32_t head = ri_rd(smem, info + 16), tail = ri_rd(smem, info + 12);
+  if (head >= 8192 || tail >= 8192 || ((tail - head - 1) & 8191) < 20 + len) {
+   printf("RIVER SCAN: TX FIFO unavailable type=%u\n", type);
+   return false;
+  }
+  for (unsigned i = 0; i < 20 + len; i++) {
+-  uint8_t v = i == 0 ? len : (i < 20 ? 0 : msg[i - 20]);
++  uint8_t v = i < 4 ? (uint8_t)(len >> (8*i)) : (i < 20 ? 0 : msg[i-20]);
+   *(volatile uint8_t *)(smem + fifo + ((head + i) & 8191)) = v;
+  }
+  __asm__ volatile("dmb sy" ::: "memory");
+@@ -665,6 +814,11 @@
+      printf("RIVER TX: self station=%u DPU=%u signature=%u\n",
+          river_self_sta, river_self_dpu, (ids >> 16) & 255);
+     }
++    if (reply == type + 1) {
++     river_hal_reply_len = bytes < sizeof(river_hal_reply) ? bytes : sizeof(river_hal_reply);
++     for (unsigned k = 0; k < river_hal_reply_len; k++)
++      river_hal_reply[k] = *(volatile uint8_t *)(smem + base + ((rt+20+k) & 8191));
++    }
+     ri_wr(smem, info + 32, (rt + 20 + bytes) & 8191);
+     ri_wr(smem, info + 28, (1u << 8) | (1u << 16));
+     ri_wr(ipc, 0, 1u << 17);
+@@ -678,9 +832,129 @@
+  printf("RIVER SCAN: timeout type=%u\n", type);
+  return false;
+ }
++/* Byte offsets and non-VHT lengths are checked against upstream hal.h by
++ * the local layout fixture. Firmware API1.5 uses v1 STA/BSS structures but
++ * WCN3660 omits the final VHT fields and retains header version0. */
++static void
++river_fill_sta(uint8_t *s, unsigned aid)
++{
++ memcpy(s, river_target.bssid, 6);
++ river_le_put(s+6, aid, 2);
++ s[9] = !!(river_target.caps & 32);
++ memcpy(s+10, river_test_mac, 6);
++ river_le_put(s+16, 10, 2); /* listen interval */
++ s[44] = river_self_sta; s[45] = river_target_bss;
++ river_le_put(s+48, 4, 4); /* STA_11bg, no HT/VHT/WMM advertised */
++ static const uint8_t ordered[] = {2,4,11,22,12,18,24,36,48,72,96,108};
++ unsigned dsss = 0, ofdm = 0;
++ for (unsigned i = 0; i < sizeof(ordered); i++)
++  for (unsigned k = 0; k < river_target.nrates; k++)
++   if ((river_target.rates[k] & 127) == ordered[i]) {
++    unsigned off = i < 4 ? 52 + 2 * dsss++ : 60 + 2 * ofdm++;
++    river_le_put(s+off, river_target.rates[k], 2);
++   }
++}
++static bool
++river_config_target_bss(vm_offset_t smem, uint32_t info, uint32_t fifo,
++    vm_offset_t ipc, bool update, unsigned aid)
++{
++ uint8_t msg[482] = {0}, *b = msg+8;
++ memcpy(b, river_target.bssid, 6); memcpy(b+6, river_test_mac, 6);
++ b[16] = 1; /* infrastructure STA, bss_type0 */
++ river_le_put(b+17, 2, 4); /* 11G network */
++ b[21] = !!(river_target.caps & 1024);
++ river_le_put(b+29, river_target.beacon, 2);
++ b[31] = river_target.dtim; b[33] = river_target.channel;
++ b[36] = river_target.ssid_len; memcpy(b+37, river_target.ssid, river_target.ssid_len);
++ b[69] = update; b[70] = river_target.nrates;
++ memcpy(b+71, river_target.rates, river_target.nrates);
++ b[355] = 10; /* request conservative power; firmware/NV limits apply */
++ river_fill_sta(b+356, aid);
++ if (!river_scan_xact(smem, info, fifo, ipc, 16, msg, 470) || river_hal_reply_len < 29)
++  return false;
++ river_target_bss = river_hal_reply[12];
++ printf("RIVER JOIN: CONFIG_BSS update=%u index=%u peer_sta=%u self_sta=%u DPU=%u\n",
++     update, river_target_bss, river_hal_reply[19], river_hal_reply[20], river_hal_reply[13]);
++ return river_target_bss < 2;
++}
++static bool
++river_target_link(vm_offset_t smem, uint32_t info, uint32_t fifo,
++    vm_offset_t ipc, unsigned state)
++{
++ uint8_t msg[24] = {0};
++ memcpy(msg+8, river_target.bssid, 6);
++ river_le_put(msg+14, state, 4); memcpy(msg+18, river_test_mac, 6);
++ return river_scan_xact(smem, info, fifo, ipc, 44, msg, sizeof(msg));
++}
++static void
++river_target_associate(vm_offset_t smem, uint32_t info, uint32_t fifo, vm_offset_t ipc)
++{
++ if (!river_target.enabled) return;
++ if (!river_target.found || !river_self_ready || !river_dxe_ready || river_tx_stalled ||
++     !river_target.security_ok || !river_target.rates_ok || !river_target.nrates ||
++     river_target.channel < 1 || river_target.channel > 11) {
++  printf("RIVER JOIN: target unavailable or unsupported; authentication withheld\n");
++  return;
++ }
++ river_scan_channel = river_target.channel;
++ if (!river_target_link(smem, info, fifo, ipc, 1)) return; /* PREASSOC */
++ uint8_t join[31] = {0};
++ memcpy(join+8, river_target.bssid, 6); join[14] = river_target.channel;
++ memcpy(join+15, river_test_mac, 6); join[26] = 1; join[30] = 0xbf;
++ bool ok = river_scan_xact(smem, info, fifo, ipc, 20, join, sizeof(join));
++ if (ok) ok = river_config_target_bss(smem, info, fifo, ipc, false, 0);
++ if (ok) {
++  uint8_t auth[30] = {0}; auth[0] = 0xb0;
++  memcpy(auth+4, river_target.bssid, 6); memcpy(auth+10, river_test_mac, 6);
++  memcpy(auth+16, river_target.bssid, 6); auth[26] = 1; /* open-system sequence1 */
++  river_auth_seen = false;
++  ok = river_mgmt_tx(auth, sizeof(auth), false);
++  for (unsigned w = 0; ok && !river_auth_seen && w < 100; w++) { river_dxe_poll(); ri_wait(10); }
++  ok = ok && river_auth_seen && river_auth_status == 0;
++  printf("RIVER JOIN: authentication accepted=%u response=%u status=%u\n", ok, river_auth_seen, river_auth_status);
++ }
++ if (ok) {
++  uint8_t assoc[128] = {0};
++  memcpy(assoc+4, river_target.bssid, 6); memcpy(assoc+10, river_test_mac, 6);
++  memcpy(assoc+16, river_target.bssid, 6);
++  river_le_put(assoc+24, river_target.caps & (1u|16u|32u|1024u), 2);
++  river_le_put(assoc+26, 10, 2);
++  unsigned n = 28; assoc[n++] = 0; assoc[n++] = river_target.ssid_len;
++  memcpy(assoc+n, river_target.ssid, river_target.ssid_len); n += river_target.ssid_len;
++  unsigned rates = river_target.nrates < 8 ? river_target.nrates : 8;
++  assoc[n++] = 1; assoc[n++] = rates; memcpy(assoc+n, river_target.rates, rates); n += rates;
++  if (river_target.nrates > 8) {
++   assoc[n++] = 50; assoc[n++] = river_target.nrates-8;
++   memcpy(assoc+n, river_target.rates+8, river_target.nrates-8); n += river_target.nrates-8;
++  }
++  memcpy(assoc+n, river_target.rsn, river_target.rsn_len); n += river_target.rsn_len;
++  river_assoc_seen = false;
++  ok = river_mgmt_tx(assoc, n, false);
++  for (unsigned w = 0; ok && !river_assoc_seen && w < 100; w++) { river_dxe_poll(); ri_wait(10); }
++  ok = ok && river_assoc_seen && river_assoc_status == 0 && river_assoc_aid && river_assoc_aid <= 2007;
++  printf("RIVER JOIN: AP association accepted=%u response=%u status=%u AID=%u\n",
++      ok, river_assoc_seen, river_assoc_status, river_assoc_aid);
++ }
++ if (ok) ok = river_target_link(smem, info, fifo, ipc, 2); /* POSTASSOC */
++ if (ok) ok = river_config_target_bss(smem, info, fifo, ipc, true, river_assoc_aid);
++ if (ok) {
++  uint8_t sta[124] = {0}; river_fill_sta(sta+8, river_assoc_aid);
++  ok = river_scan_xact(smem, info, fifo, ipc, 12, sta, 114);
++ }
++ printf("RIVER JOIN: firmware association setup=%u; controlled data port CLOSED, WPA keys absent\n", ok);
++ if (!ok) {
++  if (river_target_bss != 255) {
++   uint8_t del[9] = {0}; del[8] = river_target_bss;
++   (void)river_scan_xact(smem, info, fifo, ipc, 18, del, sizeof(del));
++  }
++  (void)river_target_link(smem, info, fifo, ipc, 0);
++ }
++}
++
+ static void
+ river_passive_scan(vm_offset_t smem, uint32_t info, uint32_t fifo, vm_offset_t ipc)
+ {
++ river_target_config();
+  uint8_t self[18] = {0}; /* packed add_sta_self_req */
+  for (unsigned k = 0; k < 6; k++) self[8 + k] = river_test_mac[k];
+  if (!river_scan_xact(smem, info, fifo, ipc, 125, self, sizeof(self)) || !river_self_ready) {
+@@ -1799,6 +2073,7 @@
+     if (!scan_attempted && wlan_start_acked && river_dxe_ready && wcnss_wlan_info && wcnss_wlan_fifo) {
+      scan_attempted = true;
+      river_passive_scan(smem, wcnss_wlan_info, wcnss_wlan_fifo, ipc_reg2);
++     river_target_associate(smem, wcnss_wlan_info, wcnss_wlan_fifo, ipc_reg2);
+     }
+     static const unsigned tbls[] = { 13, 266 };
+     for (unsigned t = 0; t < sizeof(tbls) / sizeof(tbls[0]); t++) {

@@ -1,5 +1,49 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River r138 OTA probe exchange verified; r139 association gate (2026-10-25)
+
+r138 e89351e / Actions40234832019 passed CI and RAM-only hardware testing.
+Image SHA256 e84659f52205917991dc822f7e6a75788ff0411d5bda560d15d359e4f26aff38;
+504-byte cmdline, byte-identical private firmware and payload roundtrip passed.
+HAL_START status0; DMA0x1e890000+0x238000. ADD_STA_SELF station1/DPU0/signature0.
+Exactly one channel1-11 scan ran. All11 broadcast probe requests completed
+DMA (status0xa004), wrapping the five-pair TX ring twice. One received probe
+response was addressed to the locally administered test MAC: radio-level
+TX/RX evidence, beyond DMA completion. RX43, malformed0, BSS25. All scan
+responses status0; persistent10ms RX polling started, no stall/error/panic.
+The complete4,198,400-byte console ring independently confirms all of this.
+Post-test USB ping2/2 and SSH netprobe succeeded; only USB/virtual interfaces,
+no IONetworkController. Phone remains on r138; no partition was flashed.
+Private evidence/current chat outputs: r138-hardware-verification.txt and
+r138-manifest.json; raw captures work/agent-r138-usb.txt (symlink to the
+existing receiver's agent-r137-usb-2.txt), r138-emmc-ring.bin/.txt.
+
+The user selected an SSID for association, seen on channel11. Its name and
+BSSID stay in current chat private outputs/work, not this repository. The
+user offered a password; none was supplied/requested because management
+association can be tested first. WPA handshake/key installation remains.
+
+Patch0235/r139 adds opt-in exact SSID selection from hex boot arg riverwifi,
+beacon rate/capability/DTIM/RSN capture, WPA2-PSK/CCMP selection (rejecting
+mandatory PMF, unsupported basic rates or unsupported security), and bounded
+unicast management TX. PREASSOC -> JOIN -> CONFIG_BSS -> open-system auth ->
+association -> POSTASSOC/CONFIG_BSS/CONFIG_STA follows upstream smd/main.
+No controlled data port is opened and no key is installed. RX logs EAPOL
+arrival only. Failure deletes the BSS and returns link state to IDLE.
+HAL transport now encodes full32-bit lengths and bounds payloads at1024;
+470-byte non-VHT BSS and114-byte STA messages are byte-checked against the
+actual upstream hal.h types. Buffers and DMA lifetime stay permanent.
+
+Local arm64 object compile and ASan/UBSan fixture passed: exact target match,
+RSN lengths/MFPR rejection, accepted auth/assoc flow, rejected-auth cleanup,
+and complete HAL wire equivalence over wrapped SMD packets. These are host
+fixtures, not hardware association evidence. CI/device results pending.
+Local staging ci-r133/sweet_keys.c now contains r139. Current packaging
+supports per-revision cmdlines; private r139 line is547 bytes, preserving
+all prior display/firmware settings and adding only the selected SSID hex.
+No password is in the kernel, boot image or repository. Request physical
+fastboot only when the next verified image is ready.
+
 ## River r137 real 802.11 RX verified; r138 probe TX prepared (2026-10-25)
 
 r137 c8b0e56 / Actions 40233996613 passed CI and RAM-only fastboot boot.
