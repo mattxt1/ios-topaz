@@ -1,0 +1,338 @@
+From: mattxt1 <matttysonx1@gmail.com>
+Subject: [PATCH] RIVER: gate encrypted data on a matched DHCP offer
+
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -5,6 +5,16 @@
+ #if defined(RIVER)
+ #include <sys/param.h>
+ #include <sys/random.h>
++#include <kern/locks.h>
++#include <sys/kpi_mbuf.h>
++#include <sys/sockio.h>
++#include <net/if.h>
++#include <net/if_types.h>
++#include <net/ethernet.h>
++#include <net/if_ether.h>
++#include <net/ether_if_module.h>
++#include <net/kpi_interface.h>
++#include <net/kpi_protocol.h>
+ #include <libkern/crypto/sha1.h>
+ #include <libkern/crypto/aes.h>
+ #include <sys/systm.h>
+@@ -672,11 +682,75 @@
+  river_wpa.pending_len = n;
+ }
+ 
++/* One encrypted DHCPDISCOVER is a data-path probe, not a lease or IP setup.
++ * Match a protected OFFER to our random XID/MAC before claiming RX success. */
++static uint8_t river_dhcp_xid[4];
++static bool river_dhcp_waiting, river_dhcp_offer;
++static unsigned river_encrypted_rx;
++static uint16_t
++river_ip_checksum(const uint8_t *p, unsigned n)
++{
++ uint32_t sum = 0;
++ for (unsigned i = 0; i+1 < n; i += 2) sum += ((unsigned)p[i]<<8)|p[i+1];
++ if (n & 1) sum += (unsigned)p[n-1]<<8;
++ while (sum>>16) sum = (sum&65535)+(sum>>16);
++ return ~sum;
++}
++static void
++river_encrypted_inspect(const volatile uint8_t *f, unsigned len, unsigned hlen, unsigned fc, uint32_t bd_flags)
++{
++ if (river_wpa.stage != 2 || (fc & 0x0c) != 8 || !(fc & 0x4000) ||
++     (bd_flags & 8) || (fc & 0x300) != 0x200 || hlen > len || len-hlen < 8 ||
++     !river_mac_equal(f+10, river_target.bssid)) return;
++ const volatile uint8_t *llc = f+hlen;
++ static const uint8_t ipllc[] = {170,170,3,0,0,0,8,0};
++ unsigned k;
++ for (k = 0; k < 8 && llc[k] == ipllc[k]; k++) {}
++ if (k != 8) return;
++ river_encrypted_rx++;
++ if (!river_dhcp_waiting || len-hlen-8 < 20) return;
++ const volatile uint8_t *ip = llc+8;
++ unsigned avail = len-hlen-8, ihl = (ip[0]&15)*4, total = ((unsigned)ip[2]<<8)|ip[3];
++ if (ip[0]>>4 != 4 || ihl < 20 || ihl > avail || total > avail || total < ihl+8 ||
++     ip[9] != 17 || (ip[6]&0x3f) || ip[7]) return;
++ const volatile uint8_t *udp = ip+ihl;
++ unsigned ulen = ((unsigned)udp[4]<<8)|udp[5];
++ if (udp[0] || udp[1] != 67 || udp[2] || udp[3] != 68 || ulen < 248 || ulen > total-ihl) return;
++ const volatile uint8_t *bootp = udp+8;
++ unsigned n = ulen-8;
++ if (bootp[0] != 2 || bootp[1] != 1 || bootp[2] != 6 ||
++     !river_mac_equal(bootp+28, river_test_mac) || bootp[236] != 99 || bootp[237] != 130 || bootp[238] != 83 || bootp[239] != 99) return;
++ for (k = 0; k < 4 && bootp[4+k] == river_dhcp_xid[k]; k++) {}
++ if (k != 4) return;
++ unsigned type = 0;
++ for (unsigned off = 240; off < n;) {
++  unsigned id = bootp[off++];
++  if (!id) continue;
++  if (id == 255) break;
++  if (off >= n) return;
++  unsigned size = bootp[off++];
++  if (size > n-off) return;
++  if (id == 53 && size == 1) type = bootp[off];
++  off += size;
++ }
++ if (type == 2) {
++  river_dhcp_offer = true; river_dhcp_waiting = false;
++  printf("RIVER DATA: matched protected DHCP OFFER; encrypted TX/RX probe passed\n");
++ }
++}
++
++static void river_network_drop(void);
++static void river_network_rx(const volatile uint8_t *,unsigned,unsigned,unsigned,uint32_t);
+ static void
+ river_target_rx(const volatile uint8_t *f, unsigned len, unsigned hlen, unsigned fc)
+ {
+  if (!river_target.found || !river_mac_equal(f + 4, river_test_mac) ||
+      !river_mac_equal(f + 10, river_target.bssid)) return;
++ if (((fc & 0xfcu) == 0xa0 || (fc & 0xfcu) == 0xc0) && len >= 26) {
++  river_wpa.associated = false; river_wpa.stage = 3;
++  river_network_drop();
++  printf("RIVER NET: AP disconnected reason=%u; data link closed\n",river_le16(f+24));
++ }
+  if ((fc & 0xfcu) == 0xb0 && len >= 30 && river_le16(f+24) == 0 && river_le16(f+26) == 2) {
+   river_auth_seen = true; river_auth_status = river_le16(f+28);
+   printf("RIVER JOIN: authentication response status=%u\n", river_auth_status);
+@@ -724,6 +798,8 @@
+       river_rx_packets, river_scan_channel, fc, len,
+       (int)(river_bd_word(p + 28) >> 24) - 100);
+  river_target_rx(f, len, hlen, fc);
++ river_encrypted_inspect(f,len,hlen,fc,flags);
++ river_network_rx(f,len,hlen,fc,flags);
+  if ((fc & 0xfcu) != 0x80 && (fc & 0xfcu) != 0x50) return;
+  if (len < 36) { river_rx_bad++; return; }
+  river_target_capture(f, len);
+@@ -878,9 +954,9 @@
+  * No reuse until both descriptors return ownership; timeout stops TX. */
+ static unsigned river_data_pair;
+ static bool
+-river_eapol_tx(const uint8_t *eapol, unsigned n)
+-{
+- if (n < 99 || n > 512 || !river_dxe_ready || river_wpa.data_tx_stalled) return false;
++river_data_tx(const uint8_t *ethernet, unsigned n, bool encrypted)
++{
++ if (n < 14 || n > 1514 || (encrypted && river_wpa.stage != 2) || !river_dxe_ready || river_wpa.data_tx_stalled) return false;
+  volatile struct river_dxe_desc *ring = (volatile struct river_dxe_desc *)river_dxe_dma;
+  unsigned pair = river_data_pair;
+  volatile struct river_dxe_desc *bd = &ring[2*pair], *data = bd+1;
+@@ -889,18 +965,19 @@
+  volatile uint8_t *b = (volatile uint8_t *)(river_dxe_dma+0xb800), *f = b+0x100;
+  for (unsigned k = 0; k < 40; k++) b[k] = 0;
+  for (unsigned k = 0; k < 32; k++) f[k] = 0;
+- f[0] = 8; f[1] = 1; /* ToDS data */
+- for (unsigned k = 0; k < 6; k++) { f[4+k] = f[16+k] = river_target.bssid[k]; f[10+k] = river_test_mac[k]; }
+- static const uint8_t llc[] = {170,170,3,0,0,0,136,142};
++ f[0] = 8; f[1] = encrypted ? 0x41 : 1; /* ToDS data */
++ for (unsigned k = 0; k < 6; k++) { f[4+k] = river_target.bssid[k]; f[16+k] = ethernet[k]; f[10+k] = river_test_mac[k]; }
++ static const uint8_t llc[] = {170,170,3,0,0,0,0,0};
+  for (unsigned k = 0; k < 8; k++) f[24+k] = llc[k];
+- for (unsigned k = 0; k < n; k++) f[32+k] = eapol[k];
+- river_put_be32(b, (25u<<24) | (river_peer_sign<<21) | 8u);
++ f[30] = ethernet[12]; f[31] = ethernet[13];
++ for (unsigned k = 14; k < n; k++) f[32+k-14] = ethernet[k];
++ river_put_be32(b, (25u<<24) | (river_peer_sign<<21) | (encrypted ? 0 : 8u));
+  river_put_be32(b+12, (24u<<24) | (40u<<16) | (64u<<7));
+- river_put_be32(b+16, ((n+32)<<16) | (1u<<12));
++ river_put_be32(b+16, ((n+18)<<16) | (1u<<12));
+  river_put_be32(b+20, (river_peer_dpu<<24) | (river_peer_sta<<16) | (9u<<7));
+  river_put_be32(b+24, 0xbdbdbdbd);
+  bd->src = river_dxe_pa+0xb800; bd->dst = 6; bd->len = 40;
+- data->src = river_dxe_pa+0xb900; data->dst = 6; data->len = n+32;
++ data->src = river_dxe_pa+0xb900; data->dst = 6; data->len = n+18;
+  __asm__ volatile("dmb oshst" ::: "memory"); data->ctrl = 0x328a4d;
+  __asm__ volatile("dmb oshst" ::: "memory"); bd->ctrl = 0x308a45;
+  __asm__ volatile("dsb osh" ::: "memory");
+@@ -922,6 +999,16 @@
+  river_wpa.data_tx_stalled = true;
+  printf("RIVER WPA: EAPOL DMA stalled; buffers retained\n");
+  return false;
++}
++
++static bool
++river_eapol_tx(const uint8_t *eapol, unsigned n)
++{
++ if (n < 99 || n > 512) return false;
++ uint8_t ethernet[526] = {0};
++ memcpy(ethernet,river_target.bssid,6);memcpy(ethernet+6,river_test_mac,6);
++ ethernet[12]=136;ethernet[13]=142;memcpy(ethernet+14,eapol,n);
++ return river_data_tx(ethernet,n+14,false);
+ }
+ 
+ static bool
+@@ -1252,6 +1339,157 @@
+  done:
+  river_secret_clear(msg, sizeof(msg)); river_secret_clear(mic, sizeof(mic)); river_secret_clear(saved_mic, sizeof(saved_mic));
+ }
++/* Ethernet-facing ifnet over the already associated 802.11 link. This
++ * exposes wl0 for IP plumbing; it is not an IO80211Family/Wi-Fi UI service.
++ * Stack callbacks only enqueue copies. The WCNSS worker alone submits DMA. */
++static ifnet_t river_wifi_ifp;
++static lck_mtx_t *river_net_lock;
++static bool river_net_live;
++static struct { uint16_t len; uint8_t bytes[1514]; } river_net_queue[32];
++static unsigned river_net_head, river_net_count;
++static void river_network_rx(const volatile uint8_t *, unsigned, unsigned, unsigned, uint32_t);
++static void
++river_network_drop(void)
++{
++ if (!river_net_lock) return;
++ lck_mtx_lock(river_net_lock); river_net_live = false; river_net_count = 0;
++ lck_mtx_unlock(river_net_lock);
++ if (river_wifi_ifp) ifnet_set_flags(river_wifi_ifp, 0, IFF_RUNNING);
++}
++static errno_t
++river_net_output(ifnet_t ifp, mbuf_t m)
++{
++ size_t n = mbuf_pkthdr_len(m); bool queued = false;
++ lck_mtx_lock(river_net_lock);
++ if (river_net_live && river_net_count < 32 && n >= 14 && n <= 1514) {
++  unsigned slot = (river_net_head+river_net_count)%32;
++  if (!mbuf_copydata(m,0,n,river_net_queue[slot].bytes)) {
++   river_net_queue[slot].len = n; river_net_count++; queued = true;
++  }
++ }
++ lck_mtx_unlock(river_net_lock);
++ mbuf_freem(m);
++ if (!queued) ifnet_stat_increment_out(ifp,0,0,1);
++ return 0;
++}
++static errno_t
++river_net_ioctl(ifnet_t ifp, unsigned long cmd, void *data __unused)
++{
++ switch (cmd) {
++ case SIOCSIFADDR: case SIOCAIFADDR: ifnet_set_flags(ifp,IFF_UP,IFF_UP); return 0;
++ case SIOCSIFFLAGS: case SIOCADDMULTI: case SIOCDELMULTI: return 0;
++ default: return EOPNOTSUPP;
++ }
++}
++static void
++river_net_detach(ifnet_t ifp __unused)
++{
++ river_network_drop();
++}
++static void
++river_network_create(void)
++{
++ if (!river_dhcp_offer || river_wpa.stage != 2 || river_wifi_ifp) return;
++ lck_grp_t *group = lck_grp_alloc_init("river_wifi", LCK_GRP_ATTR_NULL);
++ if (!group) return;
++ river_net_lock = lck_mtx_alloc_init(group,LCK_ATTR_NULL);
++ if (!river_net_lock) return;
++ struct ifnet_init_eparams init = {0};
++ init.ver=IFNET_INIT_CURRENT_VERSION;init.len=sizeof(init);init.flags=IFNET_INIT_LEGACY;
++ init.uniqueid="river-wcn36xx";init.uniqueid_len=sizeof("river-wcn36xx")-1;
++ init.name="wl";init.unit=0;init.family=IFNET_FAMILY_ETHERNET;init.type=IFT_ETHER;
++ init.output=river_net_output;init.demux=ether_demux;init.add_proto=ether_add_proto;
++ init.del_proto=ether_del_proto;init.check_multi=ether_check_multi;
++ init.framer_extended=ether_frameout_extended;init.ioctl=river_net_ioctl;init.detach=river_net_detach;
++ init.broadcast_addr=etherbroadcastaddr;init.broadcast_len=6;
++ if (ifnet_allocate_extended(&init,&river_wifi_ifp)) {river_wifi_ifp=NULL;return;}
++ ifnet_set_addrlen(river_wifi_ifp,6);ifnet_set_hdrlen(river_wifi_ifp,14);
++ ifnet_set_mtu(river_wifi_ifp,1500);ifnet_set_baudrate(river_wifi_ifp,54000000);
++ ifnet_set_flags(river_wifi_ifp,IFF_BROADCAST|IFF_SIMPLEX|IFF_MULTICAST,0xffff);
++ if (ifnet_attach(river_wifi_ifp,NULL)) {
++  ifnet_release(river_wifi_ifp);river_wifi_ifp=NULL;return;
++ }
++ ifnet_set_lladdr(river_wifi_ifp,river_test_mac,6);
++ errno_t err=proto_plumb(PF_INET,river_wifi_ifp);
++ if (!err) {
++  lck_mtx_lock(river_net_lock);river_net_live=true;lck_mtx_unlock(river_net_lock);
++  ifnet_set_flags(river_wifi_ifp,IFF_UP|IFF_RUNNING,IFF_UP|IFF_RUNNING);
++ }
++ printf("RIVER NET: wl0 Ethernet-facing Wi-Fi ifnet attached IPv4-plumb=%d; DHCP address not configured\n",err);
++}
++static void
++river_network_poll(void)
++{
++ if (!river_net_lock || !river_wifi_ifp) return;
++ uint8_t ethernet[1514];unsigned n=0;
++ lck_mtx_lock(river_net_lock);
++ if (river_net_live && river_net_count) {
++  unsigned slot=river_net_head;n=river_net_queue[slot].len;
++  memcpy(ethernet,river_net_queue[slot].bytes,n);
++  river_net_head=(slot+1)%32;river_net_count--;
++ }
++ lck_mtx_unlock(river_net_lock);
++ if (n) {
++  bool ok=river_data_tx(ethernet,n,true);
++  ifnet_stat_increment_out(river_wifi_ifp,ok?1:0,ok?n:0,ok?0:1);
++  if (!ok) river_network_drop();
++ }
++}
++static void
++river_network_rx(const volatile uint8_t *f,unsigned len,unsigned hlen,unsigned fc,uint32_t flags)
++{
++ if (!river_wifi_ifp || !river_net_live || river_wpa.stage!=2 || !(fc&0x4000) || (flags&8) ||
++     (fc&0x30c)!=0x208 || (fc&0x40) || hlen<24 || hlen>len || len-hlen<8 ||
++     !river_mac_equal(f+10,river_target.bssid)) return;
++ /* A-MSDU subframes require a separate deaggregator. */
++ if ((fc&0x80) && (hlen<26 || (f[24]&0x80))) return;
++ const volatile uint8_t *p=f+hlen;
++ static const uint8_t llc[]={170,170,3,0,0,0};
++ unsigned k;
++ for (k=0;k<6 && p[k]==llc[k];k++) {}
++ if (k!=6 || (p[6]==136 && p[7]==142)) return;
++ unsigned n=len-hlen-8+14;if(n>1514)return;
++ uint8_t ethernet[1514];
++ for(k=0;k<6;k++){ethernet[k]=f[4+k];ethernet[6+k]=f[16+k];}
++ ethernet[12]=p[6];ethernet[13]=p[7];
++ for(k=8;k<len-hlen;k++)ethernet[14+k-8]=p[k];
++ mbuf_t m=NULL;
++ if(mbuf_allocpacket(MBUF_DONTWAIT,n,NULL,&m)||mbuf_copyback(m,0,n,ethernet,MBUF_DONTWAIT)){
++  if(m)mbuf_freem(m);return;
++ }
++ void *header=mbuf_data(m);
++ mbuf_pkthdr_setrcvif(m,river_wifi_ifp);mbuf_pkthdr_setheader(m,header);
++ mbuf_pkthdr_adjustlen(m,-14);mbuf_setdata(m,(char*)header+14,mbuf_len(m)-14);
++ struct ifnet_stat_increment_param stats={0};stats.packets_in=1;stats.bytes_in=n;
++ ifnet_input(river_wifi_ifp,m,&stats);
++}
++
++static void
++river_dhcp_probe(void)
++{
++ if (river_wpa.stage != 2 || !river_wpa.keys_installed) return;
++ uint8_t ethernet[342] = {0};
++ for (unsigned k = 0; k < 6; k++) { ethernet[k] = 255; ethernet[6+k] = river_test_mac[k]; }
++ ethernet[12] = 8;
++ uint8_t *ip = ethernet+14, *udp = ip+20, *b = udp+8;
++ ip[0] = 0x45; river_be_put16(ip+2, sizeof(ethernet)-14); ip[8] = 64; ip[9] = 17;
++ memset(ip+16, 255, 4); river_be_put16(ip+10, river_ip_checksum(ip,20));
++ river_be_put16(udp,68); river_be_put16(udp+2,67); river_be_put16(udp+4,sizeof(ethernet)-34);
++ b[0] = 1; b[1] = 1; b[2] = 6;
++ read_random(river_dhcp_xid,4); memcpy(b+4,river_dhcp_xid,4); b[10] = 0x80;
++ memcpy(b+28,river_test_mac,6); b[236]=99;b[237]=130;b[238]=83;b[239]=99;
++ unsigned n=240;
++ b[n++]=53;b[n++]=1;b[n++]=1; /* DISCOVER */
++ b[n++]=61;b[n++]=7;b[n++]=1;memcpy(b+n,river_test_mac,6);n+=6;
++ b[n++]=55;b[n++]=4;b[n++]=1;b[n++]=3;b[n++]=6;b[n++]=51;b[n++]=255;
++ river_dhcp_waiting = true;
++ bool sent = river_data_tx(ethernet,sizeof(ethernet),true);
++ for (unsigned w=0; sent && !river_dhcp_offer && w<300; w++) { river_dxe_poll();ri_wait(10); }
++ river_dhcp_waiting = false;
++ if (river_dhcp_offer) river_network_create();
++ printf("RIVER DATA: encrypted DHCP probe DMA=%u matched-offer=%u protected-IPv4=%u; no lease requested\n",sent,river_dhcp_offer,river_encrypted_rx);
++}
++
+ static void
+ river_wpa_run(vm_offset_t smem, uint32_t info, uint32_t fifo, vm_offset_t ipc)
+ {
+@@ -1259,6 +1497,7 @@
+  for (unsigned w = 0; w < 1000 && river_dxe_ready; w++) {
+   river_dxe_poll(); river_wpa_step(smem, info, fifo, ipc); ri_wait(10);
+  }
++ river_dhcp_probe();
+  printf("RIVER WPA: initial window complete stage=%u keys-attempted=%u; no IP interface published\n",
+      river_wpa.stage, river_wpa.keys_installed);
+ }
+@@ -2494,6 +2733,7 @@
+   printf("RIVER DXE: persistent 10ms RX polling started\n");
+   for (unsigned ticks = 0; river_dxe_ready; ticks++) {
+    river_dxe_poll();
++   river_network_poll();
+    if (ticks && ticks % 3000 == 0)
+     printf("RIVER RX: total=%llu bad=%llu beacons=%llu BSS=%u\n",
+         river_rx_packets, river_rx_bad, river_rx_beacons, river_bss_count);

@@ -1,5 +1,38 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River initial WPA2 gate verified; encrypted data/ifnet prepared (2026-10-25)
+
+r140 generic kernel82021af / Actions40237954598 passed CI and RAM-only test.
+The initial WPA2 exchange reached M1/M2, authenticated M3/key-data unwrap,
+firmware pairwise/group key-install status0, M4 DMA completion and stage2.
+Complete console-ring read independently confirms this. Key bytes are never
+logged. No usable IP interface was published by that image. Detailed private
+network/device evidence remains local in the current chat outputs/work.
+Phone remains running r140. No partition was flashed.
+
+Patch0237/r141 generalizes bounded TX_LOW to protected Ethernet data and
+sends one DHCPDISCOVER after the initial WPA gate. Only a protected DHCP
+OFFER matching the random XID/client MAC permits wl0 creation; no lease is
+requested by this probe. wl0 is an Ethernet-facing legacy ifnet with IPv4
+plumbing, not an IO80211Family or native Wi-Fi UI service. Stack callbacks
+enqueue bounded packet copies; only WCNSS worker submits DMA. RX converts
+protected FromDS LLC packets, rejecting plaintext/wrong BSSID/null/A-MSDU.
+AP disconnect/TX failure closes the data link. No automatic IP configuration,
+group rekey, reconnect, multicast policy or native Wi-Fi service is provided.
+
+Local arm64 object compile passed before final queue integration; final
+compile/CI/device data test pending. ASan/UBSan tests passed max-frame TX,
+ring wrap, original EAPOL framing, DHCP checksum/XID/client matching and
+malformed/plaintext/fragment rejection. Separate ifnet KPI fixture passed
+publication gate,32-slot queue/mbuf lifetime, Ethernet RX, rejected frames
+and TX-failure shutdown. Hardware crypto/data operation remains unverified.
+Generic source contains no target network identity or key. CI remains
+credential-free; private local packaging includes the PMK blob in work/
+with owner-only permissions. Do not print/upload/commit private key/image.
+Current local source work/sweet_keys.r141.c; source generator/fixtures there;
+previous ci-r133 staging is r141. Temporary fastboot boot only; ask for the
+physical fastboot handoff only after next image packaging passes.
+
 ## River association milestone and generic WPA2 gate (2026-10-25)
 
 r139 kernel09ecfb5 / Actions40236523414 passed RAM-only hardware testing:
