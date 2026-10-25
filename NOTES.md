@@ -1,5 +1,33 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River r136 DXE hardware initialization verified (2026-10-25)
+
+RAM-only r136 (kernel commit 7aba467, Actions 40231286067) booted on the
+phone and repeated HAL_START_RSP status=0, stations=41, bssids=2, API1.5.1.2.
+The four DXE rings initialized at physical addresses:
+TX_LOW 128 descriptors 0x1e634000; TX_HIGH 10 at 0x1e635000;
+RX_LOW 512 at 0x1e635140; RX_HIGH 40 at 0x1e639140.
+The permanent 32-bit DMA pool is 0x1e634000+0x238000, with RX buffer end
+0x238000. CSR 0x1c89, RX enabled mask 0xa, errors=0, IRQ mask=0.
+After 100ms: enabled=0xa, done=0, errors=0, raw_irq=0, RX_LOW/HIGH status=0x9.
+USB ping returned 2/2 replies and live iOS console continued. No reset or
+panic was observed. The phone remains running r136; do not reboot merely
+to recheck these results. No partition was flashed; cmdline is 504 bytes.
+
+Exact selected readbacks: current chat outputs/r136-hardware-verification.txt;
+full live capture: work/agent-r136-usb-1.txt. The full console ring was saved as work/r136-emmc-ring.bin (4,198,400
+bytes), decoded successfully, and independently confirmed all DXE results.
+SSH netprobe succeeded after the transfer: ue0 and virtual interfaces only;
+no IONetworkController exists. No Wi-Fi interface is claimed.
+
+This proves initial ring/channel setup, not successful frame TX/RX or Wi-Fi.
+TX descriptors remain invalid and RX IRQs masked. Next: implement persistent
+RX polling/reclaim with DMA ownership/barriers, bounded TX BD+payload pairs,
+then firmware scan/channel/BSS commands to verify real 802.11 traffic.
+Only subsequently implement association/security and a network interface.
+Keep DMA pool lifetime permanent while channels run; preserve 32-bit DMA
+constraints, 16KiB XNU map alignment, RF pinmux before auth and XO48.
+
 ## River HAL START success and DXE ring work (2026-10-25, r135/r136)
 
 r135 commit c620dcf / Actions 40230501719 passed CI and RAM-only boot.
@@ -25,10 +53,8 @@ association or iOS Wi-Fi interface exists yet. Actions 40231286067 passed; verif
 chat outputs/river-r136-wcnss-boot.img, SHA256
 473bc9cbdc50c695388a2ad9e4d205d570432d2245cd44151cd9fde47c9d74b5.
 Kernel manifest matched; payload roundtrip and all four firmware blobs
-matched; cmdline remains 504 bytes. Hardware test is pending return to
-fastboot (requested from user); r135 was last observed running. Do not
-claim DXE hardware initialization until the new image is booted and readbacks
-are captured. r135 full ring capture was saved and decoded successfully.
+matched; cmdline remains 504 bytes. Hardware initialization has now passed (see r136 result above).
+r135 full ring capture was saved and decoded successfully.
 
 ## River r134 result and r135 RF prerequisites (2026-10-25)
 
