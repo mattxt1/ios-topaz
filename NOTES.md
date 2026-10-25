@@ -1,5 +1,42 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River r137 real 802.11 RX verified; r138 probe TX prepared (2026-10-25)
+
+r137 c8b0e56 / Actions 40233996613 passed CI and RAM-only fastboot boot.
+Image SHA256 0440c79d2ed28ac77b652003044c3148e2dc64ab1234948ee5d4e96fe1b8c7fe;
+all four private firmware blobs match, cmdline504. HAL_START status0 repeats.
+DXE pool this boot is 0x1e338000+0x238000; RX enabled0xa, initial errors0.
+Actual frame RX is now observed: first passive channel1-11 scan received63
+beacon/probe-response frames, malformed BD0, BSS table filled32 (capacity,
+not a claim that only32 networks exist). All INIT/START/END/FINISH replies
+status0. The first16 decoded frames are beacons (FC0x80), with plausible
+RSSI/lengths. A placement bug caused scanning on each remaining startup
+survey iteration: final scan total1207, malformed0, BSS32, then persistent
+10ms polling started. No RX error/panic was logged. This also exercises
+ring recycling well beyond the combined552 RX descriptors. USB ping2/2;
+initial SSH netprobe reports USB/virtual interfaces only, no network controller.
+No association or usable Wi-Fi interface is claimed.
+
+Private evidence is in the CURRENT chat work/agent-r137-usb-1.txt and
+work/r137-emmc-ring.bin (transfer/independent decode pending at note time).
+Current chat is Documents/Codex/2026-10-25/continue-my-moto-g7-xnu-wi.
+The user manually supplied fastboot; boot succeeded without flashing.
+
+Patch0234/r138 fixes scan repetition with a per-probe attempt flag and adds
+HAL ADD_STA_SELF with a locally administered test MAC, plus one broadcast
+wildcard probe per successfully started channel. Five TX_HIGH descriptor
+pairs use the existing unused pool gap0x6000..0xb500: 40-byte big-endian BD
+and36-byte probe payload, payload VALID before BD VALID, barriers before
+channel start. Each pair waits at most200ms; timeout permanently withholds
+further TX and retains the DMA storage. No ACK is expected for broadcast;
+DMA completion is not OTA proof. RX separately counts probe responses
+addressed to the test MAC, which can provide evidence of radio transmission.
+Local arm64 compile and ASan/UBSan TX harness passed (fields, addresses,
+ring wrap, completion, timeout retention, targeted-probe-response accounting).
+Upstream hal.h layout checks passed; ADD_STA_SELF sizes18/15.
+CI, packaging and r138 hardware testing remain pending. Phone is on r137;
+request physical fastboot only when the next verified image is ready.
+
 ## River r137 RX reclaim and passive scan (2026-10-25, prepared)
 
 Patch 0233 adds a single-owner WCNSS worker RX path: persistent 10ms
