@@ -1,17 +1,17 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 19:35:00 -0400
-Subject: [PATCH] RIVER: ring periodic doorbells, monitor GIC and WCNSS SMD/SMP2P
+Date: Sat, 24 Oct 2026 20:00:00 -0400
+Subject: [PATCH] RIVER: allocate SMP2P item 431 outbound, monitor inbound 451 and SMD channels
 
 ---
- bsd/dev/sweet_keys.c | 200 +++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 200 insertions(+)
+ bsd/dev/sweet_keys.c | 203 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 203 insertions(+)
 
 diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
-index 64d5c62..cfdca30 100644
+index 64d5c62..6c17fcf 100644
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -753,6 +753,206 @@ river_wcnss_probe(void)
+@@ -753,6 +753,209 @@ river_wcnss_probe(void)
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -47,27 +47,27 @@ index 64d5c62..cfdca30 100644
 +  printf("RIVER WCNSS: PAS 6 auth_and_reset status %lld result %llu\n", ast, ares);
 +  if (ast == 0 && ares == 0) {
 +   printf("RIVER WCNSS: Pronto v3 brought out of reset!\n");
-+   unsigned ent451 = SMEM_TOC + 451 * SMEM_ENTRY;
-+   uint32_t alloc451 = ri_rd(smem, ent451);
++   unsigned ent431 = SMEM_TOC + 431 * SMEM_ENTRY;
++   uint32_t alloc431 = ri_rd(smem, ent431);
 +   uint32_t smp_buf = 0;
-+   if (!alloc451) {
++   if (!alloc431) {
 +    uint32_t foff = ri_rd(smem, 0xc4);
 +    uint32_t favail = ri_rd(smem, 0xc8);
 +    uint32_t req_sz = 344;
 +    if (favail >= req_sz && foff + req_sz <= SMEM_SIZE) {
 +     smp_buf = foff;
-+     ri_wr(smem, ent451 + 4, foff);
-+     ri_wr(smem, ent451 + 8, req_sz);
-+     ri_wr(smem, ent451 + 12, 0);
++     ri_wr(smem, ent431 + 4, foff);
++     ri_wr(smem, ent431 + 8, req_sz);
++     ri_wr(smem, ent431 + 12, 0);
 +     __asm__ volatile("dmb sy" ::: "memory");
-+     ri_wr(smem, ent451, 1);
++     ri_wr(smem, ent431, 1);
 +     ri_wr(smem, 0xc4, foff + req_sz);
 +     ri_wr(smem, 0xc8, favail - req_sz);
-+     printf("RIVER WCNSS: allocated SMEM item 451 at offset %#x size %u\n", smp_buf, req_sz);
++     printf("RIVER WCNSS: allocated SMEM item 431 at offset %#x size %u\n", smp_buf, req_sz);
 +    }
 +   } else {
-+    smp_buf = ri_rd(smem, ent451 + 4);
-+    printf("RIVER WCNSS: SMEM item 451 already allocated at offset %#x\n", smp_buf);
++    smp_buf = ri_rd(smem, ent431 + 4);
++    printf("RIVER WCNSS: SMEM item 431 already allocated at offset %#x\n", smp_buf);
 +   }
 +   if (smp_buf && smp_buf < SMEM_SIZE) {
 +    for (unsigned i = 0; i < 344; i += 4) ri_wr(smem, smp_buf + i, 0);
@@ -82,7 +82,7 @@ index 64d5c62..cfdca30 100644
 +    ri_wr(smem, smp_buf + 36, 0);
 +    __asm__ volatile("dmb sy" ::: "memory");
 +    ri_wr(smem, smp_buf + 4, 1);
-+    printf("RIVER WCNSS: initialized SMP2P item 451 master-kernel (version 1)\n");
++    printf("RIVER WCNSS: initialized outbound SMP2P item 431 master-kernel (version 1)\n");
 +   }
 +   vm_offset_t ipc_page2 = ml_io_map_unmappable(0x0b010000, 0x4000, VM_WIMG_IO);
 +   vm_offset_t ipc_reg2 = ipc_page2 ? (ipc_page2 + 0x1008) : 0;
@@ -122,24 +122,27 @@ index 64d5c62..cfdca30 100644
 +      printf("RIVER WCNSS: SMEM 422 SFR (waited %u ms): [%s]\n", (w + 1) * 100, sfr);
 +     }
 +    }
-+    unsigned ent431 = SMEM_TOC + 431 * SMEM_ENTRY;
-+    if (ri_rd(smem, ent431)) {
-+     uint32_t o431 = ri_rd(smem, ent431 + 4);
-+     uint32_t l431 = ri_rd(smem, ent431 + 8);
-+     if (o431 < SMEM_SIZE && l431 >= 20) {
-+      uint32_t m431 = ri_rd(smem, o431);
-+      uint32_t v431 = ri_rd(smem, o431 + 4);
-+      uint32_t p431 = ri_rd(smem, o431 + 8);
-+      uint32_t e431 = ri_rd(smem, o431 + 12);
++    unsigned ent451 = SMEM_TOC + 451 * SMEM_ENTRY;
++    if (ri_rd(smem, ent451)) {
++     uint32_t o451 = ri_rd(smem, ent451 + 4);
++     uint32_t l451 = ri_rd(smem, ent451 + 8);
++     if (o451 < SMEM_SIZE && l451 >= 20) {
++      uint32_t m451 = ri_rd(smem, o451);
++      uint32_t v451 = ri_rd(smem, o451 + 4);
++      uint32_t p451 = ri_rd(smem, o451 + 8);
++      uint32_t e451 = ri_rd(smem, o451 + 12);
 +      char ename[17];
 +      for (unsigned j = 0; j < 16; j++) {
-+       unsigned char c = *(volatile unsigned char *)(smem + o431 + 20 + j);
++       unsigned char c = *(volatile unsigned char *)(smem + o451 + 20 + j);
 +       ename[j] = (c >= 0x20 && c <= 0x7e) ? (char)c : 0;
 +      }
 +      ename[16] = 0;
-+      uint32_t eval = ri_rd(smem, o431 + 36);
-+      printf("RIVER WCNSS: SMP2P-in 431 magic %#x ver %#x pids %#x ent %#x entry0 '%s' val %#x (waited %u ms)\n",
-+          m431, v431, p431, e431, ename, eval, (w + 1) * 100);
++      uint32_t eval = ri_rd(smem, o451 + 36);
++      printf("RIVER WCNSS: SMP2P-in 451 magic %#x ver %#x pids %#x ent %#x entry0 '%s' val %#x (waited %u ms)\n",
++          m451, v451, p451, e451, ename, eval, (w + 1) * 100);
++      if (eval & 2) {
++       printf("RIVER WCNSS: Pronto err-ready is ASSERTED (val=%#x)! Pronto handshake complete!\n", eval);
++      }
 +     }
 +    }
 +    static const unsigned tbls[] = { 13, 266 };
