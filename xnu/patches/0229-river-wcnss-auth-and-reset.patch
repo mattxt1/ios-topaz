@@ -4,8 +4,8 @@ Date: Sun, 25 Oct 2026 00:05:00 -0400
 Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 
 ---
- bsd/dev/sweet_keys.c | 678 ++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 678 insertions(+)
+ bsd/dev/sweet_keys.c | 679 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 679 insertions(+)
 
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
@@ -45,7 +45,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
   printf("RIVER WCNSS: PAS mem_setup about to call for %#x+%#x (image %#llx)\n",
       WCNSS_PA, WCNSS_SIZE, image_pa);
   ri_wait(12000);
-@@ -753,6 +775,662 @@
+@@ -753,6 +775,663 @@
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -85,16 +85,6 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +   printf("RIVER WCNSS: Iris XO configured (pmu_cfg %#x); waiting 20ms...\n", ri_rd(pmu, 0x04));
 +   delay(20000);
 +   ml_io_unmap(pmu, 0x4000);
-+  }
-+  vm_offset_t tlmm = ml_io_map_unmappable(0x01000000, 0x100000, VM_WIMG_IO);
-+  if (tlmm) {
-+   uint32_t old76 = ri_rd(tlmm, 76 * 0x1000);
-+   for (unsigned g = 76; g <= 80; g++) {
-+    ri_wr(tlmm, g * 0x1000, (2u << 6) | (1u << 2));
-+   }
-+   printf("RIVER WCNSS: configured TLMM GPIO 76-80 5-wire WLAN pinmux (76 was %#x, now %#x)\n",
-+       old76, ri_rd(tlmm, 76 * 0x1000));
-+   ml_io_unmap(tlmm, 0x100000);
 +  }
 +  printf("RIVER WCNSS: invoking PAS 6 auth_and_reset...\n");
 +  uint64_t ares = 0;
@@ -488,6 +478,18 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +       }
 +      }
 +      if (wlan_tx == 2 && wlan_rx == 2 && wlan_nv_done && !wlan_start_sent) {
++       vm_offset_t tlmm = ml_io_map_unmappable(0x01000000, 0x100000, VM_WIMG_IO);
++       if (tlmm) {
++        uint32_t old76 = ri_rd(tlmm, 76 * 0x1000);
++        for (unsigned g = 76; g <= 80; g++) {
++         ri_wr(tlmm, g * 0x1000, (2u << 6) | (1u << 2) | 3u);
++        }
++        printf("RIVER WCNSS: configured TLMM GPIO 76-80 5-wire WLAN pinmux (76 was %#x, now %#x)
+",
++            old76, ri_rd(tlmm, 76 * 0x1000));
++        ml_io_unmap(tlmm, 0x100000);
++        delay(5000);
++       }
 +       static const uint32_t wcn36xx_default_cfgs[] = {
 +        0x00040001, 0x00000000, 0x00000001,
 +        0x00040002, 0x00000000, 0x00000001,
