@@ -17,6 +17,9 @@
 #include <sys/socket.h>
 #include <sys/sockio.h>
 #include <time.h>
+_Static_assert(sizeof(struct ifaliasreq)==64,"ifaliasreq ABI");
+_Static_assert(sizeof(struct rt_msghdr)==92,"route ABI");
+_Static_assert(sizeof(struct bpf_hdr)==20,"BPF ABI");
 #include <unistd.h>
 static uint8_t mac[6],xid[4],offered[4],server[4],mask[4],gateway[4],dns[4];
 static uint16_t be16(const uint8_t*p){return ((unsigned)p[0]<<8)|p[1];}
@@ -86,7 +89,23 @@ static void dhcp(const char*name,int adddefault){
  if(adddefault){if(!memcmp(gateway,"\0\0\0\0",4)){fprintf(stderr,"no DHCP gateway\n");exit(1);}default_route(name);puts("default route installed");}
  puts("DHCP ACK accepted and address configured (diagnostic lease; no renewal daemon)");
 }
+static void tcp_probe(const char*name,const char*address,unsigned port){
+ unsigned index=if_nametoindex(name);if(!index){fprintf(stderr,"interface unavailable\n");exit(1);}
+ int fd=socket(AF_INET,SOCK_STREAM,0);if(fd<0)fail("TCP socket");
+ if(setsockopt(fd,IPPROTO_IP,IP_BOUND_IF,&index,sizeof(index)))fail("bind interface");
+ int flags=fcntl(fd,F_GETFL,0);fcntl(fd,F_SETFL,flags|O_NONBLOCK);
+ struct sockaddr_in a={0};a.sin_len=sizeof(a);a.sin_family=AF_INET;a.sin_port=htons(port);
+ if(inet_pton(AF_INET,address,&a.sin_addr)!=1){fprintf(stderr,"invalid IPv4 address\n");exit(2);}
+ if(connect(fd,(void*)&a,sizeof(a))&&errno!=EINPROGRESS)fail("TCP connect");
+ struct pollfd p={fd,POLLOUT,0};if(poll(&p,1,5000)<=0){fprintf(stderr,"TCP connect timeout\n");exit(1);}
+ int err=0;socklen_t z=sizeof(err);getsockopt(fd,SOL_SOCKET,SO_ERROR,&err,&z);if(err){errno=err;fail("TCP connection result");}
+ fcntl(fd,F_SETFL,flags);struct timeval timeout={5,0};setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));
+ printf("TCP connected via %s to %s:%u\n",name,address,port);
+ if(port==80){char request[256];int n=snprintf(request,sizeof(request),"GET / HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n",address);if(send(fd,request,n,0)!=n)fail("HTTP request");char reply[1024];ssize_t got=recv(fd,reply,sizeof(reply)-1,0);if(got<=0)fail("HTTP read");reply[got]=0;char*end=strstr(reply,"\r\n");if(end)*end=0;printf("HTTP response: %.200s\n",reply);}
+ close(fd);
+}
 int main(int argc,char**argv){
+ if(argc==5&&!strcmp(argv[1],"tcp")){unsigned p=(unsigned)strtoul(argv[4],NULL,10);if(!p||p>65535)return 2;tcp_probe(argv[2],argv[3],p);return 0;}
  if(argc>=3&&!strcmp(argv[1],"dhcp")){dhcp(argv[2],argc==4&&!strcmp(argv[3],"--default"));return 0;}
- fprintf(stderr,"usage: river-net dhcp IFACE [--default]\n");return 2;
+ fprintf(stderr,"usage: river-net dhcp IFACE [--default] | tcp IFACE IPv4 PORT\n");return 2;
 }

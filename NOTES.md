@@ -7,15 +7,16 @@ XNU if_fake, needed for initial DHCP before an address exists. The existing
 kernel contains real BPF implementations (symbols verified). Local arm64
 compile and the extended ASan/UBSan ifnet fixture pass attachment/tap/header
 placement and original queue/RX/failure tests. Generic kernel source has no
-network identity or credentials. r141 CI run40239108158 was still compiling
-when this missing plumbing was found; no r141 hardware boot occurred.
+network identity or credentials. r141 CI run40239108158 completed its build successfully before r142
+Actions40239587003 (daea611) was dispatched; no r141 hardware boot occurred.
 
 phone-tools/river-net.c is a bounded diagnostic DHCP helper: BPF DHCP
 DISCOVER/OFFER/REQUEST/ACK, strict XID/MAC/server/address/length checks,
 SIOCAIFADDR only after ACK, optional --default route. It does not renew or
 persist leases or configure DNS. Host ASan/UBSan tests pass framing/checksum,
 OFFER/ACK matching and every packet truncation. iOS16 arm64 build/ad-hoc
-signature passed. Runtime helper/interface are unverified. Install only to
+signature passed. Runtime helper/interface are unverified. The helper now also supports
+interface-bound TCP/HTTP probing and asserts the BSD ioctl/BPF ABI sizes. Install only to
 phone temporary storage for testing; no kernel partition writes.
 The cross-build uses iPhoneOS SDK and missing BSD public headers from the
 matching local macOS SDK; ABI layout/runtime checks still required on phone.
