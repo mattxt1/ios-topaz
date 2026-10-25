@@ -37,7 +37,12 @@ actual upstream hal.h types. Buffers and DMA lifetime stay permanent.
 Local arm64 object compile and ASan/UBSan fixture passed: exact target match,
 RSN lengths/MFPR rejection, accepted auth/assoc flow, rejected-auth cleanup,
 and complete HAL wire equivalence over wrapped SMD packets. These are host
-fixtures, not hardware association evidence. CI/device results pending.
+fixtures, not hardware association evidence. Actions40236523414 passed for
+09ecfb5. Verified r139 RAM image SHA256
+7e78bebc0ea7459e8f5472b0a0d6e506ffed7fe3181515febc081b37fffe2d0a;
+547-byte line, byte-identical blobs and payload roundtrip passed. A physical
+fastboot handoff was requested only after packaging verification. Hardware
+association remains unverified; phone is still on r138 until that handoff.
 Local staging ci-r133/sweet_keys.c now contains r139. Current packaging
 supports per-revision cmdlines; private r139 line is547 bytes, preserving
 all prior display/firmware settings and adding only the selected SSID hex.
