@@ -45,7 +45,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
   printf("RIVER WCNSS: PAS mem_setup about to call for %#x+%#x (image %#llx)\n",
       WCNSS_PA, WCNSS_SIZE, image_pa);
   ri_wait(12000);
-@@ -753,6 +775,491 @@
+@@ -753,6 +775,561 @@
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -402,24 +402,76 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +       printf("RIVER WCNSS: WLAN_CTRL transitioned tx to SMD_OPENED\n");
 +      }
 +      if (wlan_tx == 2 && wlan_rx == 2 && !wlan_start_sent && nv_download_acked) {
++       static const uint32_t wcn36xx_default_cfgs[] = {
++        0x00040001, 0x00000000, 0x00000001,
++        0x00040002, 0x00000000, 0x00000001,
++        0x00040003, 0x00000000, 0x00000000,
++        0x00040004, 0x00000000, 0x00000311,
++        0x00040005, 0x00000000, 0x00000005,
++        0x00040006, 0x00000000, 0x00000001,
++        0x00040007, 0x00000000, 0x00000000,
++        0x00040008, 0x00000000, 0x00000003,
++        0x00040009, 0x00000000, 0x00001770,
++        0x0004000a, 0x00000000, 0x00000040,
++        0x0004000b, 0x00000000, 0x0000092b,
++        0x0004000c, 0x00000000, 0x0000000f,
++        0x0004000d, 0x00000000, 0x0000000f,
++        0x0004000e, 0x00000000, 0x00001f40,
++        0x0004000f, 0x00000000, 0x00000005,
++        0x00040010, 0x00000000, 0x0000000a,
++        0x00040011, 0x00000000, 0x0000000f,
++        0x00040012, 0x00000000, 0x00000000,
++        0x00040013, 0x00000000, 0x00000004,
++        0x00040014, 0x00000000, 0x00000000,
++        0x00040015, 0x00000000, 0x00000000,
++        0x00040016, 0x00000000, 0x00000005,
++        0x00040017, 0x00000000, 0x00000001,
++        0x00040018, 0x00000000, 0x00000005,
++        0x0004001a, 0x00000000, 0x00000005,
++        0x0004001b, 0x00000000, 0x00000028,
++        0x0004001c, 0x00000000, 0x000000c8,
++        0x0004001d, 0x00000000, 0x00000001,
++        0x0004001e, 0x00000000, 0x00000001,
++        0x0004001f, 0x00000000, 0x00000014,
++        0x00040020, 0x00000000, 0x0000000a,
++        0x00040021, 0x00000000, 0x00007530,
++        0x00040022, 0x00000000, 0x00000000,
++        0x00040028, 0x00000000, 0x00000080,
++        0x00040029, 0x00000000, 0x00000a00,
++        0x00040039, 0x00000000, 0x00000000,
++        0x00040040, 0x00000000, 0x00000001,
++        0x0004004b, 0x00000000, 0x00000001,
++        0x00040063, 0x00000000, 0x00000000,
++        0x00040057, 0x00000000, 0x0001d4c0,
++        0x0004005b, 0x00000000, 0x00007530,
++        0x00040062, 0x00000000, 0x0000000a,
++        0x00040064, 0x00000000, 0x00000000,
++        0x000400d2, 0x00000000, 0x00000085,
++        0x000400d7, 0x00000000, 0x000003e8,
++       };
 +       uint32_t head = ri_rd(smem, wcnss_wlan_info + 16);
-+       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 0) & 8191), 20);
++       uint32_t n_cfgs = sizeof(wcn36xx_default_cfgs) / sizeof(wcn36xx_default_cfgs[0]);
++       uint32_t cfg_bytes = n_cfgs * 4;
++       uint32_t msg_len = 16 + cfg_bytes; /* 556 bytes */
++       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 0) & 8191), msg_len);
 +       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 4) & 8191), 0);
 +       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 8) & 8191), 0);
 +       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 12) & 8191), 0);
 +       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 16) & 8191), 0);
-+       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 20) & 8191), 0); /* WCN36XX_HAL_START_REQ */
-+       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 24) & 8191), 20); /* header.len */
-+       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 28) & 8191), 1);  /* trans_id */
-+       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 32) & 8191), 0);  /* DRIVER_TYPE_PRODUCTION */
-+       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 36) & 8191), 0);  /* params.len = 0 */
-+       head = (head + 40) & 8191;
++       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 20) & 8191), 0); /* WCN36XX_HAL_START_REQ (type=0, ver=0) */
++       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 24) & 8191), msg_len); /* header.len = 556 */
++       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 28) & 8191), 0); /* params.type = DRIVER_TYPE_PRODUCTION */
++       ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 32) & 8191), cfg_bytes); /* params.len = 540 */
++       for (uint32_t i = 0; i < n_cfgs; i++) {
++        ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 36 + i * 4) & 8191), wcn36xx_default_cfgs[i]);
++       }
++       head = (head + 20 + msg_len) & 8191;
 +       ri_wr(smem, wcnss_wlan_info + 16, head);
 +       ri_wr(smem, wcnss_wlan_info + 8, 1u | (1u << 16));
 +       __asm__ volatile("dmb sy" ::: "memory");
 +       if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
 +       wlan_start_sent = true;
-+       printf("RIVER WCNSS: sent WCN36XX_HAL_START_REQ on WLAN_CTRL (head=%u)!\n", head);
++       printf("RIVER WCNSS: sent WCN36XX_HAL_START_REQ (%u cfgs, %u bytes, head=%u)!\n", n_cfgs / 3, msg_len, head);
 +      }
 +      if (wlan_start_sent && wcnss_wlan_fifo) {
 +       uint32_t rx_fifo_off = wcnss_wlan_fifo + 8192;
@@ -431,11 +483,29 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +        uint16_t r_type = r_type_ver & 0xffff;
 +        uint16_t r_ver = (r_type_ver >> 16) & 0xffff;
 +        uint32_t r_len = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 24) & 8191));
-+        uint32_t r_status = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 28) & 8191));
-+        printf("RIVER WCNSS: WLAN_CTRL RX packet: smd_len=%u type=%u ver=%u len=%u status=%u (rx_h=%u rx_t=%u)\n",
-+            smd_len, r_type, r_ver, r_len, r_status, rx_h, rx_t);
-+        if (r_type == 1) {
-+         printf("RIVER WCNSS: WCN36XX HAL START RSP SUCCESS! status=%u\n", r_status);
++        uint32_t r_st_sta = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 28) & 8191));
++        uint16_t status = r_st_sta & 0xffff;
++        uint8_t stations = (r_st_sta >> 16) & 0xff;
++        uint8_t bssids = (r_st_sta >> 24) & 0xff;
++        uint32_t r_ver_word = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 32) & 8191));
++        uint8_t rev = r_ver_word & 0xff;
++        uint8_t ver = (r_ver_word >> 8) & 0xff;
++        uint8_t min = (r_ver_word >> 16) & 0xff;
++        uint8_t maj = (r_ver_word >> 24) & 0xff;
++        char crm[65];
++        char wlan[65];
++        for (int i = 0; i < 64; i++) {
++         crm[i] = (char)(ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 36 + (i & ~3)) & 8191)) >> ((i & 3) * 8));
++         wlan[i] = (char)(ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 100 + (i & ~3)) & 8191)) >> ((i & 3) * 8));
++        }
++        crm[64] = 0;
++        wlan[64] = 0;
++        printf("RIVER WCNSS: WLAN_CTRL RX: smd_len=%u type=%u ver=%u len=%u status=%u stations=%u bssids=%u API=%u.%u.%u.%u\n",
++            smd_len, r_type, r_ver, r_len, status, stations, bssids, maj, min, ver, rev);
++        printf("RIVER WCNSS: CRM build: %s\n", crm);
++        printf("RIVER WCNSS: WLAN version: %s\n", wlan);
++        if (r_type == 1 && status == 0) {
++         printf("RIVER WCNSS: WCN36XX HAL START SUCCESS!\n");
 +         wlan_start_acked = true;
 +        }
 +        unsigned total_adv = 20 + smd_len;
