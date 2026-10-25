@@ -1,5 +1,22 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River WCNSS pre-auth boot-test staging (2026-10-25, r134)
+
+Patch 0230 removes the r133 post-auth carveout mapping/write and applies the
+byte/halfword masks during the existing WC page copy, before AUTH_AND_RESET.
+The complete mode-3 copy is required before reset. START_REQ remains 16 bytes
+with params.len=0. Local compile against CI 40227960642 (de77294) passed.
+
+Correction to WCNSS-HANDOFF-2026-10-25.md: firmware linked base is 0x8e600000,
+relocated physical base is 0x8e700000. ELF VAs 0x8e9258b8 and 0x8e9452d0
+are image offsets 0x3258b8 / 0x3452d0, physical 0x8ea258b8 / 0x8ea452d0.
+The proposed offsets using VA minus physical base point into Thumb code.
+The actual r133 packaged image already has byte=1 and halfword=0 at the
+correct offsets; the dirty-RAM explanation for status 38 is NOT established.
+Runtime firmware may overwrite these values during boot. r133 XPU diagnosis
+remains a hypothesis from the reset, not a captured security fault report.
+CI dispatch, image packaging and device test pending. Do not claim HAL success.
+
 ## River RPM SMD handshake and regulator votes (2026-10-24)
 
 Patch 0228 adds an opt-in `riverwcnssrpm=1` sequence after the read-only

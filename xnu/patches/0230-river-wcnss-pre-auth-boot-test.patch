@@ -1,0 +1,60 @@
+From: mattxt1 <matttysonx1@gmail.com>
+Subject: [PATCH] RIVER: stage WCNSS boot-test data before PAS auth/reset
+
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -444,7 +444,24 @@
+    return;
+   }
+   volatile uint32_t *d = (volatile uint32_t *)page;
+-  for (unsigned i = 0; i < count / 4; i++) d[i] = image[off / 4 + i];
++  /* Fix the boot-test data while Pronto is still in reset.  After
++   * PAS_AUTH_AND_RESET, TZ's XPU forbids APPS access to this carveout.
++   * Firmware VAs use ELF base 0x8e600000; the staged image is relocated
++   * to WCNSS_PA (+1 MiB). Preserve neighboring bytes in each word. */
++  for (unsigned i = 0; i < count / 4; i++) {
++   unsigned image_off = off + i * 4;
++   uint32_t word = image[image_off / 4];
++   if (image_off == 0x8e9258b8u - 0x8e600000u) {
++    printf("RIVER WCNSS: pre-auth boot test byte %u -> 1 at PA %#x\n",
++        word & 0xff, WCNSS_PA + image_off);
++    word = (word & ~0xffu) | 1u;
++   } else if (image_off == 0x8e9452d0u - 0x8e600000u) {
++    printf("RIVER WCNSS: pre-auth boot test status %u -> 0 at PA %#x\n",
++        word & 0xffff, WCNSS_PA + image_off);
++    word &= ~0xffffu;
++   }
++   d[i] = word;
++  }
+   __asm__ volatile("dsb sy" ::: "memory");
+   printf("RIVER WCNSS: page write complete through %#x\n", off + count);
+   ml_io_unmap(page, PROBE_PAGE);
+@@ -777,6 +794,12 @@
+  }
+  uint32_t reset = 0;
+  if (PE_parse_boot_argn("riverwcnssreset", &reset, sizeof(reset)) && reset) {
++  if (load != 3) {
++   printf("RIVER WCNSS: auth/reset requires complete mode-3 firmware copy\n");
++   if (auxmem) ml_io_unmap(auxmem, 0x8000);
++   ml_io_unmap(smem, SMEM_SIZE);
++   return;
++  }
+   vm_offset_t gcc = ml_io_map_unmappable(0x01800000, 0x80000, VM_WIMG_IO);
+   if (gcc) {
+    ri_wr(gcc, 0x16008, (1u << 8) | 19u); /* GPLL0 / 10 = 80 MHz scm_core_clk_src */
+@@ -1233,15 +1256,6 @@
+              apps_smsm, new_apps);
+         }
+        }
+-       vm_offset_t test_page = ml_io_map_unmappable(0x8e924000, 0x24000, VM_WIMG_IO);
+-       if (test_page) {
+-        uint8_t old_b = *(volatile uint8_t *)(test_page + 0x18b8);
+-        *(volatile uint8_t *)(test_page + 0x18b8) = 1;
+-        uint16_t old_s = *(volatile uint16_t *)(test_page + 0x212d0);
+-        *(volatile uint16_t *)(test_page + 0x212d0) = 0;
+-        printf("RIVER WCNSS: boot test byte was %u, now 1; status was %u, now 0\n", old_b, old_s);
+-        ml_io_unmap(test_page, 0x24000);
+-       }
+        uint32_t head = ri_rd(smem, wcnss_wlan_info + 16);
+        uint32_t msg_len = 16; /* header (8) + params (8), len=0 (no startup TLVs, per wcn36xx_smd_start) */
+        ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 0) & 8191), msg_len);
