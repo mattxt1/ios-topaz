@@ -1,5 +1,25 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River r142 hardware result; r143 data TX correction (2026-10-25)
+
+r142 daea611 / Actions40239587003 passed CI and temporary RAM boot.
+Initial WPA gate passed again. Encrypted DHCP probe completed DMA, but no
+matching OFFER arrived in its bounded window (17 protected IPv4 frames).
+The complete console-ring read independently confirms this; wl0 stayed
+unpublished. No IP connectivity or BPF/helper runtime success is claimed.
+Phone remains on r142, no partition flash. Private image/key/logs stay local.
+
+Patch0239 follows upstream wcn36xx TX data settings: use queue0 for ordinary
+non-QoS data (queue9 is for management/null), and take the peer DPU signature
+from CONFIG_STA instead of CONFIG_BSS's self signature. Station-mode BSS
+station/DPU indices are retained. Adds three bounded DHCP attempts and fixes
+the final publication diagnostic. Whether these differences caused the
+missing OFFER remains a hypothesis pending hardware. Local arm64 compile
+passes. Upstream HAL layout assertions validate response size21/signature
+byte17; ASan/UBSan fixtures cover queue bits, peer signature consumption,
+WPA no-reinstall behavior, frame bounds, matched OFFER and invalid responses.
+Generic patch has no network identity/credentials. CI and hardware pending.
+
 ## River wl0 BPF and temporary DHCP helper prepared (r142,2026-10-25)
 
 Patch0238 adds explicit Ethernet BPF attachment and RX/TX taps following

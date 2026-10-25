@@ -1,0 +1,56 @@
+From: mattxt1 <matttysonx1@gmail.com>
+Subject: [PATCH] RIVER: use peer signature and regular queue for data TX
+
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -975,7 +975,7 @@
+  river_put_be32(b, (25u<<24) | (river_peer_sign<<21) | (encrypted ? 0 : 8u));
+  river_put_be32(b+12, (24u<<24) | (40u<<16) | (64u<<7));
+  river_put_be32(b+16, ((n+18)<<16) | (1u<<12));
+- river_put_be32(b+20, (river_peer_dpu<<24) | (river_peer_sta<<16) | (9u<<7));
++ river_put_be32(b+20, (river_peer_dpu<<24) | (river_peer_sta<<16));
+  river_put_be32(b+24, 0xbdbdbdbd);
+  bd->src = river_dxe_pa+0xb800; bd->dst = 6; bd->len = 40;
+  data->src = river_dxe_pa+0xb900; data->dst = 6; data->len = n+18;
+@@ -1243,7 +1243,12 @@
+  river_wpa.keys_installed = true;
+  if (!river_config_target_bss(smem, info, fifo, ipc, true, river_assoc_aid)) return false;
+  uint8_t sta[124] = {0}; river_fill_sta(sta+8, river_assoc_aid);
+- if (!river_scan_xact(smem, info, fifo, ipc, 12, sta, 114)) return false;
++ if (!river_scan_xact(smem, info, fifo, ipc, 12, sta, 114) || river_hal_reply_len < 21) return false;
++ /* TX uses the peer signature from CONFIG_STA, not the self signature
++  * in CONFIG_BSS. Station-mode TX still uses the BSS station/DPU IDs. */
++ river_peer_sign = river_hal_reply[17] & 7;
++ printf("RIVER WPA: peer TX signature=%u STA=%u BSS-STA=%u DPU=%u\n",
++     river_peer_sign,river_hal_reply[12],river_peer_sta,river_peer_dpu);
+  uint8_t pairwise[248] = {0};
+  river_le_put(pairwise+8, river_peer_sta, 2); river_le_put(pairwise+10, 4, 4);
+  uint8_t *k = pairwise+19;
+@@ -1487,8 +1492,14 @@
+  b[n++]=61;b[n++]=7;b[n++]=1;memcpy(b+n,river_test_mac,6);n+=6;
+  b[n++]=55;b[n++]=4;b[n++]=1;b[n++]=3;b[n++]=6;b[n++]=51;b[n++]=255;
+  river_dhcp_waiting = true;
+- bool sent = river_data_tx(ethernet,sizeof(ethernet),true);
+- for (unsigned w=0; sent && !river_dhcp_offer && w<300; w++) { river_dxe_poll();ri_wait(10); }
++ bool sent = false;
++ for (unsigned attempt=0; attempt<3 && !river_dhcp_offer; attempt++) {
++  sent = river_data_tx(ethernet,sizeof(ethernet),true);
++  for (unsigned w=0; sent && !river_dhcp_offer && w<400; w++) { river_dxe_poll();ri_wait(10); }
++  printf("RIVER DATA: DHCP attempt=%u DMA=%u matched=%u protected-IPv4=%u\n",
++      attempt+1,sent,river_dhcp_offer,river_encrypted_rx);
++  if (!sent) break;
++ }
+  river_dhcp_waiting = false;
+  if (river_dhcp_offer) river_network_create();
+  printf("RIVER DATA: encrypted DHCP probe DMA=%u matched-offer=%u protected-IPv4=%u; no lease requested\n",sent,river_dhcp_offer,river_encrypted_rx);
+@@ -1502,8 +1513,8 @@
+   river_dxe_poll(); river_wpa_step(smem, info, fifo, ipc); ri_wait(10);
+  }
+  river_dhcp_probe();
+- printf("RIVER WPA: initial window complete stage=%u keys-attempted=%u; no IP interface published\n",
+-     river_wpa.stage, river_wpa.keys_installed);
++ printf("RIVER WPA: initial window complete stage=%u keys-attempted=%u ifnet-published=%u\n",
++     river_wpa.stage, river_wpa.keys_installed,river_wifi_ifp!=NULL);
+ }
+ 
+ static void
