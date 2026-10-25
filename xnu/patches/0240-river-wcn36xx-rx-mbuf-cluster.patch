@@ -1,0 +1,22 @@
+From: mattxt1 <matttysonx1@gmail.com>
+Subject: [PATCH] RIVER: require contiguous RX mbuf before Ethernet strip
+
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -1462,9 +1462,15 @@
+  ethernet[12]=p[6];ethernet[13]=p[7];
+  for(k=8;k<len-hlen;k++)ethernet[14+k-8]=p[k];
+  mbuf_t m=NULL;
+- if(mbuf_allocpacket(MBUF_DONTWAIT,n,NULL,&m)||mbuf_copyback(m,0,n,ethernet,MBUF_DONTWAIT)){
++ /* Like USB RX, force one cluster. mbuf_allocpacket can leave an empty
++  * leading mbuf even after copyback; stripping14 there underflows m_len. */
++ if(mbuf_gethdr(MBUF_DONTWAIT,MBUF_TYPE_DATA,&m) ||
++    mbuf_mclget(MBUF_DONTWAIT,MBUF_TYPE_DATA,&m) ||
++    !(mbuf_flags(m)&MBUF_EXT) || mbuf_maxlen(m)<n){
+   if(m)mbuf_freem(m);return;
+  }
++ memcpy(mbuf_data(m),ethernet,n);
++ mbuf_setlen(m,n);mbuf_pkthdr_setlen(m,n);
+  void *header=mbuf_data(m);
+  mbuf_pkthdr_setrcvif(m,river_wifi_ifp);mbuf_pkthdr_setheader(m,header);
+  mbuf_pkthdr_adjustlen(m,-14);mbuf_setdata(m,(char*)header+14,mbuf_len(m)-14);

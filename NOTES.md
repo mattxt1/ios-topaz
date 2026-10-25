@@ -1,5 +1,23 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River r143 panic diagnosed; r144 RX cluster fix (2026-10-25)
+
+User photo confirms kernel panic "Failed mbuf validity check" with len -14,
+explaining USB loss after wl0 publication. New Wi-Fi RX used mbuf_allocpacket
+and copyback, then stripped Ethernet from the first mbuf without ensuring
+it held14 bytes. XNU may leave that leading mbuf empty. Existing sweet_usb.c
+already documents and fixes this exact allocator behavior; the Wi-Fi code
+missed that constraint, and the host fixture incorrectly assumed contiguity.
+
+Patch0240/r144 adopts USB RX's single2KiB cluster: gethdr/mclget, verify EXT
+and capacity, copy and explicitly set both lengths before stripping14.
+Allocation/cluster/capacity failures free the packet and drop safely. Local
+arm64 compile passes. Corrected ASan/UBSan fixture models an empty leading
+mbuf; old code fails the regression, fixed code passes RX/BPF/ownership and
+allocation failure cases. r143 encrypted DHCP/ifnet milestone remains valid,
+but lease/TCP tests never ran. CI/hardware r144 pending; phone last panicked
+on r143. No partition flash. Private image/credentials stay local.
+
 ## River r143 encrypted DHCP and ifnet observed; USB access stalled (2026-10-25)
 
 r143 kernel0f68cf9 / Actions40240439732 passed CI and verified private RAM
