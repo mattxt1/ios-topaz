@@ -15,6 +15,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
 #include <sys/sockio.h>
 #include <time.h>
 _Static_assert(sizeof(struct ifaliasreq)==64,"ifaliasreq ABI");
@@ -70,13 +71,40 @@ static void addr_config(const char*name){
  memcpy(&ip->sin_addr,offered,4);memcpy(&nm->sin_addr,mask,4);br->sin_addr.s_addr=ip->sin_addr.s_addr|~nm->sin_addr.s_addr;
  if(ioctl(fd,SIOCAIFADDR,&a))fail("SIOCAIFADDR");close(fd);
 }
+/* Verify a route directly when route-socket acknowledgement is unavailable. */
+static int route_matches(const uint8_t *buf,size_t len,unsigned index,const uint8_t want[4]){
+ for(size_t off=0;off+sizeof(struct rt_msghdr)<=len;){
+  struct rt_msghdr h;memcpy(&h,buf+off,sizeof(h));
+  if(h.rtm_msglen<sizeof(h)||h.rtm_msglen>len-off)return 0;
+  const uint8_t *dst=NULL,*gw=NULL;unsigned dlen=0,glen=0;int zero_mask=1,valid=1;
+  size_t pos=off+sizeof(h),end=off+h.rtm_msglen;
+  for(unsigned bit=1;bit<=RTA_BRD;bit<<=1){if(!(h.rtm_addrs&bit))continue;
+   if(pos+2>end){valid=0;break;}unsigned n=buf[pos],step=n?(n+3)&~3u:4;
+   if(n>end-pos||step>end-pos){valid=0;break;}
+   if(bit==RTA_DST){dst=buf+pos;dlen=n;}if(bit==RTA_GATEWAY){gw=buf+pos;glen=n;}
+   if(bit==RTA_NETMASK)for(unsigned k=4;k<n;k++)if(buf[pos+k])zero_mask=0;
+   pos+=step;
+  }
+  if(valid&&h.rtm_version==RTM_VERSION&&h.rtm_index==index&&
+     (h.rtm_flags&(RTF_UP|RTF_GATEWAY|RTF_HOST))==(RTF_UP|RTF_GATEWAY)&&
+     dst&&gw&&dlen>=8&&glen>=8&&dst[1]==AF_INET&&gw[1]==AF_INET&&
+     !memcmp(dst+4,"\0\0\0\0",4)&&!memcmp(gw+4,want,4)&&zero_mask)return 1;
+  off+=h.rtm_msglen;
+ }return 0;
+}
+static int route_check(const char*name,const uint8_t want[4]){
+ int mib[]={CTL_NET,PF_ROUTE,0,AF_INET,NET_RT_DUMP,0};size_t n=0;
+ if(sysctl(mib,6,NULL,&n,NULL,0)||!n||n>2*1024*1024)return 0;
+ uint8_t*b=malloc(n);if(!b)return 0;
+ int ok=!sysctl(mib,6,b,&n,NULL,0)&&route_matches(b,n,if_nametoindex(name),want);free(b);return ok;
+}
 static void default_route(const char*name){
  struct{struct rt_msghdr h;struct sockaddr_in dst,gw,mask;}r={0};
  r.h.rtm_msglen=sizeof(r);r.h.rtm_version=RTM_VERSION;r.h.rtm_type=RTM_ADD;r.h.rtm_index=if_nametoindex(name);r.h.rtm_flags=RTF_UP|RTF_GATEWAY|RTF_STATIC;r.h.rtm_addrs=RTA_DST|RTA_GATEWAY|RTA_NETMASK;r.h.rtm_seq=1;r.h.rtm_pid=getpid();
  r.dst.sin_len=r.gw.sin_len=r.mask.sin_len=sizeof(r.dst);r.dst.sin_family=r.gw.sin_family=r.mask.sin_family=AF_INET;memcpy(&r.gw.sin_addr,gateway,4);
  int fd=socket(PF_ROUTE,SOCK_RAW,AF_INET);if(fd<0)fail("route socket");if(write(fd,&r,sizeof(r))!=sizeof(r))fail("default route write");
  uint8_t buf[4096];for(unsigned w=0;w<10;w++){struct pollfd p={fd,POLLIN,0};if(poll(&p,1,500)<=0)continue;ssize_t n=read(fd,buf,sizeof(buf));if(n<(ssize_t)sizeof(struct rt_msghdr))continue;struct rt_msghdr*h=(void*)buf;if(h->rtm_seq==1&&h->rtm_pid==getpid()){if(h->rtm_errno){errno=h->rtm_errno;fail("default route result");}close(fd);return;}}
- close(fd);fprintf(stderr,"route acknowledgement not seen\n");exit(1);
+ close(fd);if(route_check(name,gateway)){puts("default route verified from routing table (socket acknowledgement unavailable)");return;}fprintf(stderr,"route acknowledgement/table verification failed\n");exit(1);
 }
 static void dhcp(const char*name,int adddefault){
  struct ifaddrs*head=NULL;if(getifaddrs(&head))fail("getifaddrs");int found=0;
@@ -105,7 +133,8 @@ static void tcp_probe(const char*name,const char*address,unsigned port){
  close(fd);
 }
 int main(int argc,char**argv){
+ if(argc==4&&!strcmp(argv[1],"route-check")){uint8_t ip[4];if(inet_pton(AF_INET,argv[3],ip)!=1)return 2;if(!route_check(argv[2],ip)){fprintf(stderr,"matching default route absent\n");return 1;}puts("matching default route verified");return 0;}
  if(argc==5&&!strcmp(argv[1],"tcp")){unsigned p=(unsigned)strtoul(argv[4],NULL,10);if(!p||p>65535)return 2;tcp_probe(argv[2],argv[3],p);return 0;}
  if(argc>=3&&!strcmp(argv[1],"dhcp")){dhcp(argv[2],argc==4&&!strcmp(argv[3],"--default"));return 0;}
- fprintf(stderr,"usage: river-net dhcp IFACE [--default] | tcp IFACE IPv4 PORT\n");return 2;
+ fprintf(stderr,"usage: river-net dhcp IFACE [--default] | tcp IFACE IPv4 PORT | route-check IFACE GATEWAY\n");return 2;
 }

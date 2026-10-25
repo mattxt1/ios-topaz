@@ -1,5 +1,30 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River r144 usable IPv4/Internet milestone verified (2026-10-25)
+
+r144 kernel9c6fd14 / Actions40244517204 passed verified RAM-only hardware
+boot after USB enumeration recovered. WPA and protected matching DHCP OFFER
+passed; wl0 attached with IPv4-plumb0. The RX cluster fix prevented the r143
+panic: USB remained responsive, full console-ring readback succeeded, and
+continued RX counts659/1054/1402 all had malformed0. Complete ring independently
+confirms the kernel milestone. No partition flashed; phone remains on r144.
+
+Temporary river-net helper received DHCP ACK and configured wl0 IPv4. The
+route socket acknowledgement timed out, but the route was installed: a
+TCP socket explicitly bound to wl0 connected to public1.1.1.1:80 and an HTTP
+request returned301MovedPermanently. Readonly routing-table verification
+subsequently confirmed the exact interface/default/gateway. This proves
+Internet IPv4/TCP/HTTP through Wi-Fi independently of USB. Private addressing,
+network identity and detailed logs remain local in current chat work/outputs.
+
+Helper now verifies routing-table state if an acknowledgement is absent and
+provides route-check IFACE GATEWAY. ASan/UBSan route-dump fixture passes exact
+match, wrong interface/gateway, nondefault/host and all truncation cases;
+existing DHCP framing/rejection fixture passes. Signed iOS16 arm64 helper
+installed only at /tmp/river-net. Native IO80211/Wi-Fi UI, system DNS setup,
+lease renewal, group rekey and reconnect remain unfinished. Hostname-based
+Internet and long-lived session reliability are not claimed yet.
+
 ## River r144 build ready, physical USB recovery pending (2026-10-25)
 
 Kernel9c6fd14 / Actions40244517204 passed CI. Private local image packaging
