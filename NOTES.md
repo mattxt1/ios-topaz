@@ -1,5 +1,16 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River r144 build ready, physical USB recovery pending (2026-10-25)
+
+Kernel9c6fd14 / Actions40244517204 passed CI. Private local image packaging
+passed kernel SHA, payload roundtrip, unchanged firmware and PMK checks;
+547-byte command line preserved. User reported readiness/reconnection, but
+fastboot and adb both show no device. Identity guard prevented any boot
+command. r144 has NOT booted yet. Asked which screen is currently shown.
+Next restore USB enumeration, verify expected river identity, RAM boot r144,
+then verify RX stability, install temporary helper and test lease/TCP via wl0.
+No partition flash. Current source/staging r144; details in local handoff.
+
 ## River r143 panic diagnosed; r144 RX cluster fix (2026-10-25)
 
 User photo confirms kernel panic "Failed mbuf validity check" with len -14,
