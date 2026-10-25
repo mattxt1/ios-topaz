@@ -442,7 +442,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +          }
 +          ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + 36 + b) & 8191), wval);
 +         }
-+         unsigned adv = 20 + ((msg_len + 3) & ~3);
++         unsigned adv = 20 + msg_len;
 +         head = (head + adv) & 8191;
 +         ri_wr(smem, wcnss_wlan_info + 16, head);
 +         ri_wr(smem, wcnss_wlan_info + 8, 1u | (1u << 16));
