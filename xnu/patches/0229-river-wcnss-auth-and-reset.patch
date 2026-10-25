@@ -1,17 +1,17 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 20:45:00 -0400
-Subject: [PATCH] RIVER: enable WCNSS proxy clocks, SMP2P 431/451 handshake, and event logging
+Date: Sat, 24 Oct 2026 21:45:00 -0400
+Subject: [PATCH] RIVER: ack GIC SPI 142/143, inspect SMEM ptable and WCNSS partition
 
 ---
- bsd/dev/sweet_keys.c | 219 +++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 219 insertions(+)
+ bsd/dev/sweet_keys.c | 291 ++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 291 insertions(+)
 
 diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
 index 64d5c62..dfc10dc 100644
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -753,6 +753,224 @@ river_wcnss_probe(void)
+@@ -753,6 +753,297 @@ river_wcnss_probe(void)
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -116,6 +116,14 @@ index 64d5c62..dfc10dc 100644
 +          gp, (gp >> 14) & 1, (gp >> 15) & 1, (gp >> 16) & 1, (gp >> 19) & 1, (gp >> 21) & 1, (w + 1) * 100);
 +      last_gic = gp;
 +     }
++     if (gp & (1u << 14)) {
++      ri_wr(gic, 0x294, 1u << 14);
++      if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
++     }
++     if (gp & (1u << 15)) {
++      ri_wr(gic, 0x294, 1u << 15);
++      if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 18);
++     }
 +    }
 +    unsigned ent422 = SMEM_TOC + 422 * SMEM_ENTRY;
 +    uint32_t alloc422 = ri_rd(smem, ent422);
@@ -153,6 +161,62 @@ index 64d5c62..dfc10dc 100644
 +          m451, v451, p451, e451, ename, eval, (w + 1) * 100);
 +      if (eval & 2) {
 +       printf("RIVER WCNSS: Pronto err-ready is ASSERTED (val=%#x)! Pronto handshake complete!\n", eval);
++      }
++     }
++    }
++    uint32_t pt_magic = ri_rd(smem, SMEM_SIZE - 0x1000);
++    if (pt_magic == 0x434f5424 && ((w + 1) % 10 == 0 || w == 0 || w == 39)) {
++     uint32_t npart = ri_rd(smem, SMEM_SIZE - 0x1000 + 8);
++     for (unsigned p = 0; p < npart && p < 16; p++) {
++      uint32_t pe = (SMEM_SIZE - 0x1000 + 32) + p * 24;
++      uint32_t poff = ri_rd(smem, pe);
++      uint32_t psz = ri_rd(smem, pe + 4);
++      uint32_t phosts = ri_rd(smem, pe + 12);
++      uint16_t h0 = phosts & 0xffff;
++      uint16_t h1 = (phosts >> 16) & 0xffff;
++      if (w == 0) {
++       printf("RIVER WCNSS: ptable part %u: hosts %u:%u off %#x size %#x\n", p, h0, h1, poff, psz);
++      }
++      if ((h0 == 0 && h1 == 4) || (h0 == 4 && h1 == 0)) {
++       if (poff < SMEM_SIZE && psz >= 32) {
++        uint32_t pmag = ri_rd(smem, poff);
++        uint32_t pfree_unc = ri_rd(smem, poff + 12);
++        if (pmag == 0x54525024) {
++         uint32_t cpos = poff + 32;
++         while (cpos + 16 <= poff + pfree_unc && cpos + 16 < SMEM_SIZE) {
++          uint32_t w0 = ri_rd(smem, cpos);
++          uint16_t canary = w0 & 0xffff;
++          uint16_t itm = (w0 >> 16) & 0xffff;
++          uint32_t isz = ri_rd(smem, cpos + 4);
++          uint32_t pads = ri_rd(smem, cpos + 8);
++          uint16_t phdr = (pads >> 16) & 0xffff;
++          if (canary != 0xa5a5) break;
++          uint32_t data_off = cpos + 16 + phdr;
++          if (itm == 13 && data_off + 32 <= SMEM_SIZE) {
++           for (unsigned s = 0; s < 64; s++) {
++            uint32_t se = data_off + s * 32;
++            if (se + 32 > SMEM_SIZE) break;
++            uint32_t scid = ri_rd(smem, se + 20);
++            uint32_t sflg = ri_rd(smem, se + 24);
++            uint32_t sref = ri_rd(smem, se + 28);
++            if (sref) {
++             char sname[21];
++             for (unsigned j = 0; j < 20; j++) {
++              unsigned char c = *(volatile unsigned char *)(smem + se + j);
++              sname[j] = (c >= 0x20 && c <= 0x7e) ? (char)c : 0;
++             }
++             sname[20] = 0;
++             printf("RIVER WCNSS: part4 SMD slot %u cid %u flg %#x ref %u name '%s' (waited %u ms)\n",
++                 s, scid, sflg, sref, sname, (w + 1) * 100);
++            }
++           }
++          } else if (w == 0 || w == 39) {
++           printf("RIVER WCNSS: part4 item %u off %#x size %u phdr %u\n", itm, cpos, isz, phdr);
++          }
++          cpos += 16 + phdr + isz;
++         }
++        }
++       }
 +      }
 +     }
 +    }
@@ -217,6 +281,15 @@ index 64d5c62..dfc10dc 100644
 +      printf("RIVER WCNSS: log ev %u: id=%#x time=%#x d1=%#x d2=%#x d3=%#x\n",
 +          e, ri_rd(smem, b), ri_rd(smem, b+4), ri_rd(smem, b+8), ri_rd(smem, b+12), ri_rd(smem, b+16));
 +     }
++    }
++   }
++   unsigned ent420 = SMEM_TOC + 420 * SMEM_ENTRY;
++   if (ri_rd(smem, ent420)) {
++    uint32_t o420 = ri_rd(smem, ent420 + 4);
++    uint32_t l420 = ri_rd(smem, ent420 + 8);
++    if (o420 < SMEM_SIZE && l420 >= 16) {
++     printf("RIVER WCNSS: SMEM 420 off %#x size %#x words: %#x %#x %#x %#x\n",
++         o420, l420, ri_rd(smem, o420), ri_rd(smem, o420 + 4), ri_rd(smem, o420 + 8), ri_rd(smem, o420 + 12));
 +    }
 +   }
 +   printf("RIVER WCNSS: surveying allocated SMEM items post-reset:\n");
