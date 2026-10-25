@@ -1,5 +1,31 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River wl0 BPF and temporary DHCP helper prepared (r142,2026-10-25)
+
+Patch0238 adds explicit Ethernet BPF attachment and RX/TX taps following
+XNU if_fake, needed for initial DHCP before an address exists. The existing
+kernel contains real BPF implementations (symbols verified). Local arm64
+compile and the extended ASan/UBSan ifnet fixture pass attachment/tap/header
+placement and original queue/RX/failure tests. Generic kernel source has no
+network identity or credentials. r141 CI run40239108158 was still compiling
+when this missing plumbing was found; no r141 hardware boot occurred.
+
+phone-tools/river-net.c is a bounded diagnostic DHCP helper: BPF DHCP
+DISCOVER/OFFER/REQUEST/ACK, strict XID/MAC/server/address/length checks,
+SIOCAIFADDR only after ACK, optional --default route. It does not renew or
+persist leases or configure DNS. Host ASan/UBSan tests pass framing/checksum,
+OFFER/ACK matching and every packet truncation. iOS16 arm64 build/ad-hoc
+signature passed. Runtime helper/interface are unverified. Install only to
+phone temporary storage for testing; no kernel partition writes.
+The cross-build uses iPhoneOS SDK and missing BSD public headers from the
+matching local macOS SDK; ABI layout/runtime checks still required on phone.
+
+Private current work source sweet_keys.r142.c and staging ci-r133 match.
+Local private RAM packaging supports r142 with547-byte command line and
+unchanged firmware; PMK/image remain owner-only in work. Next hardware image
+should include0238 rather than spending a separate physical handoff on0237.
+No IP connectivity, native Wi-Fi UI, reconnect or rekey is claimed yet.
+
 ## River initial WPA2 gate verified; encrypted data/ifnet prepared (2026-10-25)
 
 r140 generic kernel82021af / Actions40237954598 passed CI and RAM-only test.

@@ -1,0 +1,37 @@
+From: mattxt1 <matttysonx1@gmail.com>
+Subject: [PATCH] RIVER: attach wl0 BPF packet taps for DHCP tooling
+
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -9,6 +9,7 @@
+ #include <sys/kpi_mbuf.h>
+ #include <sys/sockio.h>
+ #include <net/if.h>
++#include <net/bpf.h>
+ #include <net/if_types.h>
+ #include <net/ethernet.h>
+ #include <net/if_ether.h>
+@@ -1368,6 +1369,7 @@
+   }
+  }
+  lck_mtx_unlock(river_net_lock);
++ if (queued) bpf_tap_out(ifp,DLT_EN10MB,m,NULL,0);
+  mbuf_freem(m);
+  if (!queued) ifnet_stat_increment_out(ifp,0,0,1);
+  return 0;
+@@ -1410,6 +1412,7 @@
+   ifnet_release(river_wifi_ifp);river_wifi_ifp=NULL;return;
+  }
+  ifnet_set_lladdr(river_wifi_ifp,river_test_mac,6);
++ bpfattach(river_wifi_ifp,DLT_EN10MB,14);
+  errno_t err=proto_plumb(PF_INET,river_wifi_ifp);
+  if (!err) {
+   lck_mtx_lock(river_net_lock);river_net_live=true;lck_mtx_unlock(river_net_lock);
+@@ -1461,6 +1464,7 @@
+  mbuf_pkthdr_setrcvif(m,river_wifi_ifp);mbuf_pkthdr_setheader(m,header);
+  mbuf_pkthdr_adjustlen(m,-14);mbuf_setdata(m,(char*)header+14,mbuf_len(m)-14);
+  struct ifnet_stat_increment_param stats={0};stats.packets_in=1;stats.bytes_in=n;
++ bpf_tap_in(river_wifi_ifp,DLT_EN10MB,m,header,14);
+  ifnet_input(river_wifi_ifp,m,&stats);
+ }
+ 
