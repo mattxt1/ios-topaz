@@ -1,0 +1,126 @@
+From: mattxt1 <matttysonx1@gmail.com>
+Subject: [PATCH] RIVER: initialize four WCN36xx DXE rings after HAL start
+
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -318,6 +318,105 @@
+ 
+ /* Read-only first gate for River's distinct WCNSS/Pronto WLAN subsystem.
+  * Do not touch radio clocks, PAS reset or reserved firmware memory here. */
++/* Pronto v3 DXE layout and controls follow upstream Linux wcn36xx/dxe.[ch].
++ * Keep interrupts masked until a real IRQ/reclaim path exists.  TX rings
++ * contain no VALID descriptors; RX buffers remain permanently owned by DMA.
++ * This stage initializes channels; it does not publish an iOS interface. */
++extern void pmap_set_cache_attributes(ppnum_t, unsigned int);
++static vm_offset_t river_dxe_dma;
++static uint64_t river_dxe_pa;
++static bool river_dxe_ready;
++struct river_dxe_desc {
++ uint32_t ctrl, len, src, dst, next, src_hi, dst_hi, next_hi;
++};
++static void
++river_dxe_init(vm_offset_t mmio)
++{
++ enum { DMA_SIZE = 0x238000, RX_OFFSET = 0x10000 };
++ static const struct {
++  const char *name;
++  unsigned count, reg, queue;
++  uint32_t desc_ctrl, chan_ctrl;
++ } channels[] = {
++  { "TX_LOW", 128, 0x400, 6, 0x328a44, 0 },
++  { "TX_HIGH", 10, 0x500, 6, 0x32ce44, 0 },
++  { "RX_LOW", 512, 0x440, 11, 0x12ad2f, 0x847ead2f },
++  { "RX_HIGH", 40, 0x4c0, 4, 0x12d12f, 0x84fed12f },
++ };
++ if (river_dxe_ready) return;
++ /* DXE short descriptors and next/source/destination registers are 32-bit.
++  * Constrain the allocation itself, then verify every physical page. */
++ if (!river_dxe_dma && kmem_alloc_contig(kernel_map, &river_dxe_dma,
++     DMA_SIZE, PAGE_MASK, (ppnum_t)(0xffffffffULL >> PAGE_SHIFT), 0,
++     KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++  printf("RIVER DXE: no contiguous 32-bit DMA pool\n");
++  return;
++ }
++ ppnum_t first = pmap_find_phys(kernel_pmap, (addr64_t)river_dxe_dma);
++ river_dxe_pa = ptoa_64(first);
++ if (!first || river_dxe_pa + DMA_SIZE > 0x100000000ULL) {
++  printf("RIVER DXE: rejected DMA address %#llx\n", river_dxe_pa);
++  return;
++ }
++ for (unsigned off = 0; off < DMA_SIZE; off += PAGE_SIZE) {
++  if (pmap_find_phys(kernel_pmap, (addr64_t)(river_dxe_dma + off)) !=
++      first + (off >> PAGE_SHIFT)) {
++   printf("RIVER DXE: noncontiguous pool at offset %#x\n", off);
++   return;
++  }
++ }
++ /* Same managed-page cache-attribute path used by River GPU buffers.
++  * Change all aliases together, avoiding cached/uncached aliases of DMA. */
++ for (unsigned off = 0; off < DMA_SIZE; off += PAGE_SIZE)
++  pmap_set_cache_attributes(first + (off >> PAGE_SHIFT), VM_WIMG_WCOMB);
++ unsigned desc_off = 0, rx_off = RX_OFFSET;
++ for (unsigned c = 0; c < 4; c++) {
++  volatile struct river_dxe_desc *ring =
++      (volatile struct river_dxe_desc *)(river_dxe_dma + desc_off);
++  for (unsigned i = 0; i < channels[c].count; i++) {
++   ring[i].len = 0;
++   ring[i].src = c < 2 ? 0 : channels[c].queue;
++   ring[i].dst = c < 2 ? channels[c].queue : (uint32_t)(river_dxe_pa + rx_off);
++   ring[i].next = (uint32_t)(river_dxe_pa + desc_off +
++       ((i + 1) % channels[c].count) * sizeof(struct river_dxe_desc));
++   ring[i].src_hi = ring[i].dst_hi = ring[i].next_hi = 0;
++   ring[i].ctrl = channels[c].desc_ctrl;
++   if (c >= 2) rx_off += 0x1000; /* >= upstream WCN36XX_PKT_SIZE (0xf20) */
++  }
++  desc_off += channels[c].count * sizeof(struct river_dxe_desc);
++ }
++ __asm__ volatile("dsb sy" ::: "memory");
++ vm_offset_t dxe = mmio + 0x2000;
++ ri_wr(dxe, 0, 0x5c89);
++ ri_wr(dxe, 0x18, 0); /* masked: polling bring-up, no unhandled GIC IRQ */
++ ri_wr(mmio, 0x50dc, 0x000a0011);
++ desc_off = 0;
++ for (unsigned c = 0; c < 4; c++) {
++  unsigned reg = channels[c].reg;
++  uint32_t head = (uint32_t)(river_dxe_pa + desc_off);
++  ri_wr(dxe, reg + 0x1c, head);
++  if (c < 2) {
++   ri_wr(dxe, reg + 0x14, channels[c].queue);
++  } else {
++   ri_wr(dxe, reg + 0x0c, channels[c].queue);
++   ri_wr(dxe, reg + 0x14, head + sizeof(struct river_dxe_desc));
++   ri_wr(dxe, reg, channels[c].chan_ctrl);
++  }
++  printf("RIVER DXE: %s %u descriptors PA %#x next=%#x ctrl=%#x status=%#x\n",
++      channels[c].name, channels[c].count, head, ri_rd(dxe, reg + 0x1c),
++      ri_rd(dxe, reg), ri_rd(dxe, reg + 4));
++  desc_off += channels[c].count * sizeof(struct river_dxe_desc);
++ }
++ river_dxe_ready = true;
++ printf("RIVER DXE: four rings initialized; DMA %#llx+%#x RX end=%#x CSR=%#x enabled=%#x errors=%#x mask=%#x\n",
++     river_dxe_pa, DMA_SIZE, rx_off, ri_rd(dxe, 0), ri_rd(dxe, 8),
++     ri_rd(dxe, 0x10), ri_rd(dxe, 0x18));
++ delay(100000);
++ printf("RIVER DXE: 100ms poll enabled=%#x done=%#x errors=%#x raw_irq=%#x RX_LOW=%#x RX_HIGH=%#x\n",
++     ri_rd(dxe, 8), ri_rd(dxe, 0xc), ri_rd(dxe, 0x10), ri_rd(dxe, 0x20),
++     ri_rd(dxe, 0x444), ri_rd(dxe, 0x4c4));
++}
++
+ static void
+ river_wcnss_probe(void)
+ {
+@@ -1386,13 +1485,7 @@
+           wlan_start_acked = true;
+           vm_offset_t wcn_mmio = ml_io_map_unmappable(0x0a200000, 0x8000, VM_WIMG_IO);
+           if (wcn_mmio) {
+-           uint32_t old_dxe = ri_rd(wcn_mmio, 0x2000);
+-           ri_wr(wcn_mmio, 0x2000, 0x5c89); /* WCN36XX_DXE_REG_RESET */
+-           uint32_t new_dxe = ri_rd(wcn_mmio, 0x2000);
+-           uint32_t old_int = ri_rd(wcn_mmio, 0x50dc);
+-           ri_wr(wcn_mmio, 0x50dc, 0x000a0011); /* DXE INT SELECT PRONTO */
+-           printf("RIVER WCNSS: DXE CSR was %#x, after reset %#x; CCU int_select was %#x, now %#x\n",
+-               old_dxe, new_dxe, old_int, ri_rd(wcn_mmio, 0x50dc));
++           river_dxe_init(wcn_mmio);
+            ml_io_unmap(wcn_mmio, 0x8000);
+           }
+          }

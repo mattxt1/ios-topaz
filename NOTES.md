@@ -1,5 +1,28 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River HAL START success and DXE ring work (2026-10-25, r135/r136)
+
+r135 commit c620dcf / Actions 40230501719 passed CI and RAM-only boot.
+HAL_START_RSP status=0, stations=41, bssids=2, API=1.5.1.2. Iris chip read
+0x04000004 identifies type0 / WCN3660B family and selects XO48 MHz (previous
+kernel forced 19.2). GPIO76 was 0x1 before early pinmux, then 0x87. Both
+firmware-side boot-test reads returned 0 (status=0, bytes=4). Since early
+pinmux and XO changes were tested together, do not attribute success to
+only one. DXE CSR reset readback 0x1c89 from 0x2728, CCU selection 0xa0011.
+Image SHA256 d09391d29b1fda3e3f57bd40a99217c83a2aa05fc63babbea0974ff4ef420c30.
+504-byte boot line, same blobs, no partition flashed. Private live evidence:
+current chat work/agent-r135-usb-1.txt. This is HAL startup, not usable Wi-Fi.
+
+Patch 0232 (local compile passed) prepares four DXE rings only after HAL
+success, following Linux wcn36xx/dxe.c/.h: TX low 128 / high 10, RX low 512 /
+high 40. One permanent 0x238000-byte contiguous pool is constrained below
+4 GiB and checked page-by-page, then all managed aliases are changed to WC
+like existing River GPU DMA. Each RX descriptor owns a 4 KiB buffer;
+TX descriptors remain invalid. RX channels 1/3 are enabled; channel IRQs
+stay masked until a reclaim/IRQ implementation exists. It prints register
+readback and a 100ms error snapshot. No TX frames, RX reclaim, scan, BSS,
+association or iOS Wi-Fi interface exists yet. CI and RAM test pending.
+
 ## River r134 result and r135 RF prerequisites (2026-10-25)
 
 r134 commit 826cbf3 / Actions 40229759562 passed CI. RAM boot accepted;
