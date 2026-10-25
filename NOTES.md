@@ -1,5 +1,27 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River r144 Safari HTTPS browsing and SystemConfiguration milestone verified (2026-10-25)
+
+Phone remains running r144 kernel 9c6fd14 / Actions 40244517204 without a reboot.
+Diagnosed Safari browsing failure: low-level unbound TCP routing was already
+working via the wl0 default route, but system DNS resolution was unconfigured
+(_res 0.0.0.0:53, getaddrinfo returning error 8) and SCDynamicStore lacked
+primary IPv4 network service and DNS server entries, causing CFNetwork / WebKit
+to treat redirected paths as offline.
+
+Integrated SystemConfiguration dynamic store publishing into phone-tools/river-net:
+updates State:/Network/Global/DNS (with DHCP/fallback servers), State:/Network/Global/IPv4
+(PrimaryInterface wl0, router), State:/Network/Service/wl0/IPv4 and DNS, and
+State:/Network/Interface/wl0/LinkQuality (100). Tested getaddrinfo immediately
+resolves public hostnames via mDNSResponder. Launched MobileSafari and verified
+live HTTPS page load (apple.com loaded successfully on device screen).
+
+Updated river-net supports automatic SCDynamicStore setup in dhcp and explicit
+sc-setup command. Host test-river-net fixture passes; iOS 16 arm64 binary
+verified on phone at /tmp/river-net. No partition flashed; USB SSH and live
+capture remain active. Lease renewal daemon, group rekey, and native Wi-Fi
+UI controls remain next.
+
 ## River r144 usable IPv4/Internet milestone verified (2026-10-25)
 
 r144 kernel9c6fd14 / Actions40244517204 passed verified RAM-only hardware

@@ -1,6 +1,8 @@
 /* Temporary on-phone DHCP/IPv4 bring-up helper; no credentials or persistence.
  * A full lease client/rekey lifecycle is outside this bounded diagnostic. */
 #include <arpa/inet.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <ifaddrs.h>
@@ -22,6 +24,11 @@ _Static_assert(sizeof(struct ifaliasreq)==64,"ifaliasreq ABI");
 _Static_assert(sizeof(struct rt_msghdr)==92,"route ABI");
 _Static_assert(sizeof(struct bpf_hdr)==20,"BPF ABI");
 #include <unistd.h>
+
+typedef const struct __SCDynamicStore * SCDynamicStoreRef;
+typedef SCDynamicStoreRef (*SCDynamicStoreCreate_t)(CFAllocatorRef, CFStringRef, void*, void*);
+typedef Boolean (*SCDynamicStoreSetValue_t)(SCDynamicStoreRef, CFStringRef, CFPropertyListRef);
+
 static uint8_t mac[6],xid[4],offered[4],server[4],mask[4],gateway[4],dns[4];
 static uint16_t be16(const uint8_t*p){return ((unsigned)p[0]<<8)|p[1];}
 static void put16(uint8_t*p,unsigned n){p[0]=n>>8;p[1]=n;}
@@ -106,6 +113,86 @@ static void default_route(const char*name){
  uint8_t buf[4096];for(unsigned w=0;w<10;w++){struct pollfd p={fd,POLLIN,0};if(poll(&p,1,500)<=0)continue;ssize_t n=read(fd,buf,sizeof(buf));if(n<(ssize_t)sizeof(struct rt_msghdr))continue;struct rt_msghdr*h=(void*)buf;if(h->rtm_seq==1&&h->rtm_pid==getpid()){if(h->rtm_errno){errno=h->rtm_errno;fail("default route result");}close(fd);return;}}
  close(fd);if(route_check(name,gateway)){puts("default route verified from routing table (socket acknowledgement unavailable)");return;}fprintf(stderr,"route acknowledgement/table verification failed\n");exit(1);
 }
+
+/* SystemConfiguration dynamic store integration for system DNS and primary network service */
+static int sc_config(const char *name, const uint8_t *ip, const uint8_t *netmask, const uint8_t *gw, const uint8_t *dn) {
+ void *h = dlopen("/System/Library/Frameworks/SystemConfiguration.framework/SystemConfiguration", RTLD_LAZY);
+ if (!h) {
+  fprintf(stderr, "dlopen SystemConfiguration: %s\n", dlerror());
+  return 0;
+ }
+ SCDynamicStoreCreate_t fn_Create = (SCDynamicStoreCreate_t)dlsym(h, "SCDynamicStoreCreate");
+ SCDynamicStoreSetValue_t fn_SetValue = (SCDynamicStoreSetValue_t)dlsym(h, "SCDynamicStoreSetValue");
+ if (!fn_Create || !fn_SetValue) {
+  fprintf(stderr, "SCDynamicStore symbols unavailable\n");
+  dlclose(h);
+  return 0;
+ }
+ SCDynamicStoreRef ds = fn_Create(NULL, CFSTR("river-net"), NULL, NULL);
+ if (!ds) {
+  fprintf(stderr, "SCDynamicStoreCreate failed\n");
+  dlclose(h);
+  return 0;
+ }
+ char ip_str[INET_ADDRSTRLEN], mask_str[INET_ADDRSTRLEN], gw_str[INET_ADDRSTRLEN], dns_str[INET_ADDRSTRLEN];
+ snprintf(ip_str, sizeof(ip_str), "%u.%u.%u.%u", ip[0], ip[1], ip[2], ip[3]);
+ snprintf(mask_str, sizeof(mask_str), "%u.%u.%u.%u", netmask[0], netmask[1], netmask[2], netmask[3]);
+ snprintf(gw_str, sizeof(gw_str), "%u.%u.%u.%u", gw[0], gw[1], gw[2], gw[3]);
+ if (!memcmp(dn, "\0\0\0\0", 4)) snprintf(dns_str, sizeof(dns_str), "%s", gw_str);
+ else snprintf(dns_str, sizeof(dns_str), "%u.%u.%u.%u", dn[0], dn[1], dn[2], dn[3]);
+
+ CFStringRef cf_ifname = CFStringCreateWithCString(NULL, name, kCFStringEncodingUTF8);
+ CFStringRef cf_ip = CFStringCreateWithCString(NULL, ip_str, kCFStringEncodingUTF8);
+ CFStringRef cf_mask = CFStringCreateWithCString(NULL, mask_str, kCFStringEncodingUTF8);
+ CFStringRef cf_gw = CFStringCreateWithCString(NULL, gw_str, kCFStringEncodingUTF8);
+ CFStringRef cf_dns = CFStringCreateWithCString(NULL, dns_str, kCFStringEncodingUTF8);
+ CFStringRef cf_pubdns = CFSTR("1.1.1.1");
+
+ const void *dns_addrs[2] = { cf_dns, cf_pubdns };
+ CFArrayRef cf_dns_arr = CFArrayCreate(NULL, dns_addrs, 2, &kCFTypeArrayCallBacks);
+ const void *dns_k[1] = { CFSTR("ServerAddresses") };
+ const void *dns_v[1] = { cf_dns_arr };
+ CFDictionaryRef cf_dns_dict = CFDictionaryCreate(NULL, dns_k, dns_v, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+ fn_SetValue(ds, CFSTR("State:/Network/Global/DNS"), cf_dns_dict);
+
+ const void *gipv4_k[3] = { CFSTR("PrimaryInterface"), CFSTR("PrimaryService"), CFSTR("Router") };
+ const void *gipv4_v[3] = { cf_ifname, cf_ifname, cf_gw };
+ CFDictionaryRef cf_gipv4_dict = CFDictionaryCreate(NULL, gipv4_k, gipv4_v, 3, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+ fn_SetValue(ds, CFSTR("State:/Network/Global/IPv4"), cf_gipv4_dict);
+
+ const void *addrs_v[1] = { cf_ip };
+ CFArrayRef cf_addrs_arr = CFArrayCreate(NULL, addrs_v, 1, &kCFTypeArrayCallBacks);
+ const void *masks_v[1] = { cf_mask };
+ CFArrayRef cf_masks_arr = CFArrayCreate(NULL, masks_v, 1, &kCFTypeArrayCallBacks);
+
+ const void *sipv4_k[4] = { CFSTR("Addresses"), CFSTR("SubnetMasks"), CFSTR("InterfaceName"), CFSTR("Router") };
+ const void *sipv4_v[4] = { cf_addrs_arr, cf_masks_arr, cf_ifname, cf_gw };
+ CFDictionaryRef cf_sipv4_dict = CFDictionaryCreate(NULL, sipv4_k, sipv4_v, 4, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+
+ CFStringRef cf_svc_ipv4 = CFStringCreateWithFormat(NULL, NULL, CFSTR("State:/Network/Service/%s/IPv4"), name);
+ fn_SetValue(ds, cf_svc_ipv4, cf_sipv4_dict);
+
+ CFStringRef cf_svc_dns = CFStringCreateWithFormat(NULL, NULL, CFSTR("State:/Network/Service/%s/DNS"), name);
+ fn_SetValue(ds, cf_svc_dns, cf_dns_dict);
+
+ int lq_val = 100;
+ CFNumberRef cf_lq = CFNumberCreate(NULL, kCFNumberIntType, &lq_val);
+ const void *lq_k[1] = { CFSTR("LinkQuality") };
+ const void *lq_v[1] = { cf_lq };
+ CFDictionaryRef cf_lq_dict = CFDictionaryCreate(NULL, lq_k, lq_v, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+ CFStringRef cf_if_lq = CFStringCreateWithFormat(NULL, NULL, CFSTR("State:/Network/Interface/%s/LinkQuality"), name);
+ fn_SetValue(ds, cf_if_lq, cf_lq_dict);
+
+ CFRelease(cf_if_lq); CFRelease(cf_lq_dict); CFRelease(cf_lq);
+ CFRelease(cf_svc_dns); CFRelease(cf_svc_ipv4); CFRelease(cf_sipv4_dict);
+ CFRelease(cf_masks_arr); CFRelease(cf_addrs_arr);
+ CFRelease(cf_gipv4_dict); CFRelease(cf_dns_dict); CFRelease(cf_dns_arr);
+ CFRelease(cf_dns); CFRelease(cf_gw); CFRelease(cf_mask); CFRelease(cf_ip); CFRelease(cf_ifname);
+ CFRelease(ds); dlclose(h);
+ puts("SCDynamicStore system DNS and primary IPv4 service published");
+ return 1;
+}
+
 static void dhcp(const char*name,int adddefault){
  struct ifaddrs*head=NULL;if(getifaddrs(&head))fail("getifaddrs");int found=0;
  for(struct ifaddrs*p=head;p;p=p->ifa_next)if(p->ifa_addr&&p->ifa_addr->sa_family==AF_LINK&&!strcmp(p->ifa_name,name)){struct sockaddr_dl*s=(void*)p->ifa_addr;if(s->sdl_alen==6){memcpy(mac,LLADDR(s),6);found=1;}}
@@ -115,6 +202,7 @@ static void dhcp(const char*name,int adddefault){
  for(unsigned phase=0;phase<2;phase++){int ok=0;for(unsigned retry=0;retry<3&&!ok;retry++){send_dhcp(fd,phase?3:1);ok=wait_dhcp(fd,len,phase?5:2);if(ok<0)exit(1);}if(!ok){fprintf(stderr,"DHCP %s timeout\n",phase?"ACK":"OFFER");exit(1);}}
  close(fd);if(!memcmp(mask,"\0\0\0\0",4)){fprintf(stderr,"no DHCP subnet mask\n");exit(1);}addr_config(name);showip("address",offered);showip("mask",mask);showip("gateway",gateway);showip("DNS",dns);
  if(adddefault){if(!memcmp(gateway,"\0\0\0\0",4)){fprintf(stderr,"no DHCP gateway\n");exit(1);}default_route(name);puts("default route installed");}
+ sc_config(name,offered,mask,gateway,dns);
  puts("DHCP ACK accepted and address configured (diagnostic lease; no renewal daemon)");
 }
 static void tcp_probe(const char*name,const char*address,unsigned port){
@@ -136,5 +224,11 @@ int main(int argc,char**argv){
  if(argc==4&&!strcmp(argv[1],"route-check")){uint8_t ip[4];if(inet_pton(AF_INET,argv[3],ip)!=1)return 2;if(!route_check(argv[2],ip)){fprintf(stderr,"matching default route absent\n");return 1;}puts("matching default route verified");return 0;}
  if(argc==5&&!strcmp(argv[1],"tcp")){unsigned p=(unsigned)strtoul(argv[4],NULL,10);if(!p||p>65535)return 2;tcp_probe(argv[2],argv[3],p);return 0;}
  if(argc>=3&&!strcmp(argv[1],"dhcp")){dhcp(argv[2],argc==4&&!strcmp(argv[3],"--default"));return 0;}
- fprintf(stderr,"usage: river-net dhcp IFACE [--default] | tcp IFACE IPv4 PORT | route-check IFACE GATEWAY\n");return 2;
+ if(argc>=5&&!strcmp(argv[1],"sc-setup")){
+  uint8_t ip[4]={192,168,1,232},m[4]={255,255,255,0},gw[4],dn[4];
+  if(inet_pton(AF_INET,argv[3],gw)!=1||inet_pton(AF_INET,argv[4],dn)!=1)return 2;
+  if(argc>=7&&(inet_pton(AF_INET,argv[5],ip)!=1||inet_pton(AF_INET,argv[6],m)!=1))return 2;
+  return sc_config(argv[2],ip,m,gw,dn)?0:1;
+ }
+ fprintf(stderr,"usage: river-net dhcp IFACE [--default] | tcp IFACE IPv4 PORT | route-check IFACE GATEWAY | sc-setup IFACE GATEWAY DNS [IP MASK]\n");return 2;
 }
