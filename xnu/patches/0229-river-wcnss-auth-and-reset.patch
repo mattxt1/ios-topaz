@@ -45,7 +45,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
   printf("RIVER WCNSS: PAS mem_setup about to call for %#x+%#x (image %#llx)\n",
       WCNSS_PA, WCNSS_SIZE, image_pa);
   ri_wait(12000);
-@@ -753,6 +775,663 @@
+@@ -753,6 +775,678 @@
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -329,7 +329,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +        printf("RIVER WCNSS: received WCNSS_NVBIN_DNLD_RSP! status=%#x\n", r_ver);
 +        nv_download_acked = true;
 +       }
-+       unsigned total_adv = 20 + smd_len;
++       unsigned total_adv = 20 + ((smd_len + 3) & ~3);
 +       rx_t = (rx_t + total_adv) & 8191;
 +       ri_wr(smem, wcnss_ctrl_info + 32, rx_t);
 +       ri_wr(smem, wcnss_ctrl_info + 28, (1u << 8) | (1u << 16)); /* fTAIL=1, fSTATE=1 */
@@ -489,52 +489,67 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +        ml_io_unmap(tlmm, 0x100000);
 +        delay(5000);
 +       }
++       vm_offset_t dxe_reg = ml_io_map_unmappable(0x0a202000, 0x1000, VM_WIMG_IO);
++       vm_offset_t ccu_reg = ml_io_map_unmappable(0x0a204000, 0x2000, VM_WIMG_IO);
++       if (dxe_reg) {
++        uint32_t old_dxe = ri_rd(dxe_reg, 0);
++        ri_wr(dxe_reg, 0, 0x5c89); /* WCN36XX_DXE_REG_RESET */
++        uint32_t new_dxe = ri_rd(dxe_reg, 0);
++        printf("RIVER WCNSS: DXE CSR 0x0a202000 was %#x, after reset %#x\n", old_dxe, new_dxe);
++        ml_io_unmap(dxe_reg, 0x1000);
++       }
++       if (ccu_reg) {
++        uint32_t old_int = ri_rd(ccu_reg, 0x10dc);
++        ri_wr(ccu_reg, 0x10dc, 0x000a0011); /* DXE INT SELECT PRONTO */
++        printf("RIVER WCNSS: CCU DXE INT SELECT 0x0a2050dc was %#x, now %#x\n", old_int, ri_rd(ccu_reg, 0x10dc));
++        ml_io_unmap(ccu_reg, 0x2000);
++       }
 +       static const uint32_t wcn36xx_default_cfgs[] = {
-+        0x00040001, 0x00000001,
-+        0x00040002, 0x00000001,
-+        0x00040003, 0x00000000,
-+        0x00040004, 0x00000311,
-+        0x00040005, 0x00000005,
-+        0x00040006, 0x00000001,
-+        0x00040007, 0x00000000,
-+        0x00040008, 0x00000003,
-+        0x00040009, 0x00001770,
-+        0x0004000a, 0x00000040,
-+        0x0004000b, 0x0000092b,
-+        0x0004000c, 0x0000000f,
-+        0x0004000d, 0x0000000f,
-+        0x0004000e, 0x00001f40,
-+        0x0004000f, 0x00000005,
-+        0x00040010, 0x0000000a,
-+        0x00040011, 0x0000000f,
-+        0x00040012, 0x00000000,
-+        0x00040013, 0x00000004,
-+        0x00040014, 0x00000000,
-+        0x00040015, 0x00000000,
-+        0x00040016, 0x00000005,
-+        0x00040017, 0x00000001,
-+        0x00040018, 0x00000005,
-+        0x0004001a, 0x00000005,
-+        0x0004001b, 0x00000028,
-+        0x0004001c, 0x000000c8,
-+        0x0004001d, 0x00000001,
-+        0x0004001e, 0x00000001,
-+        0x0004001f, 0x00000014,
-+        0x00040020, 0x0000000a,
-+        0x00040021, 0x00007530,
-+        0x00040022, 0x00000000,
-+        0x00040028, 0x00000080,
-+        0x00040029, 0x00000a00,
-+        0x00040039, 0x00000000,
-+        0x00040040, 0x00000001,
-+        0x0004004b, 0x00000001,
-+        0x00040063, 0x00000000,
-+        0x00040057, 0x0001d4c0,
-+        0x0004005b, 0x00007530,
-+        0x00040062, 0x0000000a,
-+        0x00040064, 0x00000000,
-+        0x000400d2, 0x00000085,
-+        0x000400d7, 0x000003e8,
++        0x00040001, 0x00000000, 0x00000001,
++        0x00040002, 0x00000000, 0x00000001,
++        0x00040003, 0x00000000, 0x00000000,
++        0x00040004, 0x00000000, 0x00000311,
++        0x00040005, 0x00000000, 0x00000005,
++        0x00040006, 0x00000000, 0x00000001,
++        0x00040007, 0x00000000, 0x00000000,
++        0x00040008, 0x00000000, 0x00000003,
++        0x00040009, 0x00000000, 0x00001770,
++        0x0004000a, 0x00000000, 0x00000040,
++        0x0004000b, 0x00000000, 0x0000092b,
++        0x0004000c, 0x00000000, 0x0000000f,
++        0x0004000d, 0x00000000, 0x0000000f,
++        0x0004000e, 0x00000000, 0x00001f40,
++        0x0004000f, 0x00000000, 0x00000005,
++        0x00040010, 0x00000000, 0x0000000a,
++        0x00040011, 0x00000000, 0x0000000f,
++        0x00040012, 0x00000000, 0x00000000,
++        0x00040013, 0x00000000, 0x00000004,
++        0x00040014, 0x00000000, 0x00000000,
++        0x00040015, 0x00000000, 0x00000000,
++        0x00040016, 0x00000000, 0x00000005,
++        0x00040017, 0x00000000, 0x00000001,
++        0x00040018, 0x00000000, 0x00000005,
++        0x0004001a, 0x00000000, 0x00000005,
++        0x0004001b, 0x00000000, 0x00000028,
++        0x0004001c, 0x00000000, 0x000000c8,
++        0x0004001d, 0x00000000, 0x00000001,
++        0x0004001e, 0x00000000, 0x00000001,
++        0x0004001f, 0x00000000, 0x00000014,
++        0x00040020, 0x00000000, 0x0000000a,
++        0x00040021, 0x00000000, 0x00007530,
++        0x00040022, 0x00000000, 0x00000000,
++        0x00040028, 0x00000000, 0x00000080,
++        0x00040029, 0x00000000, 0x00000a00,
++        0x00040039, 0x00000000, 0x00000000,
++        0x00040040, 0x00000000, 0x00000001,
++        0x0004004b, 0x00000000, 0x00000001,
++        0x00040063, 0x00000000, 0x00000000,
++        0x00040057, 0x00000000, 0x0001d4c0,
++        0x0004005b, 0x00000000, 0x00007530,
++        0x00040062, 0x00000000, 0x0000000a,
++        0x00040064, 0x00000000, 0x00000000,
++        0x000400d2, 0x00000000, 0x00000085,
++        0x000400d7, 0x00000000, 0x000003e8,
 +       };
 +       uint32_t head = ri_rd(smem, wcnss_wlan_info + 16);
 +       uint32_t n_cfgs = sizeof(wcn36xx_default_cfgs) / sizeof(wcn36xx_default_cfgs[0]);
@@ -559,7 +574,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +       __asm__ volatile("dmb sy" ::: "memory");
 +       if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
 +       wlan_start_sent = true;
-+       printf("RIVER WCNSS: sent WCN36XX_HAL_START_REQ (%u cfgs, %u bytes, head=%u)!\n", n_cfgs / 2, msg_len, head);
++       printf("RIVER WCNSS: sent WCN36XX_HAL_START_REQ (%u cfgs, %u bytes, head=%u)!\n", n_cfgs / 3, msg_len, head);
 +      }
 +      if (wcnss_wlan_fifo) {
 +       uint32_t rx_fifo_off = wcnss_wlan_fifo + 8192;
