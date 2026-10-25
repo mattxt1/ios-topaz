@@ -1,22 +1,33 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 20:00:00 -0400
-Subject: [PATCH] RIVER: allocate SMP2P item 431 outbound, monitor inbound 451 and SMD channels
+Date: Sat, 24 Oct 2026 20:45:00 -0400
+Subject: [PATCH] RIVER: enable WCNSS proxy clocks, SMP2P 431/451 handshake, and event logging
 
 ---
- bsd/dev/sweet_keys.c | 203 +++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 203 insertions(+)
+ bsd/dev/sweet_keys.c | 219 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 219 insertions(+)
 
 diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
-index 64d5c62..6c17fcf 100644
+index 64d5c62..dfc10dc 100644
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -753,6 +753,209 @@ river_wcnss_probe(void)
+@@ -753,6 +753,224 @@ river_wcnss_probe(void)
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
 + uint32_t reset = 0;
 + if (PE_parse_boot_argn("riverwcnssreset", &reset, sizeof(reset)) && reset) {
++  vm_offset_t gcc = ml_io_map_unmappable(0x01800000, 0x80000, VM_WIMG_IO);
++  if (gcc) {
++   ri_wr(gcc, 0x16008, (1u << 8) | 19u); /* GPLL0 / 10 = 80 MHz scm_core_clk_src */
++   ri_wr(gcc, 0x16004, 1);
++   unsigned spin = 0;
++   while ((ri_rd(gcc, 0x16004) & 1) && spin++ < 1000) delay(1);
++   ri_wr(gcc, 0x45004, ri_rd(gcc, 0x45004) | 0x7); /* bits 0,1,2: SCM crypto proxy branches */
++   printf("RIVER WCNSS: enabled proxy clocks in GCC (rcg %#x vote %#x)\n",
++       ri_rd(gcc, 0x16008), ri_rd(gcc, 0x45004));
++   ml_io_unmap(gcc, 0x80000);
++  }
 +  vm_offset_t pmu = ml_io_map_unmappable(0x0a21c000, 0x4000, VM_WIMG_IO);
 +  if (pmu) {
 +   uint32_t spare = ri_rd(pmu, 0x88) | (1u << 25);
@@ -199,9 +210,13 @@ index 64d5c62..6c17fcf 100644
 +    if (o78 < SMEM_SIZE && o79 < SMEM_SIZE) {
 +     uint32_t idx0 = ri_rd(smem, o78);
 +     uint32_t idx1 = ri_rd(smem, o78 + 4);
-+     printf("RIVER WCNSS: SMEM 78/79 log: idx0=%#x idx1=%#x len79=%#x head=%#x %#x %#x %#x\n",
-+         idx0, idx1, l79,
-+         ri_rd(smem, o79), ri_rd(smem, o79 + 4), ri_rd(smem, o79 + 8), ri_rd(smem, o79 + 12));
++     printf("RIVER WCNSS: SMEM 78/79 log: idx0=%#x idx1=%#x len79=%#x\n", idx0, idx1, l79);
++     unsigned max_ev = idx0 < 8 ? idx0 : 8;
++     for (unsigned e = 0; e < max_ev; e++) {
++      uint32_t b = o79 + e * 20;
++      printf("RIVER WCNSS: log ev %u: id=%#x time=%#x d1=%#x d2=%#x d3=%#x\n",
++          e, ri_rd(smem, b), ri_rd(smem, b+4), ri_rd(smem, b+8), ri_rd(smem, b+12), ri_rd(smem, b+16));
++     }
 +    }
 +   }
 +   printf("RIVER WCNSS: surveying allocated SMEM items post-reset:\n");
