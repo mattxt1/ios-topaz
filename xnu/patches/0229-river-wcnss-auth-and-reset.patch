@@ -45,7 +45,7 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
   printf("RIVER WCNSS: PAS mem_setup about to call for %#x+%#x (image %#llx)\n",
       WCNSS_PA, WCNSS_SIZE, image_pa);
   ri_wait(12000);
-@@ -753,6 +775,654 @@
+@@ -753,6 +775,649 @@
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -507,19 +507,14 @@ Subject: [PATCH] RIVER: unaligned-safe SMD FIFO access and WCN36XX_HAL_START_REQ
 +             apps_smsm, new_apps);
 +        }
 +       }
-+       vm_offset_t test_page = ml_io_map_unmappable(0x8e925000, 0x4000, VM_WIMG_IO);
++       vm_offset_t test_page = ml_io_map_unmappable(0x8e924000, 0x24000, VM_WIMG_IO);
 +       if (test_page) {
-+        uint8_t old_b = *(volatile uint8_t *)(test_page + 0x8b8);
-+        *(volatile uint8_t *)(test_page + 0x8b8) = 1;
-+        printf("RIVER WCNSS: boot test byte at 0x8e9258b8 was %u, now 1\n", old_b);
-+        ml_io_unmap(test_page, 0x4000);
-+       }
-+       vm_offset_t test_page2 = ml_io_map_unmappable(0x8e945000, 0x4000, VM_WIMG_IO);
-+       if (test_page2) {
-+        uint16_t old_s = *(volatile uint16_t *)(test_page2 + 0x2d0);
-+        *(volatile uint16_t *)(test_page2 + 0x2d0) = 0;
-+        printf("RIVER WCNSS: boot test status at 0x8e9452d0 was %u, now 0\n", old_s);
-+        ml_io_unmap(test_page2, 0x4000);
++        uint8_t old_b = *(volatile uint8_t *)(test_page + 0x18b8);
++        *(volatile uint8_t *)(test_page + 0x18b8) = 1;
++        uint16_t old_s = *(volatile uint16_t *)(test_page + 0x212d0);
++        *(volatile uint16_t *)(test_page + 0x212d0) = 0;
++        printf("RIVER WCNSS: boot test byte was %u, now 1; status was %u, now 0\n", old_b, old_s);
++        ml_io_unmap(test_page, 0x24000);
 +       }
 +       uint32_t head = ri_rd(smem, wcnss_wlan_info + 16);
 +       uint32_t msg_len = 16; /* header (8) + params (8), len=0 (no startup TLVs, per wcn36xx_smd_start) */
