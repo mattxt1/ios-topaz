@@ -235,48 +235,45 @@ index 64d5c62..dfc10dc 100644
 +          ri_rd(smem, wcnss_ctrl_info + 32), ri_rd(smem, wcnss_ctrl_info + 36), (w + 1) * 100);
 +     }
 +     if (tx_st == 0) {
-+      *(volatile uint8_t *)(smem + wcnss_ctrl_info + 4) = 1;
-+      *(volatile uint8_t *)(smem + wcnss_ctrl_info + 5) = 1;
-+      *(volatile uint8_t *)(smem + wcnss_ctrl_info + 6) = 1;
-+      *(volatile uint8_t *)(smem + wcnss_ctrl_info + 10) = 1;
-+      ri_wr(smem, wcnss_ctrl_info, 1);
++      ri_wr(smem, wcnss_ctrl_info + 4, (1u << 16) | (1u << 8) | 1u); /* fDSR=1, fCTS=1, fCD=1 */
++      ri_wr(smem, wcnss_ctrl_info + 8, (1u << 16)); /* fSTATE=1 */
++      ri_wr(smem, wcnss_ctrl_info, 1); /* SMD_OPENING */
 +      __asm__ volatile("dmb sy" ::: "memory");
 +      if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
 +      printf("RIVER WCNSS: WCNSS_CTRL transitioned tx to SMD_OPENING\n");
 +     } else if (tx_st == 1 && (rx_st == 1 || rx_st == 2)) {
-+      ri_wr(smem, wcnss_ctrl_info, 2);
-+      *(volatile uint8_t *)(smem + wcnss_ctrl_info + 10) = 1;
++      ri_wr(smem, wcnss_ctrl_info, 2); /* SMD_OPENED */
++      ri_wr(smem, wcnss_ctrl_info + 8, (1u << 16)); /* fSTATE=1 */
 +      __asm__ volatile("dmb sy" ::: "memory");
 +      if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
 +      printf("RIVER WCNSS: WCNSS_CTRL transitioned tx to SMD_OPENED\n");
 +     }
 +     if (tx_st == 2 && rx_st == 2 && !version_req_sent) {
 +      uint32_t head = ri_rd(smem, wcnss_ctrl_info + 16);
-+      uint32_t tf = smem + wcnss_ctrl_fifo;
-+      ri_wr(tf, (head + 0) & 8191, 8);
-+      ri_wr(tf, (head + 4) & 8191, 0);
-+      ri_wr(tf, (head + 8) & 8191, 0);
-+      ri_wr(tf, (head + 12) & 8191, 0);
-+      ri_wr(tf, (head + 16) & 8191, 0);
-+      ri_wr(tf, (head + 20) & 8191, 0x01000000);
-+      ri_wr(tf, (head + 24) & 8191, 8);
++      ri_wr(smem, wcnss_ctrl_fifo + ((head + 0) & 8191), 8);
++      ri_wr(smem, wcnss_ctrl_fifo + ((head + 4) & 8191), 0);
++      ri_wr(smem, wcnss_ctrl_fifo + ((head + 8) & 8191), 0);
++      ri_wr(smem, wcnss_ctrl_fifo + ((head + 12) & 8191), 0);
++      ri_wr(smem, wcnss_ctrl_fifo + ((head + 16) & 8191), 0);
++      ri_wr(smem, wcnss_ctrl_fifo + ((head + 20) & 8191), 0x01000000);
++      ri_wr(smem, wcnss_ctrl_fifo + ((head + 24) & 8191), 8);
 +      head = (head + 28) & 8191;
 +      ri_wr(smem, wcnss_ctrl_info + 16, head);
-+      *(volatile uint8_t *)(smem + wcnss_ctrl_info + 8) = 1;
++      ri_wr(smem, wcnss_ctrl_info + 8, 1u | (1u << 16)); /* fHEAD=1, fSTATE=1 */
 +      __asm__ volatile("dmb sy" ::: "memory");
 +      if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
 +      version_req_sent = true;
 +      printf("RIVER WCNSS: sent WCNSS_VERSION_REQ (head=%u)!\n", head);
 +     }
 +     if (version_req_sent) {
-+      uint32_t rf = smem + wcnss_ctrl_fifo + 8192;
++      uint32_t rx_fifo_off = wcnss_ctrl_fifo + 8192;
 +      uint32_t rx_h = ri_rd(smem, wcnss_ctrl_info + 36);
 +      uint32_t rx_t = ri_rd(smem, wcnss_ctrl_info + 32);
 +      if (rx_h != rx_t) {
-+       uint32_t smd_len = ri_rd(rf, rx_t & 8191);
-+       uint32_t r_type = ri_rd(rf, (rx_t + 20) & 8191);
-+       uint32_t r_len = ri_rd(rf, (rx_t + 24) & 8191);
-+       uint32_t r_ver = ri_rd(rf, (rx_t + 28) & 8191);
++       uint32_t smd_len = ri_rd(smem, rx_fifo_off + (rx_t & 8191));
++       uint32_t r_type = ri_rd(smem, rx_fifo_off + ((rx_t + 20) & 8191));
++       uint32_t r_len = ri_rd(smem, rx_fifo_off + ((rx_t + 24) & 8191));
++       uint32_t r_ver = ri_rd(smem, rx_fifo_off + ((rx_t + 28) & 8191));
 +       printf("RIVER WCNSS: RX packet: smd_len=%u type=%#x len=%u ver_word=%#x (rx_h=%u rx_t=%u)\n",
 +           smd_len, r_type, r_len, r_ver, rx_h, rx_t);
 +       uint8_t maj = r_ver & 0xff;
@@ -287,7 +284,7 @@ index 64d5c62..dfc10dc 100644
 +       unsigned total_adv = 20 + ((smd_len + 3) & ~3);
 +       rx_t = (rx_t + total_adv) & 8191;
 +       ri_wr(smem, wcnss_ctrl_info + 32, rx_t);
-+       *(volatile uint8_t *)(smem + wcnss_ctrl_info + 29) = 1;
++       ri_wr(smem, wcnss_ctrl_info + 28, (1u << 8) | (1u << 16)); /* fTAIL=1, fSTATE=1 */
 +       __asm__ volatile("dmb sy" ::: "memory");
 +       if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
 +      }
