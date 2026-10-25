@@ -1,0 +1,129 @@
+From: mattxt1 <matttysonx1@gmail.com>
+Subject: [PATCH] RIVER: configure RF pins and detect Iris XO before boot
+
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -811,6 +811,17 @@
+        ri_rd(gcc, 0x16008), ri_rd(gcc, 0x45004));
+    ml_io_unmap(gcc, 0x80000);
+   }
++  vm_offset_t tlmm = ml_io_map_unmappable(0x01000000, 0x100000, VM_WIMG_IO);
++  if (tlmm) {
++   uint32_t old76 = ri_rd(tlmm, 76 * 0x1000);
++   for (unsigned g = 76; g <= 80; g++) {
++    ri_wr(tlmm, g * 0x1000, (2u << 6) | (1u << 2) | 3u);
++   }
++   printf("RIVER WCNSS: pre-auth configured TLMM GPIO 76-80 5-wire WLAN pinmux (76 was %#x, now %#x)\n",
++       old76, ri_rd(tlmm, 76 * 0x1000));
++   ml_io_unmap(tlmm, 0x100000);
++   delay(5000);
++  }
+   vm_offset_t pmu = ml_io_map_unmappable(0x0a21c000, 0x4000, VM_WIMG_IO);
+   if (pmu) {
+    uint32_t spare = ri_rd(pmu, 0x88) | (1u << 25);
+@@ -823,7 +834,36 @@
+    ri_wr(pmu, 0x04, val);
+    unsigned spin = 0;
+    while ((ri_rd(pmu, 0x04) & (1u << 8)) && spin++ < 1000) delay(10);
++   if (spin >= 1000) {
++    printf("RIVER WCNSS: Iris reset timeout; refusing auth/reset\n");
++    ml_io_unmap(pmu, 0x4000);
++    if (auxmem) ml_io_unmap(auxmem, 0x8000);
++    ml_io_unmap(smem, SMEM_SIZE);
++    return;
++   }
+    val &= ~(1u << 7);
++   ri_wr(pmu, 0x04, val);
++   /* The River DT requests auto-detection. Downstream wcnss_vreg.c
++    * reads Iris register 4 through PMU+0x134; its top two bits select
++    * 48 MHz for 3660/3680, 19.2 MHz for 3620/3610. */
++   uint32_t iris = ri_rd(pmu, 0x134);
++   ri_wr(pmu, 0x134, (iris & 0xffffu) | 4u);
++   ri_wr(pmu, 0x04, val | (1u << 9));
++   spin = 0;
++   while ((ri_rd(pmu, 0x04) & (1u << 10)) && spin++ < 1000) delay(10);
++   iris = ri_rd(pmu, 0x134);
++   ri_wr(pmu, 0x04, val);
++   unsigned iris_type = iris >> 30;
++   if (spin >= 1000 || (iris >> 16) == 0 || iris == 0xffffffffu || iris_type == 3) {
++    printf("RIVER WCNSS: invalid Iris chip read %#x spin=%u; refusing auth/reset\n", iris, spin);
++    ml_io_unmap(pmu, 0x4000);
++    if (auxmem) ml_io_unmap(auxmem, 0x8000);
++    ml_io_unmap(smem, SMEM_SIZE);
++    return;
++   }
++   val = (val & ~6u) | (iris_type == 0 ? 6u : 0u);
++   printf("RIVER WCNSS: Iris chip register %#x type=%u XO=%s MHz\n",
++       iris, iris_type, iris_type == 0 ? "48" : "19.2");
+    ri_wr(pmu, 0x04, val);
+    val |= (1u << 3);
+    ri_wr(pmu, 0x04, val);
+@@ -893,6 +933,9 @@
+    bool nv_download_sent = false, nv_download_acked = false;
+    bool wlan_start_sent = false, wlan_start_acked = false;
+    bool wlan_nv_done = false;
++   unsigned boot_diag = 0, boot_diag_deadline = 0;
++   bool boot_diag_pending = false;
++   static const uint32_t boot_diag_va[] = { 0x8e9258b8u, 0x8e9452d0u };
+    unsigned wlan_frag = 0, wlan_fm_offset = 0;
+    bool wlan_frag_in_flight = false;
+    for (unsigned w = 0; w < 80; w++) {
+@@ -1230,18 +1273,28 @@
+         }
+        }
+       }
+-      if (wlan_tx == 2 && wlan_rx == 2 && wlan_nv_done && !wlan_start_sent) {
+-       vm_offset_t tlmm = ml_io_map_unmappable(0x01000000, 0x100000, VM_WIMG_IO);
+-       if (tlmm) {
+-        uint32_t old76 = ri_rd(tlmm, 76 * 0x1000);
+-        for (unsigned g = 76; g <= 80; g++) {
+-         ri_wr(tlmm, g * 0x1000, (2u << 6) | (1u << 2) | 3u);
+-        }
+-        printf("RIVER WCNSS: configured TLMM GPIO 76-80 5-wire WLAN pinmux (76 was %#x, now %#x)\n",
+-            old76, ri_rd(tlmm, 76 * 0x1000));
+-        ml_io_unmap(tlmm, 0x100000);
+-        delay(5000);
+-       }
++      if (boot_diag_pending && w >= boot_diag_deadline) {
++       printf("RIVER WCNSS: boot diagnostic %u timed out; continuing START\n", boot_diag);
++       boot_diag_pending = false;
++       boot_diag = 2;
++      }
++      if (wlan_tx == 2 && wlan_rx == 2 && wlan_nv_done && boot_diag < 2 && !boot_diag_pending) {
++       /* HAL dump command 9 is the stock firmware's read-memory operation.
++        * Ask Pronto to read its own VA; APPS never maps protected RAM. */
++       uint32_t head = ri_rd(smem, wcnss_wlan_info + 16);
++       const uint32_t packet[] = { 28, 0, 0, 0, 0, 121, 28, 9, boot_diag_va[boot_diag], 1, 1, 0 };
++       for (unsigned i = 0; i < sizeof(packet) / sizeof(packet[0]); i++)
++        ri_fifo_wr32(smem, wcnss_wlan_fifo + ((head + i * 4) & 8191), packet[i]);
++       head = (head + sizeof(packet)) & 8191;
++       __asm__ volatile("dmb sy" ::: "memory");
++       ri_wr(smem, wcnss_wlan_info + 16, head);
++       ri_wr(smem, wcnss_wlan_info + 8, 1u | (1u << 16));
++       if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
++       printf("RIVER WCNSS: requested firmware boot diagnostic VA %#x\n", boot_diag_va[boot_diag]);
++       boot_diag_pending = true;
++       boot_diag_deadline = w + 10;
++      }
++      if (wlan_tx == 2 && wlan_rx == 2 && wlan_nv_done && boot_diag >= 2 && !wlan_start_sent) {
+        unsigned ent85 = SMEM_TOC + 85 * SMEM_ENTRY;
+        if (ri_rd(smem, ent85)) {
+         uint32_t off85 = ri_rd(smem, ent85 + 4);
+@@ -1295,6 +1348,17 @@
+          if (wlan_frag >= 11) {
+           wlan_nv_done = true;
+           printf("RIVER WCNSS: WLAN NV download COMPLETE (all 11 frags acked)!\n");
++         }
++        } else if (r_type == 122) {
++         if (boot_diag_pending && boot_diag < 2 && smd_len >= 20 && r_len >= 20) {
++          uint32_t bytes = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 32) & 8191));
++          uint32_t value = ri_fifo_rd32(smem, rx_fifo_off + ((rx_t + 36) & 8191));
++          printf("RIVER WCNSS: firmware boot diagnostic VA %#x status=%u bytes=%u value=%#x\n",
++              boot_diag_va[boot_diag], r_st_sta, bytes, value);
++          boot_diag++;
++          boot_diag_pending = false;
++         } else {
++          printf("RIVER WCNSS: short/unexpected firmware boot diagnostic len=%u status=%u\n", r_len, r_st_sta);
+          }
+         } else if (r_type == 1) {
+          uint16_t status = r_st_sta & 0xffff;

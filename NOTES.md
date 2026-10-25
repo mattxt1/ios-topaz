@@ -1,5 +1,27 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River r134 result and r135 RF prerequisites (2026-10-25)
+
+r134 commit 826cbf3 / Actions 40229759562 passed CI. RAM boot accepted;
+USB ping and SSH respond. PAS auth/reset status 0/result 0; NV completed;
+16-byte HAL_START_REQ still returns status 38. No post-auth carveout mapping
+or writes occurred. Boot SHA256 da272b2f61dd62b656d0767bd0c6c3e34e33d2284d98495c8bbe5a4f28fb2fc1;
+504-byte cmdline. Current chat's outputs contain the image and manifest;
+work/agent-usb-live-1.txt records live WCNSS evidence. No partition flashed.
+
+Patch 0231 moves GPIO76-80 five-wire pinmux before PAS startup (matching
+River DT and Motorola wcnss probe ordering), reads Iris chip register 4
+through PMU+0x134 with bounded polling, and selects XO48 for type0 (3660/
+3680), XO19.2 for types1/2, per downstream wcnss_vreg.c. The prior kernel
+hard-coded XO19.2 despite the DT requesting autodetection. Invalid chip or
+reset/read timeout prevents auth/reset. It adds two bounded, read-only HAL
+dump command 9 requests to read firmware VAs 0x8e9258b8 and 0x8e9452d0
+through SMD before START, rather than APPS touching XPU-protected RAM.
+The command ID and function were verified in the stock firmware's dump
+command table at VA 0x8e928f08 (ID9 -> 0x8e6f8393). Local compile passed.
+CI and device test pending. User authorized changing the startup sequence
+and START format as needed; RAM-only/no-flash/cmdline constraints persist.
+
 ## River WCNSS pre-auth boot-test staging (2026-10-25, r134)
 
 Patch 0230 removes the r133 post-auth carveout mapping/write and applies the
