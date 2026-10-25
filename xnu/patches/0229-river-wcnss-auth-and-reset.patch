@@ -1,17 +1,30 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: mattxt1 <matttysonx1@gmail.com>
-Date: Sat, 24 Oct 2026 22:20:00 -0400
-Subject: [PATCH] RIVER: WCNSS_CTRL channel handshake and version request
+Date: Sat, 24 Oct 2026 23:20:00 -0400
+Subject: [PATCH] RIVER: WCNSS_CTRL channel handshake, version req, NV download, and WLAN_CTRL
 
 ---
- bsd/dev/sweet_keys.c | 364 ++++++++++++++++++++++++++++++++++++++++++++++++++
- 1 file changed, 364 insertions(+)
+ bsd/dev/sweet_keys.c | 450 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 450 insertions(+)
 
-diff --git a/bsd/dev/sweet_keys.c b/bsd/dev/sweet_keys.c
-index 64d5c62..dfc10dc 100644
 --- a/bsd/dev/sweet_keys.c
 +++ b/bsd/dev/sweet_keys.c
-@@ -753,6 +753,367 @@ river_wcnss_probe(void)
+@@ -391,6 +391,14 @@
+   return;
+  }
+  const uint32_t *image = (const uint32_t *)ml_static_ptovirt((vm_offset_t)image_pa);
++ static uint64_t nv_pa = 0, nv_len = 0;
++ static const uint8_t *nv_bytes = NULL;
++ if (SecureDTGetProperty(mm, "RiverWCNSSNV", &prop, &psize) == kSuccess && psize == 16) {
++  nv_pa = ((const uint64_t *)prop)[0];
++  nv_len = ((const uint64_t *)prop)[1];
++  nv_bytes = (const uint8_t *)ml_static_ptovirt((vm_offset_t)nv_pa);
++  printf("RIVER WCNSS: found RiverWCNSSNV blob at %#llx (%llu bytes)\n", nv_pa, nv_len);
++ }
+  printf("RIVER WCNSS: PAS mem_setup about to call for %#x+%#x (image %#llx)\n",
+      WCNSS_PA, WCNSS_SIZE, image_pa);
+  ri_wait(12000);
+@@ -753,6 +761,445 @@
     ml_io_unmap(ipc_page, 0x4000);
    }
   }
@@ -105,8 +118,10 @@ index 64d5c62..dfc10dc 100644
 +   vm_offset_t gic = ml_io_map_unmappable(0x0b000000, 0x4000, VM_WIMG_IO);
 +   uint32_t last_gic = 0;
 +   uint32_t wcnss_ctrl_info = 0, wcnss_ctrl_fifo = 0;
-+   bool version_req_sent = false;
-+   for (unsigned w = 0; w < 40; w++) {
++   uint32_t wcnss_wlan_info = 0, wcnss_wlan_fifo = 0;
++   bool version_req_sent = false, version_rsp_received = false;
++   bool nv_download_sent = false, nv_download_acked = false;
++   for (unsigned w = 0; w < 60; w++) {
 +    delay(100000);
 +    if (ipc_reg2 && (w % 2 == 1)) {
 +     ri_wr(ipc_reg2, 0, (1u << 19) | (1u << 18) | (1u << 17));
@@ -215,6 +230,8 @@ index 64d5c62..dfc10dc 100644
 +          } else {
 +           if (itm == 19) wcnss_ctrl_info = data_off;
 +           if (itm == 343) wcnss_ctrl_fifo = data_off;
++           if (itm == 20) wcnss_wlan_info = data_off;
++           if (itm == 344) wcnss_wlan_fifo = data_off;
 +           if (w == 0 || w == 39) {
 +            printf("RIVER WCNSS: part4 item %u off %#x size %u phdr %u\n", itm, cpos, isz, phdr);
 +           }
@@ -276,17 +293,91 @@ index 64d5c62..dfc10dc 100644
 +       uint32_t r_ver = ri_rd(smem, rx_fifo_off + ((rx_t + 28) & 8191));
 +       printf("RIVER WCNSS: RX packet: smd_len=%u type=%#x len=%u ver_word=%#x (rx_h=%u rx_t=%u)\n",
 +           smd_len, r_type, r_len, r_ver, rx_h, rx_t);
-+       uint8_t maj = r_ver & 0xff;
-+       uint8_t min = (r_ver >> 8) & 0xff;
-+       uint8_t ver = (r_ver >> 16) & 0xff;
-+       uint8_t rev = (r_ver >> 24) & 0xff;
-+       printf("RIVER WCNSS: Pronto Firmware Version: %u.%u.%u.%u\n", maj, min, ver, rev);
++       if (r_type == 0x01000001) {
++        uint8_t maj = r_ver & 0xff;
++        uint8_t min = (r_ver >> 8) & 0xff;
++        uint8_t ver = (r_ver >> 16) & 0xff;
++        uint8_t rev = (r_ver >> 24) & 0xff;
++        printf("RIVER WCNSS: Pronto Firmware Version: %u.%u.%u.%u\n", maj, min, ver, rev);
++        version_rsp_received = true;
++       } else if (r_type == 0x01000003) {
++        printf("RIVER WCNSS: received WCNSS_NVBIN_DNLD_RSP! status=%#x\n", r_ver);
++        nv_download_acked = true;
++       }
 +       unsigned total_adv = 20 + ((smd_len + 3) & ~3);
 +       rx_t = (rx_t + total_adv) & 8191;
 +       ri_wr(smem, wcnss_ctrl_info + 32, rx_t);
 +       ri_wr(smem, wcnss_ctrl_info + 28, (1u << 8) | (1u << 16)); /* fTAIL=1, fSTATE=1 */
 +       __asm__ volatile("dmb sy" ::: "memory");
 +       if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
++      }
++     }
++     if (version_rsp_received && !nv_download_sent && nv_bytes && nv_len >= 16) {
++      printf("RIVER WCNSS: starting NV download (%llu bytes in 3072-byte frags)...\n", nv_len);
++      unsigned total_frags = (unsigned)((nv_len + 3071) / 3072);
++      for (unsigned f = 0; f < total_frags; f++) {
++       uint32_t off = f * 3072;
++       uint32_t chunk = (off + 3072 <= nv_len) ? 3072 : (uint32_t)(nv_len - off);
++       uint16_t flags = (f == total_frags - 1) ? 0x8001 : 0x0000;
++       uint32_t head = ri_rd(smem, wcnss_ctrl_info + 16);
++       unsigned wait_drain = 0;
++       while (ri_rd(smem, wcnss_ctrl_info + 12) != head && wait_drain++ < 500) {
++        delay(1000);
++       }
++       uint32_t smd_len = 16 + chunk;
++       ri_wr(smem, wcnss_ctrl_fifo + ((head + 0) & 8191), smd_len);
++       ri_wr(smem, wcnss_ctrl_fifo + ((head + 4) & 8191), 0);
++       ri_wr(smem, wcnss_ctrl_fifo + ((head + 8) & 8191), 0);
++       ri_wr(smem, wcnss_ctrl_fifo + ((head + 12) & 8191), 0);
++       ri_wr(smem, wcnss_ctrl_fifo + ((head + 16) & 8191), 0);
++       ri_wr(smem, wcnss_ctrl_fifo + ((head + 20) & 8191), 0x01000002); /* WCNSS_NVBIN_DNLD_REQ */
++       ri_wr(smem, wcnss_ctrl_fifo + ((head + 24) & 8191), 8 + chunk);
++       ri_wr(smem, wcnss_ctrl_fifo + ((head + 28) & 8191), f | ((uint32_t)flags << 16));
++       ri_wr(smem, wcnss_ctrl_fifo + ((head + 32) & 8191), chunk);
++       for (unsigned b = 0; b < chunk; b += 4) {
++        uint32_t wval = 0;
++        unsigned remain = chunk - b;
++        if (remain >= 4) {
++         wval = *(const uint32_t *)(nv_bytes + off + b);
++        } else {
++         for (unsigned k = 0; k < remain; k++) {
++          wval |= ((uint32_t)nv_bytes[off + b + k]) << (k * 8);
++         }
++        }
++        ri_wr(smem, wcnss_ctrl_fifo + ((head + 36 + b) & 8191), wval);
++       }
++       unsigned adv = 20 + ((smd_len + 3) & ~3);
++       head = (head + adv) & 8191;
++       ri_wr(smem, wcnss_ctrl_info + 16, head);
++       ri_wr(smem, wcnss_ctrl_info + 8, 1u | (1u << 16)); /* fHEAD=1, fSTATE=1 */
++       __asm__ volatile("dmb sy" ::: "memory");
++       if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
++       printf("RIVER WCNSS: sent NV frag %u/%u (chunk=%u, flags=%#x, head=%u)\n",
++           f + 1, total_frags, chunk, flags, head);
++      }
++      nv_download_sent = true;
++     }
++     if (wcnss_wlan_info) {
++      uint32_t wlan_tx = ri_rd(smem, wcnss_wlan_info);
++      uint32_t wlan_rx = ri_rd(smem, wcnss_wlan_info + 20);
++      if (w % 5 == 0 || wlan_tx != 2 || wlan_rx != 2) {
++       printf("RIVER WCNSS: WLAN_CTRL state: tx=%u rx=%u (tx_t=%u tx_h=%u rx_t=%u rx_h=%u, waited %u ms)\n",
++           wlan_tx, wlan_rx, ri_rd(smem, wcnss_wlan_info + 12), ri_rd(smem, wcnss_wlan_info + 16),
++           ri_rd(smem, wcnss_wlan_info + 32), ri_rd(smem, wcnss_wlan_info + 36), (w + 1) * 100);
++      }
++      if (wlan_tx == 0 && wlan_rx >= 1) {
++       ri_wr(smem, wcnss_wlan_info + 4, (1u << 16) | (1u << 8) | 1u);
++       ri_wr(smem, wcnss_wlan_info + 8, (1u << 16));
++       ri_wr(smem, wcnss_wlan_info, 1); /* SMD_OPENING */
++       __asm__ volatile("dmb sy" ::: "memory");
++       if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
++       printf("RIVER WCNSS: WLAN_CTRL transitioned tx to SMD_OPENING\n");
++      } else if (wlan_tx == 1 && (wlan_rx == 1 || wlan_rx == 2)) {
++       ri_wr(smem, wcnss_wlan_info, 2); /* SMD_OPENED */
++       ri_wr(smem, wcnss_wlan_info + 8, (1u << 16));
++       __asm__ volatile("dmb sy" ::: "memory");
++       if (ipc_reg2) ri_wr(ipc_reg2, 0, 1u << 17);
++       printf("RIVER WCNSS: WLAN_CTRL transitioned tx to SMD_OPENED\n");
 +      }
 +     }
 +    }
@@ -379,5 +470,3 @@ index 64d5c62..dfc10dc 100644
   if (auxmem) ml_io_unmap(auxmem, 0x8000);
   ml_io_unmap(smem, SMEM_SIZE);
  
--- 
-2.54.0 (Apple Git-156)
