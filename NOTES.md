@@ -18,7 +18,10 @@ initial SSH netprobe reports USB/virtual interfaces only, no network controller.
 No association or usable Wi-Fi interface is claimed.
 
 Private evidence is in the CURRENT chat work/agent-r137-usb-1.txt and
-work/r137-emmc-ring.bin (transfer/independent decode pending at note time).
+work/r137-emmc-ring.bin. The complete4,198,400-byte ring snapshot decoded
+successfully and independently confirms through963 RX frames (snapshot
+preceded the final1207 live count). Post-scan SSH netprobe succeeded and
+still reports only USB/virtual interfaces, no IONetworkController.
 Current chat is Documents/Codex/2026-10-25/continue-my-moto-g7-xnu-wi.
 The user manually supplied fastboot; boot succeeded without flashing.
 
@@ -34,7 +37,8 @@ addressed to the test MAC, which can provide evidence of radio transmission.
 Local arm64 compile and ASan/UBSan TX harness passed (fields, addresses,
 ring wrap, completion, timeout retention, targeted-probe-response accounting).
 Upstream hal.h layout checks passed; ADD_STA_SELF sizes18/15.
-CI, packaging and r138 hardware testing remain pending. Phone is on r137;
+r138 kernel commit e89351e is pushed; Actions40234832019 is running.
+Packaging and r138 hardware testing remain pending. Phone is on r137;
 request physical fastboot only when the next verified image is ready.
 
 ## River r137 RX reclaim and passive scan (2026-10-25, prepared)
