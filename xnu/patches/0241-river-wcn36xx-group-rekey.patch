@@ -1,0 +1,202 @@
+From: mattxt1 <matttysonx1@gmail.com>
+Subject: [PATCH] RIVER: support WPA2 group rekey, persistent SMD, and link reconnect
+
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -576,6 +576,8 @@
+  bool pmk_ready, keys_installed, associated, data_tx_stalled;
+ } river_wpa;
+ static unsigned river_peer_sta, river_peer_dpu, river_peer_sign;
++static vm_offset_t river_smd_smem, river_smd_ipc;
++static uint32_t river_smd_wlan_info, river_smd_wlan_fifo;
+ static void
+ river_secret_clear(void *p, unsigned n)
+ {
+@@ -749,8 +751,9 @@
+      !river_mac_equal(f + 10, river_target.bssid)) return;
+  if (((fc & 0xfcu) == 0xa0 || (fc & 0xfcu) == 0xc0) && len >= 26) {
+   river_wpa.associated = false; river_wpa.stage = 3;
++  river_wpa.keys_installed = false; river_target.found = false;
+   river_network_drop();
+-  printf("RIVER NET: AP disconnected reason=%u; data link closed\n",river_le16(f+24));
++  printf("RIVER NET: AP disconnected reason=%u; data link closed (auto-reconnect enabled)\n",river_le16(f+24));
+  }
+  if ((fc & 0xfcu) == 0xb0 && len >= 30 && river_le16(f+24) == 0 && river_le16(f+26) == 2) {
+   river_auth_seen = true; river_auth_status = river_le16(f+28);
+@@ -1234,6 +1237,18 @@
+  return ok;
+ }
+ static bool
++river_wpa_install_gtk(vm_offset_t smem, uint32_t info, uint32_t fifo,
++    vm_offset_t ipc, const uint8_t gtk[16], unsigned keyid, const uint8_t rsc[8])
++{
++ uint8_t group[243] = {0}; group[8] = river_target_bss;
++ river_le_put(group+9, 4, 4); group[13] = 1; uint8_t *k = group+14;
++ k[0] = keyid; river_le_put(k+2, 1, 4); memcpy(k+6, rsc, 8);
++ river_le_put(k+23, 16, 2); memcpy(k+25, gtk, 16);
++ bool ok = river_scan_xact(smem, info, fifo, ipc, 24, group, sizeof(group));
++ river_secret_clear(group, sizeof(group));
++ return ok;
++}
++static bool
+ river_wpa_install(vm_offset_t smem, uint32_t info, uint32_t fifo,
+     vm_offset_t ipc, const uint8_t gtk[16], unsigned keyid, const uint8_t rsc[8])
+ {
+@@ -1257,16 +1272,10 @@
+  bool ok = river_scan_xact(smem, info, fifo, ipc, 26, pairwise, sizeof(pairwise));
+  river_secret_clear(pairwise, sizeof(pairwise));
+  if (!ok) return false;
+- uint8_t group[243] = {0}; group[8] = river_target_bss;
+- river_le_put(group+9, 4, 4); group[13] = 1; k = group+14;
+- k[0] = keyid; river_le_put(k+2, 1, 4); memcpy(k+6, rsc, 8);
+- river_le_put(k+23, 16, 2); memcpy(k+25, gtk, 16);
+- ok = river_scan_xact(smem, info, fifo, ipc, 24, group, sizeof(group));
+- river_secret_clear(group, sizeof(group));
+- return ok;
++ return river_wpa_install_gtk(smem, info, fifo, ipc, gtk, keyid, rsc);
+ }
+ static bool
+-river_wpa_keydata(const uint8_t *data, unsigned n, uint8_t gtk[16], unsigned *keyid)
++river_wpa_keydata(const uint8_t *data, unsigned n, uint8_t gtk[16], unsigned *keyid, bool require_rsn)
+ {
+  bool have_rsn = false, have_gtk = false;
+  for (unsigned off = 0; off < n;) {
+@@ -1289,7 +1298,7 @@
+   }
+   off += size+2;
+  }
+- return have_rsn && have_gtk;
++ return require_rsn ? (have_rsn && have_gtk) : have_gtk;
+ }
+ static void
+ river_wpa_step(vm_offset_t smem, uint32_t info, uint32_t fifo, vm_offset_t ipc)
+@@ -1299,6 +1308,33 @@
+  unsigned n = river_wpa.pending_len;
+  memcpy(msg, river_wpa.pending, n); river_secret_clear(river_wpa.pending, n); river_wpa.pending_len = 0;
+  unsigned flags = river_be16(msg+5);
++
++ /* Group Rekey: Group key (bit 3 == 0), ACK (bit 7), MIC (bit 8), Secure (bit 9), Encrypted (bit 12), version 2 */
++ if (river_wpa.stage == 2 && (flags & 0xecbf) == 0x0082 && river_be16(msg+7) == 16) {
++  if ((flags & 0x1382) != 0x1382) goto done;
++  if (memcmp(msg+9, river_wpa.m3replay, 8) <= 0) {
++   if (river_constant_equal(msg+9, river_wpa.m3replay, 8))
++    (void)river_wpa_reply(0x0302, msg+9, false, false);
++   goto done;
++  }
++  memcpy(saved_mic, msg+81, 16); memset(msg+81, 0, 16);
++  river_hmac_sha1(river_wpa.ptk, 16, msg, n, mic);
++  if (!river_constant_equal(mic, saved_mic, 16)) {
++   printf("RIVER WPA: Group M1 MIC rejected; no key installed\n"); goto done;
++  }
++  unsigned wrapped = river_be16(msg+97), keyid = 0;
++  uint8_t plain[400] = {0}, gtk[16] = {0};
++  bool ok = river_aes_unwrap(river_wpa.ptk+16, msg+99, wrapped, plain) &&
++      river_wpa_keydata(plain, wrapped-8, gtk, &keyid, false);
++  if (ok) ok = river_wpa_install_gtk(smem, info, fifo, ipc, gtk, keyid, msg+65);
++  river_secret_clear(plain, sizeof(plain)); river_secret_clear(gtk, sizeof(gtk));
++  if (!ok) { printf("RIVER WPA: GTK installation failed\n"); goto done; }
++  memcpy(river_wpa.m3replay, msg+9, 8);
++  ok = river_wpa_reply(0x0302, msg+9, false, false);
++  if (ok) printf("RIVER WPA: group rekey GTK installed keyid=%u; Group M2 complete\n", keyid);
++  goto done;
++ }
++
+  /* Pairwise, ACK, HMAC-SHA1/AES descriptor version2, no request/error/index. */
+  if ((flags & 0xecbf) != 0x008a || river_be16(msg+7) != 16) goto done;
+  if (!(flags & 0x100)) {
+@@ -1334,7 +1370,7 @@
+  unsigned wrapped = river_be16(msg+97), keyid = 0;
+  uint8_t plain[400] = {0}, gtk[16] = {0};
+  bool ok = river_aes_unwrap(river_wpa.ptk+16, msg+99, wrapped, plain) &&
+-     river_wpa_keydata(plain, wrapped-8, gtk, &keyid);
++     river_wpa_keydata(plain, wrapped-8, gtk, &keyid, true);
+  if (ok) ok = river_wpa_install(smem, info, fifo, ipc, gtk, keyid, msg+65);
+  river_secret_clear(plain, sizeof(plain)); river_secret_clear(gtk, sizeof(gtk));
+  if (!ok) { printf("RIVER WPA: key validation/installation failed; port closed\n"); goto done; }
+@@ -1772,7 +1808,7 @@
+  printf("RIVER WCNSS: SMEM init %#x free %#x avail %#x SBL version %#x ptable %#x (read-only)\n",
+      initialized, free_off, available, version, ptable);
+  if (initialized != 1 || free_off >= SMEM_SIZE) {
+-  ml_io_unmap(smem, SMEM_SIZE);
++  /* Retain smem for SMD transactions */
+   return;
+  }
+  static const unsigned table_ids[] = { 13, 266 };
+@@ -2034,7 +2070,7 @@
+   if (load != 3) {
+    printf("RIVER WCNSS: auth/reset requires complete mode-3 firmware copy\n");
+    if (auxmem) ml_io_unmap(auxmem, 0x8000);
+-   ml_io_unmap(smem, SMEM_SIZE);
++   /* Retain smem for SMD transactions */
+    return;
+   }
+   vm_offset_t gcc = ml_io_map_unmappable(0x01800000, 0x80000, VM_WIMG_IO);
+@@ -2075,7 +2111,7 @@
+     printf("RIVER WCNSS: Iris reset timeout; refusing auth/reset\n");
+     ml_io_unmap(pmu, 0x4000);
+     if (auxmem) ml_io_unmap(auxmem, 0x8000);
+-    ml_io_unmap(smem, SMEM_SIZE);
++    /* Retain smem for SMD transactions */
+     return;
+    }
+    val &= ~(1u << 7);
+@@ -2095,7 +2131,7 @@
+     printf("RIVER WCNSS: invalid Iris chip read %#x spin=%u; refusing auth/reset\n", iris, spin);
+     ml_io_unmap(pmu, 0x4000);
+     if (auxmem) ml_io_unmap(auxmem, 0x8000);
+-    ml_io_unmap(smem, SMEM_SIZE);
++    /* Retain smem for SMD transactions */
+     return;
+    }
+    val = (val & ~6u) | (iris_type == 0 ? 6u : 0u);
+@@ -2285,8 +2321,8 @@
+           } else {
+            if (itm == 19) wcnss_ctrl_info = data_off;
+            if (itm == 343) wcnss_ctrl_fifo = data_off;
+-           if (itm == 20) wcnss_wlan_info = data_off;
+-           if (itm == 344) wcnss_wlan_fifo = data_off;
++           if (itm == 20) { wcnss_wlan_info = data_off; river_smd_wlan_info = data_off; }
++           if (itm == 344) { wcnss_wlan_fifo = data_off; river_smd_wlan_fifo = data_off; }
+            if (w == 0 || w == 39) {
+             printf("RIVER WCNSS: part4 item %u off %#x size %u phdr %u\n", itm, cpos, isz, phdr);
+            }
+@@ -2648,6 +2684,7 @@
+      river_passive_scan(smem, wcnss_wlan_info, wcnss_wlan_fifo, ipc_reg2);
+      river_target_associate(smem, wcnss_wlan_info, wcnss_wlan_fifo, ipc_reg2);
+      river_wpa_run(smem, wcnss_wlan_info, wcnss_wlan_fifo, ipc_reg2);
++     river_smd_smem = smem; river_smd_ipc = ipc_reg2;
+     }
+     static const unsigned tbls[] = { 13, 266 };
+     for (unsigned t = 0; t < sizeof(tbls) / sizeof(tbls[0]); t++) {
+@@ -2677,7 +2714,7 @@
+      }
+     }
+    }
+-   if (ipc_page2) ml_io_unmap(ipc_page2, 0x4000);
++   /* Retain ipc_page2 for SMD transactions */
+    if (gic) ml_io_unmap(gic, 0x4000);
+    unsigned ent333 = SMEM_TOC + 333 * SMEM_ENTRY;
+    if (ri_rd(smem, ent333)) {
+@@ -2736,7 +2773,7 @@
+   }
+  }
+  if (auxmem) ml_io_unmap(auxmem, 0x8000);
+- ml_io_unmap(smem, SMEM_SIZE);
++ /* Retain smem for SMD transactions */
+ 
+ }
+ 
+@@ -2755,6 +2792,13 @@
+   for (unsigned ticks = 0; river_dxe_ready; ticks++) {
+    river_dxe_poll();
+    river_network_poll();
++   if (river_wpa.stage == 3 && river_target.found && river_smd_smem && river_smd_wlan_info) {
++    printf("RIVER JOIN: target AP re-discovered; re-associating...\n");
++    river_target_associate(river_smd_smem, river_smd_wlan_info, river_smd_wlan_fifo, river_smd_ipc);
++    river_wpa_run(river_smd_smem, river_smd_wlan_info, river_smd_wlan_fifo, river_smd_ipc);
++   }
++   if (river_wpa.pending_len && river_smd_smem && river_smd_wlan_info)
++    river_wpa_step(river_smd_smem, river_smd_wlan_info, river_smd_wlan_fifo, river_smd_ipc);
+    if (ticks && ticks % 3000 == 0)
+     printf("RIVER RX: total=%llu bad=%llu beacons=%llu BSS=%u\n",
+         river_rx_packets, river_rx_bad, river_rx_beacons, river_bss_count);

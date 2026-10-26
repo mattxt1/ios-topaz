@@ -1,5 +1,29 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River r145 WPA2 group rekey, auto-reconnect, and DHCP renewal daemon prepared (2026-10-25)
+
+Phone remains running r144 with verified Safari browsing.
+Patch 0241 (r145) adds WPA2 2-way Group Rekey (GTK rotation) handling: validates
+Group Message 1 (Key Type 0, AES-128-WRAP, MIC, Secure, Encrypted, replay > last),
+unwraps GTK KDE via KEK, installs new BSS key to HAL slot 24, replies with
+Group Message 2 (flags 0x0302), and rejects replayed or bad-MIC frames without
+reinstalling or altering PTK pairwise encryption. Retains SMEM and WLAN SMD IPC
+mappings across steady state for runtime transactions. Adds auto-reconnect logic
+on AP disassociation and steps WPA whenever pending EAPOL frames arrive during
+persistent 10ms DXE polling.
+
+Local arm64 object compile passes with river-cc. ASan/UBSan WPA fixture passes
+RFC 2202 HMAC, RFC 3394 AES unwrap, M1–M4 handshake, Group M1 GTK unwrap/install,
+Group M2 reply, replay rejection, and no-PTK-reinstall assertions. Existing RX
+mbuf cluster and publication fixtures pass. Generic patch has no network identity
+or credentials.
+
+phone-tools/river-net.c now includes DHCP lease renewal client and daemon mode:
+sends RFC 2131 renewal DHCPREQUEST at T1 timer, updates SCDynamicStore on ACK,
+and falls back to secondary retry / re-bind. Live on-device verification:
+standalone "river-net renew wl0" accepted by AP on running r144 (lease 3600s,
+T1 1642s). CI dispatch and local packaging pending.
+
 ## River r144 Safari HTTPS browsing and SystemConfiguration milestone verified (2026-10-25)
 
 Phone remains running r144 kernel 9c6fd14 / Actions 40244517204 without a reboot.
