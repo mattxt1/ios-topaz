@@ -1490,3 +1490,22 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
      cpu_init, before arm_vm_init.
   5. panic hook at top of panic_trap_to_debugger: va_copy + _doprnt(fmt, &copy, sweet_early_putc, 16).
   Verify with tools/xnu-cc.py (compile+symbols) and patch-order simulation before the single CI run.
+
+## Status 2026-10-25: r145 WPA2 Group Rekey, SCDynamicStore Integration, Safari HTTPS, and DHCP Renewal Daemon
+- **r145 Boot & Hardware Verification**:
+  - Built via GitHub Actions run 40247785246 (commit 1a10760) from patch 0241 (river-wcn36xx-group-rekey).
+  - Fastboot RAM booted on Moto G7 river (XT1962-1, ZY226HM8QB).
+  - Preserved SMD SMEM and IPC page mappings across runtime to allow post-boot SMD commands.
+  - Verified WPA handshake gate pass, initial PTK/GTK installation, and persistent 10ms DXE polling loop (RIVER DXE: persistent 10ms RX polling started).
+  - Hardware console ring confirmed >58,000 RX frames with bad=0 and continuous operation.
+  - WPA2 group rekey handling implemented: Key Type 0 detection, AES key-unwrap of GTK KDE, slot 24 HAL install, Group Message 2 response (flags 0x0302), replay counter enforcement, and strict PTK re-install prevention. Auto-reconnect triggered on AP disassociation.
+- **System DNS & SCDynamicStore Integration**:
+  - Resolved browser connectivity by integrating wl0 into iOS SystemConfiguration framework via dynamic dlopen/dlsym.
+  - Published State:/Network/Global/DNS, State:/Network/Global/IPv4 (PrimaryInterface=wl0, PrimaryService=wl0, Router), State:/Network/Service/wl0/IPv4, State:/Network/Service/wl0/DNS, and State:/Network/Interface/wl0/LinkQuality.
+  - mDNSResponder picked up system resolver servers; getaddrinfo() resolved public hostnames; SCNetworkReachability flags confirmed reachable.
+  - Verified MobileSafari (com.apple.mobilesafari) rendering apple.com live on the physical display.
+  - CFNetwork / NSURLSession HTTPS requests to public endpoints confirmed working with HTTP 200/403 responses.
+- **DHCP Lease Renewal & Background Daemon (river-net)**:
+  - Extended phone-tools/river-net.c with RFC 2131 unicast DHCPREQUEST lease renewal parsing Option 51 (lease duration) and Option 58 (renewal T1 interval).
+  - Verified live DHCP renewal accepted by AP (lease 3600s, T1 1800s) and refreshing SCDynamicStore.
+  - Implemented river-net daemon mode: handles default route idempotency (EEXIST graceful handling), detaches cleanly using daemon(1, 1), and runs under launchd in the background to automatically renew leases before T1 expiry.

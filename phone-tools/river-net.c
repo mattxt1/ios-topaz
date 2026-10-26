@@ -158,10 +158,12 @@ static int route_check(const char*name,const uint8_t want[4]){
 }
 
 static void default_route(const char*name){
+ if(route_check(name,gateway)){puts("default route already present");return;}
  struct{struct rt_msghdr h;struct sockaddr_in dst,gw,mask;}r={0};
  r.h.rtm_msglen=sizeof(r);r.h.rtm_version=RTM_VERSION;r.h.rtm_type=RTM_ADD;r.h.rtm_index=if_nametoindex(name);r.h.rtm_flags=RTF_UP|RTF_GATEWAY|RTF_STATIC;r.h.rtm_addrs=RTA_DST|RTA_GATEWAY|RTA_NETMASK;r.h.rtm_seq=1;r.h.rtm_pid=getpid();
  r.dst.sin_len=r.gw.sin_len=r.mask.sin_len=sizeof(r.dst);r.dst.sin_family=r.gw.sin_family=r.mask.sin_family=AF_INET;memcpy(&r.gw.sin_addr,gateway,4);
- int fd=socket(PF_ROUTE,SOCK_RAW,AF_INET);if(fd<0)fail("route socket");if(write(fd,&r,sizeof(r))!=sizeof(r))fail("default route write");
+ int fd=socket(PF_ROUTE,SOCK_RAW,AF_INET);if(fd<0)fail("route socket");
+ if(write(fd,&r,sizeof(r))!=sizeof(r)){if(errno==EEXIST){close(fd);puts("default route already exists");return;}fail("default route write");}
  uint8_t buf[4096];for(unsigned w=0;w<10;w++){struct pollfd p={fd,POLLIN,0};if(poll(&p,1,500)<=0)continue;ssize_t n=read(fd,buf,sizeof(buf));if(n<(ssize_t)sizeof(struct rt_msghdr))continue;struct rt_msghdr*h=(void*)buf;if(h->rtm_seq==1&&h->rtm_pid==getpid()){if(h->rtm_errno){errno=h->rtm_errno;fail("default route result");}close(fd);return;}}
  close(fd);if(route_check(name,gateway)){puts("default route verified from routing table (socket acknowledgement unavailable)");return;}fprintf(stderr,"route acknowledgement/table verification failed\n");exit(1);
 }
@@ -349,16 +351,24 @@ static void dhcp(const char*name,int adddefault){
 }
 
 static void dhcp_daemon_loop(const char *name, int adddefault) {
+ FILE *log = freopen("/tmp/river-net.log", "a", stdout);
+ if (log) setvbuf(stdout, NULL, _IOLBF, 0);
+ (void)freopen("/tmp/river-net.log", "a", stderr);
+ (void)daemon(1, 1);
+ int nullfd = open("/dev/null", O_RDONLY);
+ if (nullfd >= 0) { dup2(nullfd, 0); close(nullfd); }
  dhcp(name, adddefault);
  puts("Entering DHCP lease renewal daemon loop");
+ fflush(stdout);
  while(1) {
   uint32_t wait_sec = t1_time;
   if (wait_sec > 60) wait_sec -= 30; /* renew slightly before T1 */
   printf("DHCP renewal sleeping for %u seconds...\n", wait_sec);
+  fflush(stdout);
   sleep(wait_sec);
   printf("DHCP lease renewal timer fired; renewing...\n");
+  fflush(stdout);
   if (!dhcp_renew_attempt(name)) {
-   /* If T1 renewal fails, wait 30 seconds and retry before lease expires */
    fprintf(stderr, "Renewal failed; will retry in 30 seconds\n");
    sleep(30);
    if (!dhcp_renew_attempt(name)) {
@@ -366,6 +376,7 @@ static void dhcp_daemon_loop(const char *name, int adddefault) {
     dhcp(name, adddefault);
    }
   }
+  fflush(stdout);
  }
 }
 
