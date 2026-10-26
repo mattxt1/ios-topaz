@@ -1,3 +1,4 @@
+#include <notify.h>
 /* Temporary on-phone DHCP/IPv4 bring-up helper; no credentials or persistence.
  * Includes DHCP lease client, renewal daemon, system DNS, and SCDynamicStore integration. */
 #include <arpa/inet.h>
@@ -238,6 +239,42 @@ static int sc_config(const char *name, const uint8_t *ip, const uint8_t *netmask
  fn_SetValue(ds, cf_if_lq, cf_lq_dict);
 
  CFRelease(cf_if_lq); CFRelease(cf_lq_dict); CFRelease(cf_lq);
+
+ /* AirPort & Link state for status bar and UI indicators */
+ CFMutableDictionaryRef cf_ap = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+ CFDictionarySetValue(cf_ap, CFSTR("Power Status"), kCFBooleanTrue);
+ CFDictionarySetValue(cf_ap, CFSTR("Active"), kCFBooleanTrue);
+ CFDictionarySetValue(cf_ap, CFSTR("SSID_STR"), CFSTR("Wi-Fi"));
+ CFDictionarySetValue(cf_ap, CFSTR("OP_MODE"), CFSTR("Infrastructure"));
+ int ap_chan = 11;
+ CFNumberRef cf_chan = CFNumberCreate(NULL, kCFNumberIntType, &ap_chan);
+ CFDictionarySetValue(cf_ap, CFSTR("CHANNEL"), cf_chan);
+ CFRelease(cf_chan);
+ int ap_rssi = -50;
+ CFNumberRef cf_rssi = CFNumberCreate(NULL, kCFNumberIntType, &ap_rssi);
+ CFDictionarySetValue(cf_ap, CFSTR("RSSI"), cf_rssi);
+ CFRelease(cf_rssi);
+ int ap_bars = 3;
+ CFNumberRef cf_bars = CFNumberCreate(NULL, kCFNumberIntType, &ap_bars);
+ CFDictionarySetValue(cf_ap, CFSTR("Bars"), cf_bars);
+ CFRelease(cf_bars);
+
+ CFMutableDictionaryRef cf_link = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+ CFDictionarySetValue(cf_link, CFSTR("Active"), kCFBooleanTrue);
+
+ CFStringRef cf_if_ap = CFStringCreateWithFormat(NULL, NULL, CFSTR("State:/Network/Interface/%s/AirPort"), name);
+ CFStringRef cf_if_link = CFStringCreateWithFormat(NULL, NULL, CFSTR("State:/Network/Interface/%s/Link"), name);
+ fn_SetValue(ds, cf_if_ap, cf_ap);
+ fn_SetValue(ds, cf_if_link, cf_link);
+ fn_SetValue(ds, CFSTR("State:/Network/Interface/en0/AirPort"), cf_ap);
+ fn_SetValue(ds, CFSTR("State:/Network/Interface/en0/Link"), cf_link);
+ CFRelease(cf_if_ap); CFRelease(cf_if_link);
+ CFRelease(cf_ap); CFRelease(cf_link);
+
+ (void)notify_post("com.apple.system.config.network_change");
+ (void)notify_post("com.apple.wifi.link-changed");
+ (void)notify_post("com.apple.wifi.power-changed");
+
  CFRelease(cf_svc_dns); CFRelease(cf_svc_ipv4); CFRelease(cf_sipv4_dict);
  CFRelease(cf_masks_arr); CFRelease(cf_addrs_arr);
  CFRelease(cf_gipv4_dict); CFRelease(cf_dns_dict); CFRelease(cf_dns_arr);
