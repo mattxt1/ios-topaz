@@ -19,9 +19,9 @@ sign() {
 	else codesign -f -s - "$out/$1"; fi
 }
 for c in rput rget psx pstack; do cc -o "$out/$c" "$c.c"; sign "$c"; done
-for m in oslog exq; do cc -fobjc-arc -framework Foundation -o "$out/$m" "$m.m"; sign "$m"; done
+for m in oslog exq dumpcls; do cc -fobjc-arc -framework Foundation -o "$out/$m" "$m.m"; sign "$m"; done
 cc -Wno-deprecated-declarations -dynamiclib -install_name /usr/local/lib/libcgprobe.dylib \
-	-framework CoreGraphics -framework CoreFoundation -o "$out/libcgprobe.dylib" cgprobe.c
+	-framework UIKit -framework CoreGraphics -framework CoreFoundation -o "$out/libcgprobe.dylib" cgprobe.c
 codesign -f -s - "$out/libcgprobe.dylib"
 cc -fobjc-arc -framework Foundation -larchive -o "$out/appinstall" appinstall.m
 sign appinstall

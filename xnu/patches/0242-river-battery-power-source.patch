@@ -1,0 +1,46 @@
+From: mattxt1 <matttysonx1@gmail.com>
+Subject: [PATCH] RIVER: enable SweetBattery power source driver
+
+--- a/iokit/KernelConfigTables.cpp	2026-10-27 12:29:23
++++ b/iokit/KernelConfigTables.cpp	2026-10-27 12:29:34
+@@ -87,13 +87,11 @@
+     "     'IOMatchCategory' = RiverGPU;"
+     "   },"
+ #endif /* RIVER */
+-#if !defined(RIVER)
+     "   {"
+     "     'IOClass'         = SweetBattery;"
+     "     'IOProviderClass' = IOResources;"
+     "     'IOMatchCategory' = SweetBattery;"
+     "   },"
+-#endif /* !RIVER */
+     /* SweetAMFI.cpp: trust cache queries (ExtensionFoundation's signed caches) */
+     "   {"
+     "     'IOClass'         = AppleMobileFileIntegrity;"
+--- a/iokit/Kernel/arm/SweetBattery.cpp	2026-10-27 12:29:23
++++ b/iokit/Kernel/arm/SweetBattery.cpp	2026-10-27 12:29:34
+@@ -323,6 +323,16 @@
+ 	if (!IOPMPowerSource::start(provider)) {
+ 		return false;
+ 	}
++#if defined(RIVER)
++	int pct = 85;
++	(void)PE_parse_boot_argn("riverbattery", &pct, sizeof(pct));
++	if (pct < 1) pct = 1;
++	if (pct > 100) pct = 100;
++	publish((unsigned)pct, 4100, 0, true, true, false, true, false, false);
++	registerService();
++	IOLog("SWEET BATTERY: started river power source (%u%%, AC)\n", (unsigned)pct);
++	return true;
++#else
+ 	(void)sweet_cpufreq_max();
+ 	int real = 1;   /* topaz: real gauge by default; sweetbattery=0 for the static fallback */
+ 	(void)PE_parse_boot_argn("sweetbattery", &real, sizeof(real));
+@@ -344,6 +354,7 @@
+ 	}
+ 	registerService();
+ 	return true;
++#endif
+ }
+ 
+ void

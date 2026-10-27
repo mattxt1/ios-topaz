@@ -30,7 +30,8 @@ int main(int argc, char **argv)
 	while (length) {
 		size_t want = length < sizeof(buf) ? (size_t)length : sizeof(buf);
 		ssize_t n = pread(fd, buf, want, (off_t)off);
-		if (n <= 0) { perror("pread"); close(fd); return 1; }
+		if (n < 0) { perror("pread"); close(fd); return 1; }
+		if (n == 0) break;
 		for (ssize_t done = 0; done < n;) {
 			ssize_t w = write(1, buf + done, (size_t)(n - done));
 			if (w <= 0) { perror("write"); close(fd); return 1; }

@@ -1509,3 +1509,13 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   - Extended phone-tools/river-net.c with RFC 2131 unicast DHCPREQUEST lease renewal parsing Option 51 (lease duration) and Option 58 (renewal T1 interval).
   - Verified live DHCP renewal accepted by AP (lease 3600s, T1 1800s) and refreshing SCDynamicStore.
   - Implemented river-net daemon mode: handles default route idempotency (EEXIST graceful handling), detaches cleanly using daemon(1, 1), and runs under launchd in the background to automatically renew leases before T1 expiry.
+
+## Status 2026-10-27: r146 RiverBattery Power Source Driver and UI Blackout / Freeze Fixes
+- **r146 Kernel Battery Bringup**:
+  - Patch 0242 (`0242-river-battery-power-source.patch`): enables `SweetBattery` personality in `KernelConfigTables.cpp` on River.
+  - Implemented `SweetBattery::start` for River (`#if defined(RIVER)`): parses optional `riverbattery` cmdline arg (default 85%), publishes `IOPMPowerSource` properties (`ExternalConnected`, `CurrentCapacity`, `MaxCapacity`, `Voltage`, `DesignCapacity`, `legacyIOBatteryInfo`), and registers with `IOResources`.
+  - Enables `powerd` and `BatteryCenter` to detect the power source and report battery status.
+- **SpringBoard UI & Blurs (cgprobe.c)**:
+  - Fixed infinite recursion in `setHidden:` causing App Library lockup/freeze.
+  - Fixed search bar header blackout and App Switcher settled frosted wallpaper blur.
+  - Preserved `SBHLibraryCategoryPodBackgroundView` pod frosted glass surfaces.
