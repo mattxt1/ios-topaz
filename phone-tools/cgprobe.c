@@ -559,7 +559,6 @@ static void install_feather_blur_hooks(void)
 {
 	static int installed = 0;
 	if (installed) return;
-	installed = 1;
 	const char *names[] = {"SBFFeatherBlurView", "SBHFeatherBlurView", NULL};
 	for (int i = 0; names[i]; i++) {
 		Class sfb = objc_getClass(names[i]);
@@ -572,6 +571,7 @@ static void install_feather_blur_hooks(void)
 			} else {
 				original_feather_blur_layout = (void *)orig;
 			}
+			installed = 1;
 		}
 		Method am = class_getInstanceMethod(sfb, sel_registerName("setAlpha:"));
 		if (am) {
@@ -581,6 +581,7 @@ static void install_feather_blur_hooks(void)
 			} else {
 				original_feather_blur_set_alpha = (void *)orig;
 			}
+			installed = 1;
 		}
 		Method hm = class_getInstanceMethod(sfb, sel_registerName("setHidden:"));
 		if (hm) {
@@ -590,8 +591,9 @@ static void install_feather_blur_hooks(void)
 			} else {
 				original_feather_blur_set_hidden = (void *)orig;
 			}
+			installed = 1;
 		}
-		cglog("cgprobe: installed %s hooks\n", names[i]);
+		if (installed) cglog("cgprobe: installed %s hooks\n", names[i]);
 	}
 }
 
@@ -868,7 +870,6 @@ static void install_switcher_hooks(void)
 {
 	static int installed = 0;
 	if (installed) return;
-	installed = 1;
 	Class sw = objc_getClass("SBFluidSwitcherViewController");
 	if (sw) {
 		Method swm = class_getInstanceMethod(sw, sel_registerName("viewWillLayoutSubviews"));
@@ -879,6 +880,7 @@ static void install_switcher_hooks(void)
 			} else {
 				original_switcher_layout = (void *)orig;
 			}
+			installed = 1;
 			cglog("cgprobe: installed SBFluidSwitcherViewController layout hook\n");
 		}
 	}
@@ -1028,6 +1030,8 @@ static void clear_blackout_in_view(id view)
 
 static void fix_all_blackouts(void)
 {
+	install_feather_blur_hooks();
+	install_switcher_hooks();
 	Class wcls = objc_getClass("UIWindow");
 	if (!wcls) return;
 	id wins = ((id (*)(id, SEL, BOOL, BOOL))objc_msgSend)((id)wcls, sel_registerName("allWindowsIncludingInternalWindows:onlyVisibleWindows:"), YES, NO);
@@ -1037,6 +1041,16 @@ static void fix_all_blackouts(void)
 		id win = ((id (*)(id, SEL, unsigned long))objc_msgSend)(wins, sel_registerName("objectAtIndex:"), i);
 		const char *wname = object_getClassName(win);
 		if (strstr(wname, "Wallpaper")) {
+			((void (*)(id, SEL, BOOL))objc_msgSend)(win, sel_registerName("setHidden:"), NO);
+			((void (*)(id, SEL, CGFloat))objc_msgSend)(win, sel_registerName("setAlpha:"), 1.0f);
+			id rvc = ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("rootViewController"));
+			if (rvc) {
+				Ivar hhr_iv = class_getInstanceVariable(object_getClass(rvc), "_hideHomescreenWallpaperReasons");
+				id hhr = hhr_iv ? object_getIvar(rvc, hhr_iv) : nil;
+				if (hhr) {
+					((void (*)(id, SEL))objc_msgSend)(hhr, sel_registerName("removeAllObjects"));
+				}
+			}
 			id subs = ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("subviews"));
 			unsigned long sc = subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count")) : 0;
 			for (unsigned long j = 1; j < sc; j++) {
@@ -1129,6 +1143,8 @@ probe_loaded(void)
 
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4LL * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
 		cglog("cgprobe: 4s delayed inspection & hooking pass\n");
+		install_feather_blur_hooks();
+		install_switcher_hooks();
 		scan_objc_classes();
 		dump_visible_windows();
 		dump_class_info(objc_getClass("SBFolderIconImageView"));
