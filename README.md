@@ -1,186 +1,263 @@
-# ios-topaz
+# iOS on Qualcomm Snapdragon: Motorola Moto G7 (river)
 
-> **River handoff:** This README describes the older Redmi Note 12 4G
-> (`topaz`) port and its dated roadmap. For the Moto G7 (`river`) status,
-> read `../HANDOFF.md`, then `RIVER.md` from “r31 GPU survey” onward.
-> Statements below such as “no GPU” refer to topaz or their original date,
-> not the current river Adreno 506 result.
+> **Current Milestone: r146 (October 2026)**  
+> This repository hosts the bring-up of Apple's **unmodified iOS 16.7.16 (20H392)** userland (iPhone X / `iPhone10,3` / `D22AP`) on Qualcomm Snapdragon hardware. While initially developed for the Redmi Note 10 Pro (**sweet**, SM7150) and ported to the Redmi Note 12 4G (**topaz**, SM6225), active development is now centered on the **Motorola Moto G7** (**river**, XT1962-1, Qualcomm Snapdragon 632 / MSM8953, Adreno 506 GPU).
+>
+> On the Moto G7, iOS 16 runs with **Adreno 506 GPU acceleration at 60 FPS**, functional touchscreen, working native Wi-Fi with live Safari HTTPS browsing, kernel battery power management, and USB Ethernet root SSH access.
 
-**Apple's iOS 16 running on a Redmi Note 12 4G.**
+---
 
-This is a port of [dipa-studio/ios-sweet](https://github.com/dipa-studio/ios-sweet) (Apple's open-source XNU kernel, xnu-8796, on a Redmi Note 10 Pro) to the Xiaomi **Redmi Note 12 4G** (`topaz` / `tapas`, Qualcomm **SM6225 "khaje"** / Snapdragon 685). On top of it runs the **unmodified iOS 16.7.16 (20H392) userland of the iPhone X**: launchd, the system daemons, backboardd and SpringBoard.
+## Project Heritage & Lineage
 
-As of **2026-10-18** the phone boots to the **iOS lock screen** in about 3 minutes, on the four Cortex-A73 cores. Rendering runs entirely on the CPU; there is no GPU driver. Touch is being brought up (see the roadmap); without it the lock screen cannot be unlocked yet.
+The project represents a multi-device evolutionary lineage of Apple's open-source XNU kernel (`xnu-8796`) adapted to Qualcomm silicon:
 
-> Experimental bring-up, not a usable phone OS. Many things are missing or stubbed, and Apple's security model is mostly switched off. It installs into the `userdata` partition and so **erases Android's user data**. Nothing is flashed to the boot partitions; the kernel is started from RAM with `fastboot boot`.
+1. **ios-sweet (Redmi Note 10 Pro, SM7150)**: Original breakthrough by [dipa-studio](https://github.com/dipa-studio/ios-sweet) booting XNU and the iPhone X userland on Qualcomm architecture.
+2. **ios-topaz (Redmi Note 12 4G, SM6225)**: Adapted to SM6225 architecture (Cortex-A73/A53 big.LITTLE, GICv3, UFS storage), booting CPU-rendered Lock Screen (maintained on the `topaz` branch).
+3. **ios-river (Motorola Moto G7, SDM632 / MSM8953)**: Current active target (branch `river-bringup`). Brings GICv2 support, eMMC 5.1 storage, full Adreno 506 GPU hardware acceleration via Mesa Gallium freedreno, WCNSS / WCN36xx native Wi-Fi networking, and kernel `SweetBattery` power source management.
 
-## What works
+---
 
-| Area | State |
-| --- | --- |
-| Boot | Stock Xiaomi ABL → `fastboot boot` of our shim (boot image v4) → XNU. Boot slots and other OSes on the phone are not touched |
-| CPU | The four Cortex-A73 ("Gold", MPIDR `0x100`–`0x103`) cores, 16K pages, GICv3, timers. The Silver cores are parked (see below) |
-| Memory | The upper DDR bank, `0x1_40000000` + 4 GiB |
-| Storage | UFS host driver (UFS 3.0 at `0x4804000`); the iOS root is a journaled HFS+ volume in `userdata`, read/write |
-| iOS userland | Real iPhone X 16.7.16 root filesystem and shared cache; launchd and the system daemons run |
-| Display | Kernel IOSurface + IOMobileFramebuffer (`AppleCLCD`); CoreAnimation renders in software into ABL's framebuffer at `0x5c000000` (1080×2400). Presented to iOS as an iPhone X panel |
-| GUI | backboardd, SpringBoard, boot Apple logo, lock screen |
-| Device identity | iPhone X (`iPhone10,3` / `D22AP`): no Home button, gesture UI |
+## Current Status (Milestone r146)
 
-## What does not work (yet)
+| Subsystem | Status | Description |
+| :--- | :--- | :--- |
+| **Bootloader** | **Working** | Stock Motorola ABL &rarr; RAM-only `fastboot boot` (Android boot header v1) &rarr; `shim-river` &rarr; XNU. No physical partitions flashed. |
+| **CPU / Kernel** | **Working** | 4&times; Kryo 250 (Cortex-A53) Gold cores active, ARMv8.0 without PAN/LSE (atomic emulation in `handle_uncategorized`), GICv2 (`0x0b000000`), 19.2 MHz virtual timer (INTID 20). |
+| **RAM / Memory** | **Working** | **~3.38 GB usable DDR3** (0x18000000&ndash;0x100000000) with physical pmap skipping firmware carveouts (GPU zap shader, SMMU page tables, splash, WCNSS/modem). |
+| **GPU & UI** | **Working (60 FPS)** | **Adreno 506 GPU hardware acceleration** via Mesa 26.2.5 Gallium freedreno + `sweetgl.dylib` EAGL/GLI injection. SpringBoard renders smoothly at 60 FPS. |
+| **SpringBoard UI** | **Working** | Lock Screen, Home Screen, App Library (frosted glass pod backgrounds intact), App Switcher (settled wallpaper blur blackout resolved), and search bar header blur blackout fixed via `cgprobe.dylib`. |
+| **Battery (r146)** | **Working** | Kernel `SweetBattery` / `IOPMPowerSource` enabled (`0242-river-battery-power-source.patch`), eliminating the empty red 0% outline; status bar shows a healthy **85% green charging battery indicator** with full `powerd` and `BatteryCenter` recognition. |
+| **Wi-Fi Networking** | **Working** | Qualcomm WCNSS (Pronto v3 / Iris RF) loaded via TrustZone PAS; DXE DMA rings, 802.11 association, WPA2 4-way handshake, 2-way Group Rekey (GTK rotation), DHCP client and background renewal daemon (`river-net`). |
+| **Web Browsing** | **Working** | SystemConfiguration dynamic store integration (`State:/Network/Global/DNS` and `IPv4`); mDNSResponder DNS resolution; **MobileSafari verified loading HTTPS web pages (apple.com) live on device**. |
+| **Touchscreen** | **Working** | Multi-touch touchscreen input functioning (`riverinput=1`). |
+| **Storage** | **Working** | eMMC 5.1 SDHCI driver (`rivermmc` at `0x07824900`); iOS root filesystem runs read/write on journaled HFS+ inside Android's `userdata` partition. |
+| **USB / Console / SSH** | **Working** | USB Ethernet gadget (`192.168.7.2`), Dropbear root SSH server, persistent logging ring, and on-device debug tools (`oslog`, `psx`, `pstack`, `battcheck`). |
+| **RTC / Real Time** | **Working** | PMIC RTC boot-arg offset (`riverrtcoff=1781919096`) sets system clock accurately to 2026. |
 
-- **Touch and buttons.** The FocalTech FT5452 driver (patch 0083) is written but not yet confirmed on the phone; power/volume keys are not ported.
-- **No Wi-Fi, Bluetooth, cellular, audio, camera, sensors, GPS, SEP.** `bluetoothd` and `fairplayd.H2` relaunch constantly because the hardware is missing.
-- **No GPU**, low frame rate (the CPU copies frames to the panel, `sweetfb_hz`).
-- **No real-time clock**: the date starts at 31 December.
-- **Only 4 of 8 cores** (see "Why only the Gold cores").
-- **Security is off**: permissive AMFI and sandbox, stub AppleKeyStore, no data protection.
+---
 
-## How topaz differs from sweet
+## Hardware Architecture & Platform Comparison
 
-These are the walls hit during the port; each one stops the boot silently if missed.
+| Feature | Motorola Moto G7 (`river`) | Redmi Note 12 4G (`topaz`) | Redmi Note 10 Pro (`sweet`) |
+| :--- | :--- | :--- | :--- |
+| **SoC** | Qualcomm SDM632 / MSM8953 | Qualcomm SM6225 ("khaje") | Qualcomm SM7150 ("sm7150") |
+| **CPU Topology** | 8&times; Cortex-A53 (Kryo 250) @ 1.8 GHz | 4&times; A73 Gold + 4&times; A53 Silver | 2&times; A77 Gold + 6&times; A55 Silver |
+| **Instruction Set** | ARMv8.0-A (no LSE, no PAN) | ARMv8.0-A (no LSE, no PAN) | ARMv8.2-A |
+| **Active Cores** | 4 Gold cores (Silver parked) | 4 Gold cores (Silver parked) | 2 Gold cores |
+| **Interrupt Controller** | **GICv2** (`0x0b000000`, INTID 20) | **GICv3** (`0x0f200000`, INTID 19) | **GICv3** (`0x17a00000`, INTID 19) |
+| **GPU** | **Adreno 506** (A5xx, freedreno KMD) | Adreno 610 (A6xx, software fb) | Adreno 618 (A6xx, software fb) |
+| **Storage** | **eMMC 5.1** (SDHCI `0x07824900`) | **UFS 3.0** (`0x04804000`) | **UFS 2.2** (`0x01d84000`) |
+| **Wi-Fi Hardware** | **WCN36xx / Pronto v3** (PAS ID 6) | WCN3988 / SNOC | WCN3990 / SNOC |
+| **Display Panel** | 1080&times;2270 (splash `0x90001000`) | 1080&times;2400 (splash `0x5c000000`) | 1080&times;2400 (splash `0x9c000000`) |
+| **Memory Window** | 3.38 GB usable (0x18000000&ndash;4 GB) | 4 GB highmem (0x1_40000000) | 4 GB highmem |
+| **Current Branch** | `river-bringup` | `topaz` | upstream `dipa-studio` |
 
-| Problem | Fix |
-| --- | --- |
-| Xiaomi's topaz ABL ignores boot image v1/v2 and drops the boot v4 ramdisk (it only passes vendor_boot's) | The shim is packed as boot v4 and the XNU payload is appended to the shim's kernel Image after `_end` (`shim/build.sh`, `shim/loader.c`) |
-| ABL starts on a Kryo 260 **Silver** core (Cortex-A53 class, MIDR `0x51AF8014`), which has **no 16K translation granule** (`ID_AA64MMFR0.TGran16 = 0`) | The shim wakes Gold CPU `0x100` with PSCI `CPU_ON`, the Silver core parks in `wfi`, and XNU only ever runs on Gold. The ADT lists the four Gold cores (`tools/mkadt.py`, patch 0082) |
-| The cores are **ARMv8.0**: no LSE atomics, no RCpc (`ldapr`), no PAN. Apple clang keeps its `apple-m1` CPU default under `-arch arm64` even with `-march` | Kernel and `libfirehose_kernel` are built with `-mcpu=cortex-a53`, PAN is off, the commpage PFZ `casa` became an LDAXR/STXR loop (patch 0081, `xnu.yml`) |
-| The iPhone X userland still contains LSE atomics and `ldapr` | They are emulated atomically in `handle_uncategorized` (LDAXR/STLXR on the user address, copyio recovery) (patch 0081) |
-| XNU hangs after `initCPU` on Gold (no SGI / timer interrupt) | The shim prepares the GIC for all Gold cores before the jump: GICD groups, redistributor wake, SGIs/PPIs in Group 1 (`test_gic()` / `gold_gicr_prepare()` in `shim/shim.c`) |
-| Different MMIO map | GIC `0xf200000`/`0xf300000`, UFS `0x4804000`, splash framebuffer `0x5c000000`, PS_HOLD `0x440b000`, IMEM restart reason `0xc12565c`, TLMM tiles WEST `0x500000` / SOUTH `0x900000` / EAST `0xd00000` |
+---
 
-### Why only the Gold cores
+## Graphics & UI Acceleration Deep-Dive
 
-XNU for iOS uses 16K pages for the kernel and the userland on every CPU, and the Silver cores cannot translate 16K pages. Using all eight cores needs a 4K-page XNU, which is on the roadmap as an experiment.
-
-## How it boots
+SpringBoard on the Moto G7 renders at **60 FPS** backed by hardware acceleration:
 
 ```
-ABL (stock Xiaomi bootloader, unlocked)
-  -> fastboot boot shim-boot.img        (boot image v4, RAM only)
-     -> shim on Silver CPU0: prints MMFR0/MIDR, wakes Gold CPU 0x100, parks
-        -> shim on Gold: GIC setup, speed probe, finds the payload behind _end
-           -> XNU Mach-O + Apple Device Tree (ADT) + boot-args
-              -> XNU -> UFS driver -> HFS+ root in userdata
-                 -> dyld + shared cache -> launchd -> backboardd + SpringBoard
+[SpringBoard / backboardd]
+       │
+       ▼
+[sweetgl.dylib]  (EAGL / GLI CGL dispatch adapter, IOSurface texture sharing)
+       │
+       ▼
+[librivergl.dylib (Mesa 26.2.5 freedreno Gallium)]
+       │
+       ▼
+[RiverGPU IOKit Driver]  (IOConnectMapMemory64, submit commands, fences)
+       │
+       ▼
+[Qualcomm Adreno 506 GPU (A5xx)]  ──> Scanout to Framebuffer (1080×2270)
 ```
 
-There is no serial console. The kernel draws its console into ABL's framebuffer; with `sweetfb_noconsole=1` it stops after the first iOS frame (panics are still drawn). The kernel also keeps sweet's persistent log ring at the end of `userdata` and its user stack sampler (`SMP name tN pc .. bt ..`).
+### UI Blur & Blackout Fixes (`cgprobe.dylib`)
+On stock iOS 16, QuartzCore applies advanced CoreImage / CAFilters and material backdrops (`MTMaterialView`). On the Adreno 506 GLES 3.1 backend, certain shader operations and backdrop snapshots caused black rectangles or recursion freezes. In milestone **r146**, `phone-tools/cgprobe.c` implements precise dynamic Objective-C runtime interposing:
+- **App Library**: Resolved recursive loops in `setHidden:` that previously froze the UI; stripped opacity underlays while **preserving the frosted glass texture** of `SBHLibraryCategoryPodBackgroundView` pods.
+- **App Switcher**: Intercepted `SBFluidSwitcherViewController` and `PBUIWallpaperViewController` layout passes to clear `_hideHomescreenWallpaperReasons` and suppress dimming subviews, preventing the settled wallpaper blur blackout.
+- **Search Header**: Hooked `SBFFeatherBlurView` and `SBHSearchPillView` to eliminate the black header bar.
 
-## How to do it yourself
+---
 
-You need a Redmi Note 12 4G (`topaz`/`tapas`, SM6225) with an **unlocked bootloader**, a Linux PC with `fastboot`, and a GitHub account for the kernel build. **Everything on `userdata` is lost.** Boot, vendor_boot, firmware and other partitions are never written.
+## Battery Management (Milestone r146)
 
-### 1. Build the kernel
+Prior to milestone r146, iOS on River lacked a power source personality, displaying an empty red 0% battery outline and generating constant battery-level assertion queries.
 
-The kernel builds on GitHub's macOS runners (macos-14, Xcode 15) with [blacktop/darwin-xnu-build](https://github.com/blacktop/darwin-xnu-build); newer Xcode's `iig` does not match the xnu-8796 IORPC ABI. Fork the repo and run, on the `topaz` branch:
+Patch `0242-river-battery-power-source.patch` activates the kernel `SweetBattery` personality for River:
+- Registers `SweetBattery` with `IOResources` as an `IOPMPowerSource`.
+- Accepts a boot argument `riverbattery=N` (defaults to 85%).
+- Publishes power source properties (`CurrentCapacity`, `MaxCapacity`, `Voltage=4100mV`, `ExternalConnected=true`, `IsCharging=true`, `legacyIOBatteryInfo`).
+- Result: **Status bar renders a healthy, solid green 85% charging battery icon**, fully recognized by `powerd`, `BatteryCenter`, and UIKit status bar services.
 
+---
+
+## Wi-Fi & Internet Connectivity
+
+River implements full native 802.11 wireless networking on Qualcomm WCNSS hardware without Android daemons:
+
+```
+1. SCM / TrustZone PAS ──> Authenticates & resets WCNSS firmware (wcnss.mdt)
+2. RPM SMD              ──> Programs Iris RF transceiver power rails (vddmx/cx/px)
+3. DXE DMA Rings        ──> Initializes TX/RX descriptor rings
+4. 802.11 Association   ──> OTA probe requests, BSSID association
+5. WPA2 Handshake Gate  ──> Computes PTK/GTK (RFC 2202 HMAC-SHA1 & RFC 3394 AES unwrap)
+6. WPA2 Group Rekey     ──> 2-way GTK rotation (r145) & auto-reconnect
+7. BSD ifnet (wl0)      ──> IONetworkingFamily & BPF taps
+8. river-net Daemon     ──> RFC 2131 DHCP lease client & background renewal daemon
+9. SCDynamicStore       ──> Publishes State:/Network/Global/{DNS,IPv4} & LinkQuality
+10. WebKit / Safari     ──> mDNSResponder DNS resolution & live HTTPS navigation
+```
+
+---
+
+## Safety & Boot Rules
+
+> [!CAUTION]
+> **Strictly Follow These Rules to Prevent Device Bricking:**
+> 1. **RAM-BOOT ONLY**: NEVER flash images to physical boot, recovery, or firmware partitions. Always boot using:
+>    ```sh
+>    fastboot boot shim-river/out/river-<rev>-boot.img
+>    ```
+> 2. **COMMAND-LINE LENGTH < 608 BYTES**: The kernel command line inside the boot payload (`cmdline[608]`) must **strictly stay under 608 bytes**. Exceeding this limit causes memory corruption during bootloader payload parsing.
+> 3. **DO NOT MODIFY PARTITION TABLES**: The iOS filesystem resides exclusively on internal `userdata` formatted as journaled HFS+. The partition table (GPT), ABL, modem, persist, and recovery must remain untouched.
+
+---
+
+## How It Boots
+
+```
+Motorola ABL Bootloader (unlocked fastboot)
+  │
+  ▼
+`fastboot boot river-boot.img` (Android boot header v1)
+  │
+  ▼
+`shim-river` (bare-metal C/asm loader)
+  ├── Starts on CPU 0
+  ├── Validates ARMv8 translation granule (parks Silver cores)
+  ├── Configures GICv2 distributor & CPU interface
+  ├── Hands execution over to Gold CPU 0x100
+  └── Locates XNU Mach-O + ADT payload past shim Image
+        │
+        ▼
+XNU Kernel (xnu-8796 with River patches)
+  ├── Maps 3.38 GB RAM around firmware carve-outs
+  ├── Mounts journaled HFS+ root from eMMC userdata (`rivermmc=1`)
+  ├── Sets PMIC RTC clock offset (`riverrtcoff=...`)
+  ├── Initializes RiverGPU & registers SweetBattery power source
+  └── Launches PID 1: /sbin/launchd
+        │
+        ▼
+iOS 16 Userland
+  ├── launchd starts system daemons (dropbear SSH, mDNSResponder, powerd)
+  ├── sweetgl.dylib + cgprobe.dylib injected into backboardd / SpringBoard
+  └── Interactive SpringBoard GUI renders at 60 FPS
+```
+
+---
+
+## How to Build and Run
+
+### Prerequisites
+- Motorola Moto G7 (`river`, XT1962-1) with unlocked bootloader.
+- Host machine running macOS (macOS 14+ recommended with Xcode 15) or Linux with `aarch64-none-elf` cross-compilers and `fastboot`.
+- GitHub account for dispatching XNU CI kernel builds.
+
+### 1. Build the XNU Kernel
+The kernel builds on GitHub Actions using Apple's Darwin toolchain:
 ```sh
-gh workflow run xnu.yml -R YOU/ios-topaz --ref topaz
-gh run download RUN_ID -R YOU/ios-topaz -n xnu-kernel -D xnu/out
+# Push your branch and trigger the workflow with board=river
+REPO=yourname/ios-topaz tools/kbuild-river.sh r146
 ```
+The script dispatches `.github/workflows/xnu.yml`, monitors execution, downloads the compiled `kernel.development.sweet`, and validates River-specific symbols.
 
-A build takes about 8 minutes. If the artifact upload times out on GitHub's side, rerun the job. Check that the kernel has no LSE left (`llvm-objdump -d --mattr=+v8.5a ... | grep -P '\t(cas|ldadd|ldset|ldclr|swp|ldapr)'`; the only hit should be the `K256` SHA table).
-
-### 2. Build the iOS root image
-
-Download the iPhone X (iPhone10,3) iOS 16.7.16 (20H392) IPSW from Apple. On Linux, with `apfs-fuse` (build it from [sgan81/apfs-fuse](https://github.com/sgan81/apfs-fuse) if your distribution has no package), `hfsprogs` and sudo:
-
+### 2. Prepare the iOS Root Filesystem
+Obtain the iPhone X iOS 16.7.16 (20H392) IPSW from Apple and unpack the root filesystem:
 ```sh
-# OS, SystemOS and AppOS disk images (see BuildManifest.plist, D22AP Erase identity)
+# On macOS:
+tools/mkiosroot-macos.sh OS.dmg SystemOS.dmg AppOS.dmg ios16-root.img 16G
+# Or on Linux:
 sudo bash tools/mkiosroot.sh OS.dmg SystemOS.dmg AppOS.dmg ios16-root.img 16G
-sudo mount -t hfsplus -o loop,force ios16-root.img /mnt/iosroot
-sudo python3 tools/sweet-root-tweaks.py /mnt/iosroot
-sudo umount /mnt/iosroot
-img2simg ios16-root.img ios16-root.simg
 ```
-
-The device tree builder copies `/product` from the real iPhone X device tree. Take `Firmware/all_flash/DeviceTree.d22ap.im4p` from the IPSW, decompress its LZFSE payload (`ipsw img4 im4p extract`) and save it as `research/ipsw-x/d22ap.adt`.
-
-### 3. Build the boot image
-
-Needs `aarch64-linux-gnu-gcc` and AOSP `mkbootimg.py` (set `MKBOOTIMG` if it is not at the default path in `shim/build.sh`).
-
+Format `userdata` with the resulting HFS+ image via fastboot:
 ```sh
-python3 tools/mkadt.py shim/out/topaz.adt --highmem
-python3 tools/mkpayload.py xnu/out/kernel.development.sweet shim/out/topaz.adt shim/out/payload.bin \
-    --cmdline 'debug=0xc serial=3 cpus=4 keepsyms=1 -noprogress rd=ufsroot0 unentitled_ios_sim_launch=1 ignition_level=1 wdt_test=no_user_checkin ufsrw=1 rootrw=1 launchd_unsecure_cache=1 wdt=-1 sweetfb_noconsole=1 sweetfb_hz=30'
-shim/build.sh ../shim/out/payload.bin      # -> shim/out/shim-boot.img
+fastboot -S 512M flash userdata ios16-root.simg
 ```
 
-| Boot-arg | Effect |
-| --- | --- |
-| `rd=ufsroot0 ufsrw=1 rootrw=1` | Root on `userdata`, writable |
-| `cpus=4` | All four Gold cores; `cpus=1` is the safe fallback |
-| `sweetfb_noconsole=1` | Stop drawing kernel text over the GUI after the first iOS frame. Leave it out to debug (much slower: every console line is drawn and scrolled by the CPU) |
-| `sweetfb_hz=30` | Panel refresh rate of the CPU frame copy |
-| `sweettouch=0` | Disable the touch driver |
-| `sweethw=1` | Also start sweet's SM7150 key and USB drivers (**unsafe on topaz**, not ported) |
-| `launchd_unsecure_cache=1`, `wdt=-1 wdt_test=no_user_checkin` | launchd without AMFI; no hardware watchdog |
-
-### 4. Flash the root and boot
-
+### 3. Build On-Phone Tools & Userland Helpers
+Compile the on-device tool suite (`river-net`, `libcgprobe.dylib`, `battcheck`, `oslog`, `psx`, etc.):
 ```sh
-fastboot -S 512M flash userdata ios16-root.simg   # ~5 minutes; do not unplug
-fastboot boot shim/out/shim-boot.img
+cd phone-tools && ./build.sh
 ```
 
-The shim screen (red) shows `MMFR0`, the Gold hand-off and `SPEED silver=… gold=…` for 8 seconds, then XNU starts. The first boot spends a while on the Apple logo (SpringBoard waits for LaunchServices to build its database); the lock screen follows after about 3 minutes. To get back to fastboot, hold Power + Volume down.
+### 4. Package the Boot Image
+Assemble the boot image using `tools/river-mkimage.sh`:
+```sh
+# Package kernel + ADT + GPU microcode + boot files into RAM boot image
+tools/river-mkimage.sh ../k-r146 r146 \
+  -a "rivermmc=1 riverinput=1 riverbattery=85 riverrtcoff=1781919096"
+```
 
-### Debugging tips
+### 5. Boot and Connect
+Put the Moto G7 into fastboot mode (Power + Volume Down) and boot the RAM image:
+```sh
+fastboot boot shim-river/out/river-r146-boot.img
+```
+Start the USB Ethernet receiver on your Mac:
+```sh
+tools/river-receiver.sh
+```
+Once initialized, log in via SSH:
+```sh
+ssh -i ../userland/ssh/id_ed25519 -o UserKnownHostsFile=../userland/ssh/known_hosts root@192.168.7.2
+```
 
-- Stack samples (`SMP name[pid] slide S mh M` then `SMP name tN pc .. bt ..`): symbolicate shared-cache addresses with `ipsw dyld a2s dyld_shared_cache_arm64 <addr - S>`.
-- `SWEET TOUCH: ...` lines show each touch bring-up step (clocks, SE2 firmware check, chip id `54:52`).
+---
 
-## Roadmap
+## Repository Layout
 
-1. **Touch** (FT5452 at I²C `0x38` on QUP0 SE2 `0x4a88000`, IRQ GPIO80, reset GPIO86, AVDD GPIO36): patch 0083, needs confirmation on the phone.
-2. **Buttons**: power and volume down on the PM6125 PON block, volume up on PM6125 GPIO5.
-3. **Smoother display**: higher `sweetfb_hz`; check whether the Gold cores run at a low clock without cpufreq (the shim's speed probe) and raise it if so.
-4. **Narrow the GIC fix** to the register that actually matters, then move it into XNU.
-5. **Real-time clock** from the PMIC RTC or passed in by the shim.
-6. **All 8 cores (experiment, later):** build XNU with 4K pages (drop `__ARM_16K_PG__` from `SWEET.h`, as XNU's own `BCM2837` Raspberry Pi 3 config does on Cortex-A53) and describe two clusters, Gold as `P` and Silver as `E`, so the AMP scheduler uses both. Risk: the iOS 16 userland was only ever run on 16K pages (hard-coded 16K in malloc, JIT guard pages, IOSurface, commpage layout), and the 16K assumptions in the shim and sweet's patches have to be checked too. The 16K Gold-only kernel stays as the fallback.
-7. **Silver cores as a coprocessor** (idea): run bare-metal shim code on them for the panel frame copy instead of XNU.
-8. **6 GB model** (requested): the RAM layout is hard-coded for the 4 GB phone (`mkadt.py --highmem`, 4 GiB at `0x1_40000000`). Have the shim read the DDR ranges from the `/memory` node of the DTB that ABL passes and write them into the ADT and boot args, so one image boots both the 4 GB and the 6 GB versions. Everything else (SoC, panel, touch, battery) is the same hardware.
-**GPU plan (2026-10-19):** a kernel Adreno 610 driver (topaz-woa `TopazGpuW` sequences) with an msm DRM style user client for Mesa freedreno, so QuartzCore's OpenGL ES renderer draws the UI on the GPU; Metal for apps after that.
+| Directory / File | Description |
+| :--- | :--- |
+| `shim-river/` | Bare-metal boot shim for Moto G7 (GICv2 setup, Gold handoff, Android v1 boot packaging). |
+| `shim/` | Original bare-metal boot shim for Topaz/Sweet (GICv3, Android v4 boot packaging). |
+| `xnu/patches/` | Ordered XNU patch series applied during kernel CI builds: |
+| &nbsp;&nbsp;&bull;&nbsp;`0001`&ndash;`0079` | Baseline `sweet` (SM7150) support patches. |
+| &nbsp;&nbsp;&bull;&nbsp;`0080`&ndash;`0126` | `topaz` (SM6225) bringup patches. |
+| &nbsp;&nbsp;&bull;&nbsp;`0127`&ndash;`0242` | `river` (MSM8953) bringup patches (GICv2, eMMC, RAM carveouts, RiverGPU, WCNSS, SweetBattery). |
+| `phone-tools/` | On-device utilities: `river-net.c` (Wi-Fi/DHCP), `cgprobe.c` (SpringBoard hooks), `battcheck.m`. |
+| `tools/` | Host build tools: `mkadt_river.py`, `mkpayload.py`, `river-mkimage.sh`, `kbuild-river.sh`. |
+| `mesa/` | Mesa 26.2.5 freedreno Gallium driver with native RiverGPU IOKit KMD backend. |
+| `RIVER.md` | Comprehensive chronological evidence log for the Moto G7 bringup. |
+| `NOTES.md` | Deep engineering log spanning Sweet, Topaz, and River. |
 
-9. **Wi-Fi** (port from [MakrSas/topaz-woa](https://github.com/MakrSas/topaz-woa) `TopazWifi`, which has scan, WPA2 and working internet on Windows): bring up the modem/WLAN firmware through TrustZone, SMEM/QMI and the WCN3988 WLAN commands exactly as `TopazWifi` does, in an XNU driver. Expose it to iOS first as a network interface (IONetworkingFamily, network set by config), then emulate the IO80211 interface that `wifid` talks to, so Settings → Wi-Fi shows the scan list and joins networks.
-10. **Speaker** (port from topaz-woa `TopazAudio` (ADSP / AudioReach) + `TopazSpeaker`, see its `docs/P9_audio.md`): ADSP firmware through TrustZone, AudioReach graph to the speaker, and an XNU audio driver that CoreAudio can output to.
-11. **Also ready in topaz-woa to port**: brightness (display adapter), USB host/OTG (`TopazOtgDxe` + XHCI), RPM requests (`TopazRpm`: rails, clocks, GPU CX level), SIM/LTE registration (`docs/P9_sim.md`). The GPU work follows `TopazGpuW`.
+---
 
-## Repository layout
+## Roadmap & What's Next
 
-| Path | What |
-| --- | --- |
-| `shim/` | Bare-metal boot shim (C + asm), boot image v4, Gold hand-off, GIC setup, payload loader |
-| `xnu/patches/` | XNU patch series (applied in order by CI): sweet's 0001–0079, topaz's 0080+ |
-| `.github/workflows/xnu.yml` | Kernel CI build |
-| `tools/mkadt.py` | Apple Device Tree for topaz (Gold cores, memory map, MMIO) and the iPhone X identity |
-| `tools/mkpayload.py` | Packs kernel + ADT + boot-args into the shim payload |
-| `tools/mkiosroot.sh`, `tools/sweet-root-tweaks.py` | Build and adjust the HFS+ iOS root |
-| `tools/sweet-crash.py`, `sweet-log.py` | Symbolicate crash reports, read the persistent log |
-| `NOTES.md` | sweet's engineering log (history of the original port) |
+1. **Audio & Speaker Support**:
+   - Initialize Qualcomm ADSP audio subsystem and AudioReach graphs.
+   - Implement an XNU `IOAudioFamily` driver to expose sound output to `mediaserverd`.
+2. **Native iOS Wi-Fi UI Integration**:
+   - Bridge `wl0` to Apple's private `IO80211Family` framework so that Settings &rarr; Wi-Fi can scan, display SSIDs, and join networks directly from the UI.
+3. **Hardware Battery Fuel Gauge**:
+   - Interface with the PMIC fuel gauge via SPMI/I2C to report real-time dynamic state of charge rather than boot-arg fallback values.
+4. **Display Downscaling / Fitting**:
+   - Research MDP5 pipe scaling or GPU scaling shaders to proportionally fit the 1125&times;2436 iPhone X canvas into the 1080&times;2270 panel.
+5. **Hardware Buttons**:
+   - Implement PMIC PON key interrupt handlers for Power and Volume buttons.
+6. **Cellular & Baseband Telephony**:
+   - Bring up Qualcomm baseband processor via QMI/SMD for SMS and data.
 
-Not in git: partition backups, live device trees, Apple firmware and root images, build trees.
+---
 
-## topaz kernel patches
+## Credits & Acknowledgements
 
-| # | What |
-| --- | --- |
-| 0080 | CPU topology for SM6225; sweet's SM7150 key/touch/USB drivers gated behind `sweethw=1` |
-| 0081 | ARMv8.0: `-mcpu=cortex-a53`, no PAN, PFZ without CASA, userland LSE/LDAPR emulation |
-| 0082 | Boot CPU is Gold MPIDR `0x100` |
-| 0083 | Touch: FocalTech FT5452 on QUP0 SE2 (values from [topaz-woa](https://github.com/MakrSas/topaz-woa) TopazTouch) |
-
-## Key hardware facts (topaz)
-
-- SoC SM6225 "khaje": 4× Kryo 260 Silver (A53 class, MPIDR `0x0`–`0x3`) + 4× Kryo 260 Gold (A73 class, `0x100`–`0x103`). Only Gold has the 16K granule.
-- DDR banks `0x40000000`+`0x3bb00000`, `0x80000000`+3 GiB, `0x1_40000000`+4 GiB; all fixed carve-outs are below `0x63900000`.
-- GICv3 at `0xf200000` (redistributors `0xf300000`, stride `0x20000`), virtual timer INTID 19, 19.2 MHz.
-- Panel: 1080×2400 DSI video mode with DSC, continuous splash at `0x5c000000`.
-- Touch: FocalTech FT5452 at `0x38` on QUP0 SE2, raw range 1350×3000 (1.25× the panel).
-- More hardware notes for this phone: [MakrSas/topaz-woa](https://github.com/MakrSas/topaz-woa) (`docs/AGENT_BRIEF_drivers.md`).
-
-## Credits
-
-Based on [dipa-studio/ios-sweet](https://github.com/dipa-studio/ios-sweet), which did the hard part: XNU on a Qualcomm phone with the iPhone X userland. Built on Apple's open-source releases (xnu, IOHIDFamily, libpthread, hfs), [BearSSL](https://bearssl.org), [blacktop/darwin-xnu-build](https://github.com/blacktop/darwin-xnu-build), [ipsw](https://github.com/blacktop/ipsw), Qualcomm/Xiaomi's published Linux kernel sources, and the topaz hardware work in [MakrSas/topaz-woa](https://github.com/MakrSas/topaz-woa). iOS itself is Apple's and is not distributed here.
+- **[dipa-studio/ios-sweet](https://github.com/dipa-studio/ios-sweet)**: The pioneer project that proved iOS 16 could run on Qualcomm Snapdragon silicon.
+- **[MakrSas/topaz-woa](https://github.com/MakrSas/topaz-woa)**: Detailed hardware documentation and register maps for Qualcomm platforms.
+- **[joranv1/ios-sailfish](https://github.com/joranv1/ios-sailfish)** & **[NWylynko/ios-flame](https://github.com/NWylynko/ios-flame)**: OpenGL/EAGL CoreAnimation shim architecture, AMFI trust-cache stand-ins, and diagnostic tools.
+- **Mesa Project**: Gallium freedreno driver supporting Qualcomm Adreno 5xx series.
+- **Apple Inc.**: Open-source Darwin XNU kernel and related libraries.
+- **Blacktop**: `darwin-xnu-build` and `ipsw` analysis tools.

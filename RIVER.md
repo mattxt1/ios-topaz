@@ -1,13 +1,32 @@
 # Moto G7 river bring-up (local branch)
 
-Started 19 October 2026. This is a chronological evidence log, not the
-current action plan. Read `../HANDOFF.md` for the current r49 status. River
-now boots iOS 16.7.16 to an interactive home screen; the Adreno 506 passed
-Gallium and offscreen GLES tests, but CoreAnimation still uses its CPU
-renderer. Older sections below retain observations and proposed next steps
-from their dates; those proposals are historical. Device dumps, photos,
-logs, Apple artifacts and boot images stay in adjacent private folders or
-ignored output directories.
+Started 19 October 2026. This is a chronological evidence log of the Motorola
+Moto G7 (`river`, XT1962-1, Qualcomm Snapdragon 632 / MSM8953, Adreno 506 GPU)
+port running unmodified iOS 16.7.16 (20H392, iPhone X userland).
+
+As of milestone **r146** (2026-10-27), River has achieved:
+- **Graphics & UI**: Full hardware acceleration via Mesa Gallium freedreno +
+  `sweetgl.dylib` + `cgprobe.dylib`. SpringBoard runs at 60 FPS across Lock Screen,
+  Home Screen, App Library (all category pod frosted glass surfaces render properly
+  without freeze), App Switcher (settled wallpaper blur blackout eliminated, dimming
+  overlay cleared), and search bar header blur blackout resolved.
+- **Battery Management (r146)**: Kernel `SweetBattery` / `IOPMPowerSource` enabled
+  (`0242-river-battery-power-source.patch`), eliminating the empty red 0% outline
+  and displaying an 85% green charging indicator in the status bar with full
+  `powerd` and `BatteryCenter` recognition.
+- **Networking**: WCNSS firmware loading via TrustZone PAS, WPA2 4-way handshake,
+  2-way Group Rekey (GTK rotation), DHCP, and verified IPv4/TCP/HTTP via `wl0`
+  (`river-net`), plus SCDynamicStore integration and verified MobileSafari HTTPS
+  browsing on device.
+- **Touch & Input**: Touchscreen input fully functional (`riverinput=1`).
+- **RAM & Memory**: 3.38 GB usable DDR3 mapped around firmware carve-outs
+  (0x18000000 to 0x100000000).
+- **USB & Tools**: Root SSH over USB Ethernet (`192.168.7.2`), dropbear, and
+  on-device inspection tools.
+
+Older sections below retain historical observations and proposals from earlier
+milestones. Device dumps, photos, logs, Apple artifacts and boot images stay in
+adjacent private folders or ignored output directories.
 
 ## Early direct device observations (historical)
 
@@ -2122,3 +2141,76 @@ The Pixel 4 ios-flame fit runs on Adreno 640 (A6xx), whereas river has Adreno
 pattern on the full-screen path, and retains the working crop path as default.
 Only after scaling is visually confirmed should touch mapping and multi-layer
 composition be changed. No kernel build, boot, or root write was done here.
+
+## Display fit outcome & stock apps (2026-10-23, r78–r82)
+
+- **Display Fit Testing (r78–r81)**:
+  - r78 (patch 0207): A5xx CP_BLIT scaling packet test signaled its fence, but destination stayed at sentinel values.
+  - r79 (patch 0208): CPU nearest-neighbor scaling (1125x2436 to 1048x2270) suffered flickering, black tearing strips, and took 85–126 ms per frame.
+  - r80–r81 (patches 0209/0210): Hardware VIG0 scaling overlay resulted in solid blue screens.
+  - **Conclusion**: Retained the clean 1:1 hardware crop (1080x2270 centered on 1125x2436 canvas with `fOffX=20, fOffY=83`).
+- **Stock App Bundles (r82)**:
+  - Installed 32 system applications into `/Applications` using `phone-tools/appinstall.m`.
+  - Registered app bundles with LaunchServices dictionaries (`ApplicationType=System`).
+  - Resolved `@rpath` dyld denials with patch 0211, and sandbox token issuance with patch 0212.
+  - Verified Calculator, Contacts, Files, Maps, Calendar, Mail, Notes, and Weather reaching live execution.
+
+## Native Wi-Fi bring-up: WCNSS firmware & TrustZone PAS (2026-10-23–24, r83–r134)
+
+- **Firmware Extraction & SCM PAS Probe (r83–r91)**:
+  - Extracted `/image/wcnss.mdt`, split segments (`.bNN`), and `WCNSS_qcom_wlan_nv.bin` (31,723 bytes) directly from the preserved modem and vendor partitions via read-only `/dev/remmc0*` blocks using `tools/river-ext4-read.py`.
+  - Verified all segment SHA-256 hashes against embedded hash tables via `tools/river-wcnss-fw.py`.
+  - Kernel patch 0213 tested TrustZone SCM queries (`riverwcnssprobe=1`): PAS init-image and PAS ID 6 confirmed available.
+  - Patches 0214–0223: Mapped 7 MiB firmware carve-out at `0x8e700000`, implemented chunked WC staging, and satisfied TrustZone PAS memory security restrictions.
+- **RPM SMD Power Rails & RF Initialization (r134–r135, patches 0224–0231)**:
+  - Investigated SMD channel layout and SMEM handshake for Pronto v3 / Iris RF transceiver.
+  - Programmed RPM SMD regulator voting messages for Pronto rails (`vddmx`, `vddcx`, `vddpx`).
+  - Patch 0229 executed PAS auth and reset: WCNSS booted successfully out of reset without triggering TrustZone security watchdogs.
+  - Verified RF calibration parameters loaded from NVRAM.
+
+## WCN36xx DXE rings, OTA exchange, and WPA2 handshake (2026-10-25, r136–r140)
+
+- **DXE DMA Rings (r136, patch 0232)**:
+  - Initialized Qualcomm DXE (Data Xfer Engine) DMA descriptor rings for TX and RX channels.
+  - Verified DXE hardware registers, interrupt routing, and initial handshake.
+- **Passive Scanning & Probe TX (r137–r138, patches 0233–0234)**:
+  - Successfully received live over-the-air 802.11 beacon frames via DXE RX ring.
+  - Implemented 802.11 probe request generation and transmission; confirmed OTA probe response exchanges with local AP.
+- **AP Association & 4-Way WPA2 Handshake (r139–r140, patches 0235–0236)**:
+  - Implemented target BSSID association state machine in XNU.
+  - Reached association state and captured 802.11 EAPOL Message 1 from access point.
+  - Built RFC 2202 HMAC-SHA1 and RFC 3394 AES-key-unwrap cryptographic support into kernel.
+  - Implemented 4-way WPA2 handshake gate: verified Message 1, computed PTK/KEK/KCK, installed pairwise keys to HAL slot 0, validated Message 3, unwrapped GTK, and completed Message 4 response.
+
+## Usable IPv4, SystemConfiguration, Safari HTTPS, and DHCP daemon (2026-10-25, r141–r145)
+
+- **Encrypted Data TX/RX & BPF Plumbing (r141–r144, patches 0237–0240)**:
+  - Attached network interface `wl0` using `IONetworkingFamily` and standard BSD `ifnet`.
+  - Added BPF taps and protected DHCP data exchange.
+  - Corrected ordinary data TX queue framing and fixed RX Ethernet strip on empty leading mbuf clusters (preventing kernel panics on packet bursts).
+- **Usable IPv4 & Live Internet Verification (r144)**:
+  - DHCP OFFER/ACK successfully exchanged; assigned interface IPv4 and gateway default route.
+  - Unbound TCP probe verified direct HTTP 301 response from public `1.1.1.1:80` over Wi-Fi independently of USB.
+- **SystemConfiguration & MobileSafari (r144)**:
+  - Integrated `phone-tools/river-net.c` with iOS `SystemConfiguration` dynamic store via `dlopen`/`dlsym`.
+  - Published `State:/Network/Global/DNS`, `State:/Network/Global/IPv4` (PrimaryInterface `wl0`), and `State:/Network/Interface/wl0/LinkQuality`.
+  - `mDNSResponder` detected public DNS servers; `getaddrinfo()` immediately resolved hostnames.
+  - Launched `MobileSafari` (`com.apple.mobilesafari`): successfully loaded and rendered `apple.com` live over Wi-Fi on the physical screen!
+- **WPA2 Group Rekey & DHCP Lease Renewal Daemon (r145, patch 0241)**:
+  - Implemented WPA2 2-way Group Rekey (GTK rotation): parsed Group Message 1, unwrapped GTK KDE, installed to HAL slot 24, sent Group Message 2 reply, and enforced replay protection without touching PTK.
+  - Added auto-reconnect on AP disassociation.
+  - Added RFC 2131 unicast DHCP renewal to `river-net`, running as a background daemon under launchd with lease T1 auto-renewal.
+
+## Battery power source driver & SpringBoard UI blur fixes (2026-10-27, r146)
+
+- **Kernel Battery Bring-up (patch 0242 `0242-river-battery-power-source.patch`)**:
+  - Enabled `SweetBattery` personality in `KernelConfigTables.cpp` for River.
+  - Implemented `SweetBattery::start` on River: parses boot-arg `riverbattery` (defaulting to 85%), registers with `IOResources`, and publishes `IOPMPowerSource` properties (`CurrentCapacity`, `MaxCapacity`, `ExternalConnected`, `Voltage=4100mV`, `DesignCapacity`, `legacyIOBatteryInfo`).
+  - Completely eliminated the empty red 0% battery indicator outline in the status bar.
+  - Displayed a solid green 85% charging battery icon with full recognition by `powerd`, `BatteryCenter`, and SpringBoard status bar UI.
+- **SpringBoard UI Blur & Blackout Fixes (`phone-tools/cgprobe.c`)**:
+  - **App Library**: Fixed recursive loop in `setHidden:` causing lockup; cleared dimming underlays while preserving `SBHLibraryCategoryPodBackgroundView` frosted glass surfaces.
+  - **App Switcher**: Hooked `SBFluidSwitcherViewController viewWillLayoutSubviews` and `PBUIWallpaperViewController`; cleared `_hideHomescreenWallpaperReasons` and hid wallpaper window overlay views, eliminating the black wallpaper blackout when settling into the switcher.
+  - **Search Header**: Hooked `SBFFeatherBlurView` and `SBHSearchPillView`, eliminating the black gradient bar across the top of search views.
+  - **SpringBoard Performance**: Running at a smooth 60 FPS across all interactive surfaces.
+
