@@ -207,7 +207,7 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
    /* Novatek's INT is a per-frame pulse (Linux: IRQ_TYPE_EDGE_RISING), so a
     * level check at poll time misses most frames, including every move of a
     * swipe. Read the report buffer each poll; a lifted finger reads back as
-@@ -2999,6 +3064,11 @@
+@@ -2999,6 +3064,7 @@
       if (id<1 || id>10 || (state!=1 && state!=2)) continue;
       unsigned x=(data[p+1]<<4)|(data[p+3]>>4),y=(data[p+2]<<4)|(data[p+3]&15);
       if (x>=1080 || y>=2270) continue;
@@ -215,11 +215,7 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
       seen[id-1]=true; sweet_hid_touch(id-1,1,x,y);
      }
      for(unsigned i=0;i<10;i++) {if(down[i]&&!seen[i]) sweet_hid_touch(i,0,0,0);down[i]=seen[i];}
-+    if (ri_vib_deadline && mach_absolute_time() >= ri_vib_deadline) {
-+     ri_vib_deadline = 0;
-+     river_vibrate(0);
-+    }
-@@ -3073,6 +3143,147 @@
+@@ -3073,6 +3139,149 @@
   }
   return 0;
  }
@@ -246,12 +242,14 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
 + return false;
 +}
 +
++extern struct sysctl_oid sysctl__debug_river_vibrate;
 +void
 +river_haptics_init(void)
 +{
 + int enabled = 1;
 + (void)PE_parse_boot_argn("riverhaptics", &enabled, sizeof(enabled));
 + if (!enabled) return;
++ sysctl_register_oid(&sysctl__debug_river_vibrate);
 +
 + if (ri_gcc_vote) ri_wr(ri_gcc_vote, 0x1004, ri_rd(ri_gcc_vote, 0x1004) | (1u << 10));
 + if (ri_gcc_ahb) ri_wr(ri_gcc_ahb, 0x1008, ri_rd(ri_gcc_ahb, 0x1008) | 1);
@@ -261,7 +259,7 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
 +  ri_wr(gcc_qup2, 4, 1); ri_wr(gcc_qup2, 0, ri_rd(gcc_qup2, 0) | 1);
 +  for (unsigned i = 0; i < 1000 && (ri_rd(gcc_qup2, 0) & 1); i++) delay(1);
 +  ri_wr(gcc_qup2, 0x10, ri_rd(gcc_qup2, 0x10) | 1);
-+  for (unsigned i = 0; i < 1000 && (ri_rd(gcc_qup2, 0x10) & 0x80000000u); i++) delay(1);
++  for (unsigned i = 0; i < 1000 && (ri_rd(gcc_qup2, 0) & 0x80000000u); i++) delay(1);
 + }
 +
 + vm_offset_t tlmm_qup2 = ri_map(0x01006000);
@@ -273,9 +271,9 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
 + vm_offset_t spmi_core = ri_map(0x0200f000);
 + if (spmi_core) {
 +  vm_offset_t ch_rst = ri_spmi_chnl(spmi_core, 0x2c7);
-+  printf("RIVER HAPTICS: SPMI reset pin init ch=%p\n", (void*)ch_rst);
++  printf("RIVER HAPTICS: AW8691 reset pin init ch=%p\n", (void*)ch_rst);
 +  if (ch_rst) {
-+   ri_spmi_write(ch_rst, 0x41, 0);
+++   ri_spmi_write(ch_rst, 0x41, 0);
 +   ri_spmi_write(ch_rst, 0x45, 0x30);
 +   ri_spmi_write(ch_rst, 0x46, 0x80);
 +   ri_spmi_write(ch_rst, 0x40, 0x10);
