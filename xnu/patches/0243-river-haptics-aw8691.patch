@@ -215,7 +215,7 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
       seen[id-1]=true; sweet_hid_touch(id-1,1,x,y);
      }
      for(unsigned i=0;i<10;i++) {if(down[i]&&!seen[i]) sweet_hid_touch(i,0,0,0);down[i]=seen[i];}
-@@ -3073,6 +3139,149 @@
+@@ -3073,6 +3139,147 @@
   }
   return 0;
  }
@@ -242,14 +242,12 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
 + return false;
 +}
 +
-+extern struct sysctl_oid sysctl__debug_river_vibrate;
 +void
 +river_haptics_init(void)
 +{
 + int enabled = 1;
 + (void)PE_parse_boot_argn("riverhaptics", &enabled, sizeof(enabled));
 + if (!enabled) return;
-+ sysctl_register_oid(&sysctl__debug_river_vibrate);
 +
 + if (ri_gcc_vote) ri_wr(ri_gcc_vote, 0x1004, ri_rd(ri_gcc_vote, 0x1004) | (1u << 10));
 + if (ri_gcc_ahb) ri_wr(ri_gcc_ahb, 0x1008, ri_rd(ri_gcc_ahb, 0x1008) | 1);
