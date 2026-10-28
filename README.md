@@ -3,7 +3,7 @@
 > **Current Milestone: r146 (October 2026)**  
 > This repository hosts the bring-up of Apple's **unmodified iOS 16.7.16 (20H392)** userland (iPhone X / `iPhone10,3` / `D22AP`) on Qualcomm Snapdragon hardware. While initially developed for the Redmi Note 10 Pro (**sweet**, SM7150) and ported to the Redmi Note 12 4G (**topaz**, SM6225), active development is now centered on the **Motorola Moto G7** (**river**, XT1962-1, Qualcomm Snapdragon 632 / MSM8953, Adreno 506 GPU).
 >
-> On the Moto G7, iOS 16 runs with **Adreno 506 GPU acceleration at 60 FPS**, functional touchscreen, working native Wi-Fi with live Safari HTTPS browsing, kernel battery power management, and USB Ethernet root SSH access.
+> On the Moto G7, iOS 16 boots with **Adreno 506 GPU hardware acceleration**, functional touchscreen input, working native Wi-Fi with verified Safari HTTPS browsing, a stub battery indicator, and USB Ethernet root SSH access. Performance is functional with hardware acceleration, though subject to occasional frame drops, CPU contention from headless daemons, and ongoing UI blur stabilization.
 
 ---
 
@@ -13,20 +13,21 @@ The project represents a multi-device evolutionary lineage of Apple's open-sourc
 
 1. **ios-sweet (Redmi Note 10 Pro, SM7150)**: Original breakthrough by [dipa-studio](https://github.com/dipa-studio/ios-sweet) booting XNU and the iPhone X userland on Qualcomm architecture.
 2. **ios-topaz (Redmi Note 12 4G, SM6225)**: Adapted to SM6225 architecture (Cortex-A73/A53 big.LITTLE, GICv3, UFS storage), booting CPU-rendered Lock Screen (maintained on the `topaz` branch).
-3. **ios-river (Motorola Moto G7, SDM632 / MSM8953)**: Current active target (branch `river`). Brings GICv2 support, eMMC 5.1 storage, full Adreno 506 GPU hardware acceleration via Mesa Gallium freedreno, WCNSS / WCN36xx native Wi-Fi networking, and kernel `SweetBattery` power source management.
+3. **ios-river (Motorola Moto G7, SDM632 / MSM8953)**: Current active target (branch `river`). Brings GICv2 support, eMMC 5.1 storage, Adreno 506 GPU hardware acceleration via Mesa Gallium freedreno, WCNSS / WCN36xx native Wi-Fi networking, and kernel `SweetBattery` power source management.
 
 ---
 
-## Current Status (Milestone r146)
+## Current Status (Milestone r152)
 
 | Subsystem | Status | Description |
 | :--- | :--- | :--- |
 | **Bootloader** | **Working** | Stock Motorola ABL &rarr; RAM-only `fastboot boot` (Android boot header v1) &rarr; `shim-river` &rarr; XNU. No physical partitions flashed. |
 | **CPU / Kernel** | **Working** | 4&times; Kryo 250 (Cortex-A53) Gold cores active, ARMv8.0 without PAN/LSE (atomic emulation in `handle_uncategorized`), GICv2 (`0x0b000000`), 19.2 MHz virtual timer (INTID 20). |
 | **RAM / Memory** | **Working** | **~3.38 GB usable DDR3** (0x18000000&ndash;0x100000000) with physical pmap skipping firmware carveouts (GPU zap shader, SMMU page tables, splash, WCNSS/modem). |
-| **GPU & UI** | **Working (60 FPS)** | **Adreno 506 GPU hardware acceleration** via Mesa 26.2.5 Gallium freedreno + `sweetgl.dylib` EAGL/GLI injection. SpringBoard renders smoothly at 60 FPS. |
-| **SpringBoard UI** | **Working** | Lock Screen, Home Screen, App Library (frosted glass pod backgrounds intact), App Switcher (settled wallpaper blur blackout resolved), and search bar header blur blackout fixed via `cgprobe.dylib`. |
-| **Battery (r146)** | **Working** | Kernel `SweetBattery` / `IOPMPowerSource` enabled (`0242-river-battery-power-source.patch`), eliminating the empty red 0% outline; status bar shows a healthy **85% green charging battery indicator** with full `powerd` and `BatteryCenter` recognition. |
+| **GPU & UI** | **Functional with Hitches** | **Adreno 506 GPU hardware acceleration** via Mesa 26.2.5 Gallium freedreno + `sweetgl.dylib` EAGL/GLI injection. UI renders via hardware OpenGL ES, but experiences noticeable hitches and lags during navigation and app launches due to CPU contention and CoreGraphics rasterization bottlenecks. |
+| **SpringBoard UI** | **Partially Working / In Progress** | Home Screen and Lock Screen render with wallpapers. **Known issues**: wallpaper takes an extra 1–2 minutes after boot to appear (PosterBoard cold start), wallpaper behind App Switcher and App Library intermittently renders black when animations settle, and folder icon/expanded backgrounds currently do not render properly. |
+| **Battery Indicator** | **Static Fallback (85%)** | Kernel `SweetBattery` / `IOPMPowerSource` enabled (`0242-river-battery-power-source.patch`), replacing the empty red 0% outline with a static **85% green charging battery indicator** (`riverbattery=85`). Dynamic PMIC fuel gauge reading (SMB/PMI632 SPMI) is not yet implemented; battery percentage does not currently reflect real charge state. |
+| **Haptics** | **In Progress / Driver WIP** | Awinic AW8691 haptic driver IC identified on BLSP1 QUP2 (`0x078b6000`, I2C slave `0x5b`, reset via PMI632 GPIO 8). Driver implementation in progress (`0243-river-haptics-aw8691.patch`); currently encountering I2C transfer error / NACK during initialization probe. |
 | **Wi-Fi Networking** | **Working** | Qualcomm WCNSS (Pronto v3 / Iris RF) loaded via TrustZone PAS; DXE DMA rings, 802.11 association, WPA2 4-way handshake, 2-way Group Rekey (GTK rotation), DHCP client and background renewal daemon (`river-net`). |
 | **Web Browsing** | **Working** | SystemConfiguration dynamic store integration (`State:/Network/Global/DNS` and `IPv4`); mDNSResponder DNS resolution; **MobileSafari verified loading HTTPS web pages (apple.com) live on device**. |
 | **Touchscreen** | **Working** | Multi-touch touchscreen input functioning (`riverinput=1`). |

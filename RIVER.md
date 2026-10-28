@@ -2206,11 +2206,19 @@ composition be changed. No kernel build, boot, or root write was done here.
 - **Kernel Battery Bring-up (patch 0242 `0242-river-battery-power-source.patch`)**:
   - Enabled `SweetBattery` personality in `KernelConfigTables.cpp` for River.
   - Implemented `SweetBattery::start` on River: parses boot-arg `riverbattery` (defaulting to 85%), registers with `IOResources`, and publishes `IOPMPowerSource` properties (`CurrentCapacity`, `MaxCapacity`, `ExternalConnected`, `Voltage=4100mV`, `DesignCapacity`, `legacyIOBatteryInfo`).
-  - Completely eliminated the empty red 0% battery indicator outline in the status bar.
-  - Displayed a solid green 85% charging battery icon with full recognition by `powerd`, `BatteryCenter`, and SpringBoard status bar UI.
-- **SpringBoard UI Blur & Blackout Fixes (`phone-tools/cgprobe.c`)**:
-  - **App Library**: Fixed recursive loop in `setHidden:` causing lockup; cleared dimming underlays while preserving `SBHLibraryCategoryPodBackgroundView` frosted glass surfaces.
-  - **App Switcher**: Hooked `SBFluidSwitcherViewController viewWillLayoutSubviews` and `PBUIWallpaperViewController`; cleared `_hideHomescreenWallpaperReasons` and hid wallpaper window overlay views, eliminating the black wallpaper blackout when settling into the switcher.
-  - **Search Header**: Hooked `SBFFeatherBlurView` and `SBHSearchPillView`, eliminating the black gradient bar across the top of search views.
-  - **SpringBoard Performance**: Running at a smooth 60 FPS across all interactive surfaces.
+  - Replaced the empty red 0% battery indicator outline with a static green 85% charging battery icon (`powerd` and `BatteryCenter` recognition).
+  - *Current Limitation*: This is a static stub driver (`riverbattery=85`); actual dynamic fuel gauge reading via SPMI/PMIC is not yet implemented.
+- **SpringBoard UI Blurs & Current Status (`phone-tools/cgprobe.c`)**:
+  - **App Library & App Switcher**: Intercepted `SBFluidSwitcherViewController` and `PBUIWallpaperViewController` layout passes to clear dimming and suppress blackout overlays. However, wallpaper behind these views intermittently renders black upon animation settling across reboots.
+  - **Wallpaper Load Delay**: Wallpapers take an additional 1–2 minutes after boot to appear due to PosterBoard rendering under initial system startup load.
+  - **Folder Backgrounds**: Folder icon and expanded folder backgrounds currently do not render properly.
+  - **UI Responsiveness**: Functional OpenGL ES acceleration via freedreno, though subject to periodic hitches, lags, and dropped frames under background process load.
+
+## Hardware Haptics Bring-up & Diagnostics (2026-10-28, r147–r152)
+
+- **Awinic AW8691 IC (patch 0243 `0243-river-haptics-aw8691.patch`)**:
+  - Identified smart haptic driver IC on BLSP1 QUP2 (`0x078b6000`, I2C slave `0x5b`, reset via PMI632 GPIO 8).
+  - Implemented generalized QUPv2 I2C transfer engine (`ri_qup_xfer`), SPMI reset sequence, and Motorola waveform tables.
+  - Resolved early XNU startup panic (`sysctl_register_oid_early`) and SPMI write opcode handling.
+  - *Current Status (r152)*: Kernel boots and initializes reset line; initial I2C chip ID probe currently returns QUP transfer error (`status=0xd1300c8`, NACK), investigation ongoing.
 
