@@ -11,13 +11,14 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
  #include <sys/random.h>
  #include <kern/locks.h>
  #include <sys/kpi_mbuf.h>
-@@ -42,6 +43,10 @@
+@@ -42,6 +43,11 @@
  static vm_offset_t ri_spmi_obs(vm_offset_t core, unsigned ppid);
  static bool ri_spmi_read(vm_offset_t obs, unsigned addr, unsigned count, uint32_t *v);
  static bool ri_started, ri_pon_ok, ri_touch_ok;
 +static vm_offset_t ri_qup2;
 +static bool ri_haptics_ok;
 +static uint64_t ri_vib_deadline;
++void river_haptics_init(void);
 +void river_vibrate(unsigned ms);
  static int ri_chan;
  static char ri_rtc_note[96] = "RIVER RTC: not read";
@@ -214,7 +215,7 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
       seen[id-1]=true; sweet_hid_touch(id-1,1,x,y);
      }
      for(unsigned i=0;i<10;i++) {if(down[i]&&!seen[i]) sweet_hid_touch(i,0,0,0);down[i]=seen[i];}
-@@ -3073,6 +3139,145 @@
+@@ -3073,6 +3139,144 @@
   }
   return 0;
  }
@@ -241,7 +242,6 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
 + return false;
 +}
 +
-+void river_haptics_init(void);
 +void
 +river_haptics_init(void)
 +{
