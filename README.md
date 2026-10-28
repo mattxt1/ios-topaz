@@ -13,7 +13,7 @@ The project represents a multi-device evolutionary lineage of Apple's open-sourc
 
 1. **ios-sweet (Redmi Note 10 Pro, SM7150)**: Original breakthrough by [dipa-studio](https://github.com/dipa-studio/ios-sweet) booting XNU and the iPhone X userland on Qualcomm architecture.
 2. **ios-topaz (Redmi Note 12 4G, SM6225)**: Adapted to SM6225 architecture (Cortex-A73/A53 big.LITTLE, GICv3, UFS storage), booting CPU-rendered Lock Screen (maintained on the `topaz` branch).
-3. **ios-river (Motorola Moto G7, SDM632 / MSM8953)**: Current active target (branch `river-bringup`). Brings GICv2 support, eMMC 5.1 storage, full Adreno 506 GPU hardware acceleration via Mesa Gallium freedreno, WCNSS / WCN36xx native Wi-Fi networking, and kernel `SweetBattery` power source management.
+3. **ios-river (Motorola Moto G7, SDM632 / MSM8953)**: Current active target (branch `river`). Brings GICv2 support, eMMC 5.1 storage, full Adreno 506 GPU hardware acceleration via Mesa Gallium freedreno, WCNSS / WCN36xx native Wi-Fi networking, and kernel `SweetBattery` power source management.
 
 ---
 
@@ -50,7 +50,7 @@ The project represents a multi-device evolutionary lineage of Apple's open-sourc
 | **Wi-Fi Hardware** | **WCN36xx / Pronto v3** (PAS ID 6) | WCN3988 / SNOC | WCN3990 / SNOC |
 | **Display Panel** | 1080&times;2270 (splash `0x90001000`) | 1080&times;2400 (splash `0x5c000000`) | 1080&times;2400 (splash `0x9c000000`) |
 | **Memory Window** | 3.38 GB usable (0x18000000&ndash;4 GB) | 4 GB highmem (0x1_40000000) | 4 GB highmem |
-| **Current Branch** | `river-bringup` | `topaz` | upstream `dipa-studio` |
+| **Current Branch** | `river` | `topaz` | upstream `dipa-studio` |
 
 ---
 

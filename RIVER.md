@@ -169,7 +169,7 @@ initrd is far below the 0xa0000000 kernel window.
 
 ### First river kernel build (2026-10-20)
 
-Fork `mattxt1/ios-topaz`, branch `river-bringup` at `00ff667`, workflow run
+Fork `mattxt1/ios-topaz`, branch `river` at `00ff667`, workflow run
 39368830465 with `board=river`: **success**, no compile errors. The log shows
 `-DRIVER=1`. `kernel.development.sweet` (17,776,752 bytes, SHA-256
 `11b5b18ed4f3e5c78aa489f025d318fa9788c5ccb88ba53a2d43b04939cdfe18`) contains the `RIVER GIC` strings and no `ICC_*`/GICv3

@@ -978,7 +978,7 @@ live log `logs-private/r19-live-18.txt`; user testing. See RIVER.md r29.
 
 ## Archived river side port handoff (2026-10-19)
 
-This `river-bringup` branch is the Moto G7 river port. The handoff folder's
+This `river` branch is the Moto G7 river port. The handoff folder's
 `HANDOFF.md` (one level up) is the entry point for a new session; then read
 `RIVER.md` for its measured hardware facts, the early ADT, the temporary boot
 diagnostics, and the next kernel work. The sweet/topaz notes below describe
