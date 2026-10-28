@@ -262,8 +262,8 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
 +
 + vm_offset_t tlmm_qup2 = ri_map(0x01006000);
 + if (tlmm_qup2) {
-+  ri_wr(tlmm_qup2, 0x0000, 8);
-+  ri_wr(tlmm_qup2, 0x1000, 8);
++  ri_wr(tlmm_qup2, 0x0000, 0x0c);
++  ri_wr(tlmm_qup2, 0x1000, 0x0c);
 + }
 +
 + vm_offset_t spmi_core = ri_map(0x0200f000);
