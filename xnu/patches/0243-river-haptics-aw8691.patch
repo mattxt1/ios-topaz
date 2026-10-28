@@ -1,0 +1,362 @@
+From: mattxt1 <matttysonx1@gmail.com>
+Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
+
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -4,6 +4,7 @@
+  */
+ #if defined(RIVER)
+ #include <sys/param.h>
++#include <sys/sysctl.h>
+ #include <sys/random.h>
+ #include <kern/locks.h>
+ #include <sys/kpi_mbuf.h>
+@@ -42,6 +43,10 @@
+ static vm_offset_t ri_spmi_obs(vm_offset_t core, unsigned ppid);
+ static bool ri_spmi_read(vm_offset_t obs, unsigned addr, unsigned count, uint32_t *v);
+ static bool ri_started, ri_pon_ok, ri_touch_ok;
++static vm_offset_t ri_qup2;
++static bool ri_haptics_ok;
++static uint64_t ri_vib_deadline;
++void river_vibrate(unsigned ms);
+ static int ri_chan;
+ static char ri_rtc_note[96] = "RIVER RTC: not read";
+ static char ri_perf_note[1024];
+@@ -91,13 +96,14 @@
+  thread_block(THREAD_CONTINUE_NULL);
+ }
+ static bool
+-ri_state(unsigned state)
++ri_qup_state(vm_offset_t qup, unsigned state)
+ {
++ if (!qup) return false;
+  for (unsigned i = 0; i < 1000; i++) {
+-  if (ri_rd(ri_qup, 4) & 4) {
+-   ri_wr(ri_qup, 4, state);
++  if (ri_rd(qup, 4) & 4) {
++   ri_wr(qup, 4, state);
+    for (unsigned j = 0; j < 1000; j++) {
+-    if ((ri_rd(ri_qup, 4) & 7) == (state | 4)) return true;
++    if ((ri_rd(qup, 4) & 7) == (state | 4)) return true;
+     delay(1);
+    }
+    return false;
+@@ -106,44 +112,40 @@
+  }
+  return false;
+ }
+-/* One bounded FIFO transfer, to Novatek firmware address 0x01 only.
+- * The DT address 0x62 is its hardware command/bootloader endpoint, unused.
+- * Input includes
+- * the QUPv2 two-byte read tag, removed before handing data to the caller. */
+ static bool
+-ri_xfer(const uint8_t *tx, unsigned nt, uint8_t *rx, unsigned nr)
++ri_qup_xfer(vm_offset_t qup, uint8_t addr, const uint8_t *tx, unsigned nt, uint8_t *rx, unsigned nr)
+ {
+  uint8_t out[32], in[68];
+  unsigned no = 0, ni = 0, want = nr ? nr + 2 : 0;
+- if (nt == 0 || nt > 16 || nr > 65 || !ri_state(0)) return false;
+- ri_wr(ri_qup, 0, 0x207 | (nr ? 0 : 0x80));
+- ri_wr(ri_qup, 8, (ri_rd(ri_qup, 8) & ~0x1fc00u) | 0xc000);
+- ri_wr(ri_qup, 0x100, 0); ri_wr(ri_qup, 0x200, 0);
+- ri_wr(ri_qup, 0x208, want);
+- out[no++] = 0x81; out[no++] = 0x02;
++ if (!qup || nt == 0 || nt > 16 || nr > 65 || !ri_qup_state(qup, 0)) return false;
++ ri_wr(qup, 0, 0x207 | (nr ? 0 : 0x80));
++ ri_wr(qup, 8, (ri_rd(qup, 8) & ~0x1fc00u) | 0xc000);
++ ri_wr(qup, 0x100, 0); ri_wr(qup, 0x200, 0);
++ ri_wr(qup, 0x208, want);
++ out[no++] = 0x81; out[no++] = (uint8_t)(addr << 1);
+  out[no++] = nr ? 0x82 : 0x83; out[no++] = (uint8_t)nt;
+  for (unsigned i = 0; i < nt; i++) out[no++] = tx[i];
+  if (nr) {
+-  out[no++] = 0x81; out[no++] = 0x03;
++  out[no++] = 0x81; out[no++] = (uint8_t)((addr << 1) | 1);
+   out[no++] = 0x87; out[no++] = (uint8_t)nr;
+  }
+- ri_wr(ri_qup, 0x150, no);
+- ri_wr(ri_qup, 0x1c, 0x3c); ri_wr(ri_qup, 0x18, 0x300);
+- if (!ri_state(1)) return false;
+- ri_wr(ri_qup, 0x400, (62u << 16) | 124u); /* XO 19.2 MHz, ~100 kHz */
+- if (!ri_state(3)) return false;
++ ri_wr(qup, 0x150, no);
++ ri_wr(qup, 0x1c, 0x3c); ri_wr(qup, 0x18, 0x300);
++ if (!ri_qup_state(qup, 1)) return false;
++ ri_wr(qup, 0x400, (62u << 16) | 124u); /* XO 19.2 MHz, ~100 kHz */
++ if (!ri_qup_state(qup, 3)) return false;
+  for (unsigned i = 0; i < no; i += 4) {
+   uint32_t word = 0;
+   for (unsigned j = 0; j < 4 && i + j < no; j++) word |= (uint32_t)out[i+j] << (8*j);
+-  ri_wr(ri_qup, 0x110, word);
++  ri_wr(qup, 0x110, word);
+  }
+- if (!ri_state(1)) return false;
++ if (!ri_qup_state(qup, 1)) return false;
+  bool ok = false;
+  for (unsigned i = 0; i < 2000; i++) {
+-  uint32_t op = ri_rd(ri_qup, 0x18);
+-  if ((ri_rd(ri_qup, 0x404) & 0x38000fcu) || (ri_rd(ri_qup, 0x1c) & 0x3c)) break;
++  uint32_t op = ri_rd(qup, 0x18);
++  if ((ri_rd(qup, 0x404) & 0x38000fcu) || (ri_rd(qup, 0x1c) & 0x3c)) break;
+   if (nr && (op & 0x20)) {
+-   uint32_t word = ri_rd(ri_qup, 0x218);
++   uint32_t word = ri_rd(qup, 0x218);
+    for (unsigned j = 0; j < 4 && ni < want; j++) in[ni++] = (uint8_t)(word >> (j*8));
+   }
+   if ((nr && ni == want && (op & 0x800)) || (!nr && (op & 0x500))) { ok = true; break; }
+@@ -151,13 +153,68 @@
+  }
+  if (!ok) {
+   static unsigned errors;
+-  if ((errors++ % 100) == 0) printf("RIVER INPUT: QUP transfer error status=%#x op=%#x err=%#x rx=%u/%u\n", ri_rd(ri_qup,0x404),ri_rd(ri_qup,0x18),ri_rd(ri_qup,0x1c),ni,want);
++  if ((errors++ % 100) == 0) printf("RIVER INPUT: QUP transfer error status=%#x op=%#x err=%#x rx=%u/%u\n", ri_rd(qup,0x404),ri_rd(qup,0x18),ri_rd(qup,0x1c),ni,want);
+  }
+- (void)ri_state(0);
++ (void)ri_qup_state(qup, 0);
+  if (ok && nr) for (unsigned i = 0; i < nr; i++) rx[i] = in[i+2];
+  return ok;
+ }
+ static bool
++ri_state(unsigned state)
++{
++ return ri_qup_state(ri_qup, state);
++}
++static bool
++ri_xfer(const uint8_t *tx, unsigned nt, uint8_t *rx, unsigned nr)
++{
++ return ri_qup_xfer(ri_qup, 0x01, tx, nt, rx, nr);
++}
++
++static const uint8_t ri_aw869x_fw[344] = {
++  0x85, 0x10, 0x19, 0x11, 0x5b, 0x11, 0x5c, 0x36, 0xa3, 0x36, 0xa4, 0x37,
++  0xe6, 0x37, 0xe7, 0x39, 0x29, 0x39, 0x2a, 0x3a, 0x6c, 0x3a, 0x6d, 0x3b,
++  0xaf, 0x00, 0x0d, 0x1b, 0x28, 0x35, 0x41, 0x4c, 0x57, 0x60, 0x69, 0x70,
++  0x76, 0x7a, 0x7e, 0x7f, 0x7f, 0x7e, 0x7b, 0x77, 0x72, 0x6b, 0x63, 0x5a,
++  0x4f, 0x44, 0x38, 0x2b, 0x1e, 0x11, 0x03, 0xf5, 0xe8, 0xdb, 0xce, 0xc1,
++  0xb6, 0xab, 0xa1, 0x98, 0x91, 0x8b, 0x86, 0x82, 0x81, 0x81, 0x81, 0x83,
++  0x87, 0x8c, 0x92, 0x9a, 0xa3, 0xad, 0xb8, 0xc4, 0xd0, 0xdd, 0xea, 0xf8,
++  0x06, 0x14, 0x21, 0x2e, 0x3b, 0x46, 0x51, 0x5b, 0x64, 0x6c, 0x73, 0x78,
++  0x7c, 0x7e, 0x7f, 0x7f, 0x7d, 0x7a, 0x75, 0x6f, 0x67, 0x5f, 0x55, 0x4a,
++  0x3f, 0x32, 0x25, 0x18, 0x0b, 0xfd, 0xef, 0xe2, 0xd4, 0xc8, 0xbc, 0xb1,
++  0xa6, 0x9d, 0x95, 0x8e, 0x88, 0x84, 0x81, 0x81, 0x81, 0x81, 0x84, 0x89,
++  0x8f, 0x96, 0x9e, 0xa7, 0xb2, 0xbd, 0xc9, 0xd6, 0xe3, 0xf1, 0xfe, 0x0c,
++  0x1a, 0x27, 0x34, 0x40, 0x4c, 0x56, 0x60, 0x68, 0x70, 0x75, 0x7a, 0x7d,
++  0x7f, 0x7f, 0x7e, 0x7c, 0x78, 0x72, 0x6b, 0x63, 0x5a, 0x50, 0x45, 0x39,
++  0x2c, 0x1f, 0x12, 0x00, 0x0d, 0x1b, 0x28, 0x35, 0x41, 0x4c, 0x57, 0x60,
++  0x69, 0x70, 0x76, 0x7a, 0x7e, 0x7f, 0x7f, 0x7e, 0x7b, 0x77, 0x72, 0x6b,
++  0x63, 0x5a, 0x4f, 0x44, 0x38, 0x2b, 0x1e, 0x11, 0x03, 0xf5, 0xe8, 0xdb,
++  0xce, 0xc1, 0xb6, 0xab, 0xa1, 0x98, 0x91, 0x8b, 0x86, 0x82, 0x81, 0x81,
++  0x81, 0x83, 0x87, 0x8c, 0x92, 0x9a, 0xa3, 0xad, 0xb8, 0xc4, 0xd0, 0xdd,
++  0xea, 0xf8, 0x00, 0x08, 0x11, 0x1a, 0x22, 0x2a, 0x31, 0x38, 0x3e, 0x44,
++  0x49, 0x4c, 0x4f, 0x51, 0x53, 0x53, 0x52, 0x50, 0x4d, 0x4a, 0x45, 0x40,
++  0x3a, 0x33, 0x2c, 0x24, 0x1c, 0x14, 0x0b, 0x02, 0xf9, 0xf0, 0xe7, 0xdf,
++  0xd7, 0xcf, 0xc8, 0xc2, 0xbc, 0xb8, 0xb3, 0xb0, 0xae, 0xad, 0xac, 0xad,
++  0xae, 0xb1, 0xb4, 0xb8, 0xbd, 0xc3, 0xca, 0xd1, 0xd9, 0xe1, 0xe9, 0xf2,
++  0xfb, 0x00, 0x04, 0x08, 0x0c, 0x0f, 0x13, 0x17, 0x1a, 0x1d, 0x1f, 0x21,
++  0x23, 0x24, 0x25, 0x26, 0x26, 0x25, 0x25, 0x23, 0x22, 0x20, 0x1d, 0x1b,
++  0x17, 0x14, 0x10, 0x0d, 0x09, 0x05, 0x01, 0xfc, 0xf8, 0xf4, 0xf1, 0xed,
++  0xe9, 0xe6, 0xe3, 0xe1, 0xde, 0xdc, 0xdb, 0xda, 0xd9, 0xd9, 0xd9, 0xda,
++  0xdb, 0xdd, 0xdf, 0xe1, 0xe4, 0xe7, 0xea, 0xee
++};
++
++static bool
++ri_aw_wr(uint8_t reg, uint8_t val)
++{
++ uint8_t buf[2] = { reg, val };
++ return ri_qup_xfer(ri_qup2, 0x5b, buf, 2, NULL, 0);
++}
++
++static bool
++ri_aw_rd(uint8_t reg, uint8_t *val)
++{
++ return ri_qup_xfer(ri_qup2, 0x5b, &reg, 1, val, 1);
++}
++static bool
+ ri_pon(uint8_t *v)
+ {
+  if (!ri_pon_ok) return false;
+@@ -943,6 +1000,10 @@
+    printf("RIVER TX: DMA complete mgmt=%u slot=%u channel=%u status=%#x (not an ACK indication)\n",
+        river_tx_completed, slot, river_scan_channel, status);
+    return true;
++  }
++  if (ri_vib_deadline && mach_absolute_time() >= ri_vib_deadline) {
++   ri_vib_deadline = 0;
++   river_vibrate(0);
+   }
+   ri_wait(10);
+  }
+@@ -2939,6 +3000,7 @@
+   if (info[0]+info[1]==255 && w==1080 && h==2270) { ri_touch_ok=true; break; }
+  }
+  printf("RIVER INPUT: Novatek reports %s\n",ri_touch_ok?"enabled":"not validated; withheld");
++ river_haptics_init();
+ }
+ static void
+ ri_thread(void *arg, wait_result_t result)
+@@ -2968,7 +3030,10 @@
+   uint8_t pon=0;
+   bool pok=ri_pon(&pon);
+   int now[3]={!!(pon&1),vol_ok ? !(ri_rd(ri_key,0x1004)&1) : 0,!!(pon&2)};
+-  for (int k=0;k<3;k++) if((k==1?vol_ok:pok) && now[k]!=keys[k]) {keys[k]=now[k];sweet_hid_key(k,now[k]);}
++  for (int k=0;k<3;k++) if((k==1?vol_ok:pok) && now[k]!=keys[k]) {
++   if (now[k]) river_vibrate(35);
++   keys[k]=now[k]; sweet_hid_key(k,now[k]);
++  }
+   /* Novatek's INT is a per-frame pulse (Linux: IRQ_TYPE_EDGE_RISING), so a
+    * level check at poll time misses most frames, including every move of a
+    * swipe. Read the report buffer each poll; a lifted finger reads back as
+@@ -2999,6 +3064,7 @@
+      if (id<1 || id>10 || (state!=1 && state!=2)) continue;
+      unsigned x=(data[p+1]<<4)|(data[p+3]>>4),y=(data[p+2]<<4)|(data[p+3]&15);
+      if (x>=1080 || y>=2270) continue;
++     if (!down[id-1]) river_vibrate(25);
+      seen[id-1]=true; sweet_hid_touch(id-1,1,x,y);
+     }
+     for(unsigned i=0;i<10;i++) {if(down[i]&&!seen[i]) sweet_hid_touch(i,0,0,0);down[i]=seen[i];}
+@@ -3073,6 +3139,145 @@
+  }
+  return 0;
+ }
++static vm_offset_t
++ri_spmi_chnl(vm_offset_t core, unsigned ppid)
++{
++ for (unsigned i = 0; i < 256; i++) {
++  if (((ri_rd(core, 0x800 + i*4) >> 8) & 0xfff) == ppid) return ri_map(0x02400000 + i*0x8000);
++ }
++ return 0;
++}
++static bool
++ri_spmi_write(vm_offset_t chnl, unsigned addr, uint8_t val)
++{
++ if (!chnl) return false;
++ ri_wr(chnl, 0x10, (uint32_t)val);
++ ri_wr(chnl, 0x00, ((addr & 0xff) << 4));
++ for (unsigned i = 0; i < 1000; i++) {
++  uint32_t s = ri_rd(chnl, 0x08);
++  if (s & 1) { ri_wr(chnl, 0x08, 1); return true; }
++  if (s & 2) { ri_wr(chnl, 0x08, 2); return false; }
++  delay(1);
++ }
++ return false;
++}
++
++void river_haptics_init(void);
++void
++river_haptics_init(void)
++{
++ int enabled = 1;
++ (void)PE_parse_boot_argn("riverhaptics", &enabled, sizeof(enabled));
++ if (!enabled) return;
++
++ if (ri_gcc_vote) ri_wr(ri_gcc_vote, 0x1004, ri_rd(ri_gcc_vote, 0x1004) | (1u << 10));
++ if (ri_gcc_ahb) ri_wr(ri_gcc_ahb, 0x1008, ri_rd(ri_gcc_ahb, 0x1008) | 1);
++
++ vm_offset_t gcc_qup2 = ri_map(0x01803000);
++ if (gcc_qup2) {
++  ri_wr(gcc_qup2, 4, 1); ri_wr(gcc_qup2, 0, ri_rd(gcc_qup2, 0) | 1);
++  for (unsigned i = 0; i < 1000 && (ri_rd(gcc_qup2, 0) & 1); i++) delay(1);
++  ri_wr(gcc_qup2, 0x10, ri_rd(gcc_qup2, 0x10) | 1);
++  for (unsigned i = 0; i < 1000 && (ri_rd(gcc_qup2, 0x10) & 0x80000000u); i++) delay(1);
++ }
++
++ vm_offset_t tlmm_qup2 = ri_map(0x01006000);
++ if (tlmm_qup2) {
++  ri_wr(tlmm_qup2, 0x0000, 8);
++  ri_wr(tlmm_qup2, 0x1000, 8);
++ }
++
++ vm_offset_t spmi_core = ri_map(0x0200f000);
++ if (spmi_core) {
++  vm_offset_t ch_rst = ri_spmi_chnl(spmi_core, 0x2c7);
++  if (ch_rst) {
++   ri_spmi_write(ch_rst, 0x40, 1);
++   ri_spmi_write(ch_rst, 0x41, 0);
++   ri_spmi_write(ch_rst, 0x42, 1);
++   ri_spmi_write(ch_rst, 0x46, 0x80);
++   delay(5000);
++  }
++ }
++
++ ri_qup2 = ri_map(0x078b6000);
++ if (!ri_qup2) {
++  printf("RIVER HAPTICS: failed to map QUP2 MMIO\n");
++  return;
++ }
++
++ ri_wr(ri_qup2, 0xc, 1); delay(100);
++ if (!ri_qup_state(ri_qup2, 0)) { printf("RIVER HAPTICS: QUP2 reset timeout\n"); return; }
++ ri_wr(ri_qup2, 0, 0x207); ri_wr(ri_qup2, 0x408, 1);
++ ri_wr(ri_qup2, 0x20, 0); ri_wr(ri_qup2, 0x28, 0x300);
++
++ uint8_t chipid = 0;
++ for (unsigned t = 0; t < 5; t++) {
++  if (ri_aw_rd(0x00, &chipid) && chipid == 0x91) break;
++  delay(2000);
++ }
++ if (chipid != 0x91) {
++  printf("RIVER HAPTICS: AW8691 probe failed (read %#x, expected 0x91)\n", chipid);
++  return;
++ }
++ printf("RIVER HAPTICS: AW8691 haptic driver IC detected (chip ID 0x%02x) on I2C QUP2 (0x5b)\n", chipid);
++
++ ri_aw_wr(0x04, 0x01);
++ delay(1000);
++ ri_aw_wr(0x36, 0x01);
++ ri_aw_wr(0x34, 0x38);
++ ri_aw_wr(0x39, 0x20);
++
++ ri_aw_wr(0x04, 0x21);
++ delay(1000);
++ ri_aw_wr(0x21, 0x10);
++ ri_aw_wr(0x22, 0x00);
++ ri_aw_wr(0x23, 0x04);
++ ri_aw_wr(0x24, 0x00);
++ ri_aw_wr(0x25, 0x0c);
++ ri_aw_wr(0x26, 0x00);
++ ri_aw_wr(0x40, 0x10);
++ ri_aw_wr(0x41, 0x00);
++ for (unsigned i = 0; i < sizeof(ri_aw869x_fw); i++) {
++  ri_aw_wr(0x42, ri_aw869x_fw[i]);
++ }
++ ri_aw_wr(0x04, 0x01);
++
++ ri_haptics_ok = true;
++ printf("RIVER HAPTICS: AW8691 initialized with Motorola haptic waveform table (ready)\n");
++}
++
++void
++river_vibrate(unsigned ms)
++{
++ if (!ri_haptics_ok || !ri_qup2) return;
++ if (ms == 0) {
++  ri_aw_wr(0x04, 0x01);
++  ri_vib_deadline = 0;
++  return;
++ }
++ ri_aw_wr(0x07, 0x01);
++ ri_aw_wr(0x08, 0x00);
++ ri_aw_wr(0x39, ms > 50 ? 0x28 : 0x20);
++ ri_aw_wr(0x04, 0x20);
++ ri_aw_wr(0x02, 0xff);
++ ri_aw_wr(0x05, 0x01);
++
++ uint64_t dur_mat = 0;
++ nanoseconds_to_absolutetime((uint64_t)ms * NSEC_PER_MSEC, &dur_mat);
++ ri_vib_deadline = mach_absolute_time() + dur_mat;
++}
++
++static int
++river_vibrate_sysctl SYSCTL_HANDLER_ARGS
++{
++ int val = 0, error;
++ error = sysctl_handle_int(oidp, &val, 0, req);
++ if (error || !req->newptr) return error;
++ river_vibrate((unsigned)val);
++ return 0;
++}
++SYSCTL_PROC(_debug, OID_AUTO, river_vibrate, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
++            NULL, 0, river_vibrate_sysctl, "I", "River haptic vibrate");
+ static uint64_t
+ ri_ns_since(uint64_t t0)
+ {

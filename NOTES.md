@@ -1519,3 +1519,21 @@ What it took today (in order): 0058 HID services (Apple IOHIDFamily-1915 user cl
   - Fixed infinite recursion in `setHidden:` causing App Library lockup/freeze.
   - Fixed search bar header blackout and App Switcher settled frosted wallpaper blur.
   - Preserved `SBHLibraryCategoryPodBackgroundView` pod frosted glass surfaces.
+
+## Status 2026-10-28: r147 River Hardware Haptics (Awinic AW8691 on BLSP1 QUP2)
+- **Hardware Architecture**:
+  - Device tree investigation of Moto G7 (`river`, `XT1962-1`) revealed an **Awinic AW8691** smart haptic driver IC at I2C address `0x5b` on Qualcomm BLSP1 QUP2 (`0x078b6000`).
+  - Reset control via PMI632 PMIC GPIO 8 (SPMI peripheral `0xc7`, PPID `0x2c7`).
+  - QUP2 GCC clocks: `CMD_RCGR` (`0x01803000`), `CFG_RCGR` (`0x01803004`), `CBCR` (`0x01803010`), with BLSP1 AHB vote at `0x01844004`.
+  - Pin multiplexing: TLMM GPIO 6 and 7 configured to Function 2 (`blsp_i2c2`).
+- **Kernel Implementation (`0243-river-haptics-aw8691.patch`)**:
+  - Generalized QUPv2 I2C transfer engine (`ri_qup_xfer`, `ri_qup_state`) allowing arbitrary 7-bit slave address transfers alongside existing Novatek touch QUP3.
+  - Added SPMI write support (`ri_spmi_chnl`, `ri_spmi_write`) to configure PMI632 GPIO 8 reset output.
+  - Embedded authentic Motorola Wave 1 haptic waveform table (344 bytes) extracted from `aw869x_haptic.bin`.
+  - Implemented `river_haptics_init()`: probes AW8691 chip ID `0x91`, configures 8.75V boost (`BSTCFG`), sets default gain (`0x20`), and uploads waveform to SRAM at base `0x1000`.
+  - Implemented `river_vibrate(unsigned ms)` non-blocking timed vibration using Mach absolute time deadlines.
+  - Integrated with input events: triggers 25ms haptic pulse on touchscreen finger down (`!down[id-1]`), and 35ms pulse on hardware button press (`now[k] && !keys[k]`).
+  - Registered BSD sysctl `debug.river_vibrate` for userspace control and debugging.
+- **Userspace Tooling (`phone-tools/vibrate.c`)**:
+  - Added CLI utility `vibrate [ms]` to trigger haptics directly via `sysctlbyname("debug.river_vibrate", ...)`.
+
