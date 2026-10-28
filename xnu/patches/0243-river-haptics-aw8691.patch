@@ -215,7 +215,7 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
       seen[id-1]=true; sweet_hid_touch(id-1,1,x,y);
      }
      for(unsigned i=0;i<10;i++) {if(down[i]&&!seen[i]) sweet_hid_touch(i,0,0,0);down[i]=seen[i];}
-@@ -3073,6 +3139,144 @@
+@@ -3073,6 +3139,146 @@
   }
   return 0;
  }
@@ -270,11 +270,13 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
 + if (spmi_core) {
 +  vm_offset_t ch_rst = ri_spmi_chnl(spmi_core, 0x2c7);
 +  if (ch_rst) {
-+   ri_spmi_write(ch_rst, 0x40, 1);
 +   ri_spmi_write(ch_rst, 0x41, 0);
-+   ri_spmi_write(ch_rst, 0x42, 1);
++   ri_spmi_write(ch_rst, 0x45, 0x30);
 +   ri_spmi_write(ch_rst, 0x46, 0x80);
-+   delay(5000);
++   ri_spmi_write(ch_rst, 0x40, 0x10);
++   delay(10000);
++   ri_spmi_write(ch_rst, 0x40, 0x11);
++   delay(15000);
 +  }
 + }
 +
@@ -290,9 +292,9 @@ Subject: [PATCH] RIVER: implement hardware haptics via AW8691 on BLSP1 QUP2
 + ri_wr(ri_qup2, 0x20, 0); ri_wr(ri_qup2, 0x28, 0x300);
 +
 + uint8_t chipid = 0;
-+ for (unsigned t = 0; t < 5; t++) {
++ for (unsigned t = 0; t < 10; t++) {
 +  if (ri_aw_rd(0x00, &chipid) && chipid == 0x91) break;
-+  delay(2000);
++  delay(3000);
 + }
 + if (chipid != 0x91) {
 +  printf("RIVER HAPTICS: AW8691 probe failed (read %#x, expected 0x91)\n", chipid);

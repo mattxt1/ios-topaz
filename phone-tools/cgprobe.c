@@ -531,6 +531,7 @@ static void probe_window_set_alpha(id self, SEL cmd, CGFloat alpha)
 }
 
 static void clear_blackout_in_view(id view);
+static void fix_all_blackouts(void);
 
 static void (*original_feather_blur_set_hidden)(id, SEL, BOOL);
 static void (*original_feather_blur_set_alpha)(id, SEL, CGFloat);
@@ -808,6 +809,8 @@ static void probe_library_layout(id self, SEL cmd)
 			((void (*)(id, SEL, BOOL))objc_msgSend)(sdv, sel_registerName("setHidden:"), YES);
 			((void (*)(id, SEL, CGFloat))objc_msgSend)(sdv, sel_registerName("setAlpha:"), 0.0f);
 		}
+		clear_blackout_in_view(v);
+		fix_all_blackouts();
 		static int logged;
 		if (logged++ < 5) {
 			cglog("cgprobe: library view %p tree:\n", v);
@@ -1207,17 +1210,14 @@ probe_loaded(void)
 
 	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
 		while (1) {
-			sleep(1);
+			usleep(500000); /* 500ms auto-fix loop */
+			dispatch_async(dispatch_get_main_queue(), ^{
+				fix_all_blackouts();
+			});
 			if (access("/tmp/dump_now", F_OK) == 0) {
 				unlink("/tmp/dump_now");
 				dispatch_async(dispatch_get_main_queue(), ^{
 					dump_all_windows_and_views();
-				});
-			}
-			if (access("/tmp/fix_now", F_OK) == 0) {
-				unlink("/tmp/fix_now");
-				dispatch_async(dispatch_get_main_queue(), ^{
-					fix_all_blackouts();
 				});
 			}
 		}
