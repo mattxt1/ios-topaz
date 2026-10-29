@@ -1,5 +1,21 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River pink also occurs after backlight-enabled boot (2026-10-29)
+
+User reports Settings already pink when revisited through switcher after fresh
+riverbl=1 RAM boot, and reports newly opened apps are pink too. No respring was
+performed on this boot. Surface scan reports display surfaces 2 and 4 uniform
+0xffb34db3. Current SpringBoard26/backboardd58; exact live sweetgl SHA256
+3605822ddd0c68bb5f357d6460cd2f1f3c4350b3ee07f4a18034ff8d8208a6dd.
+Pink can therefore occur without a respring; the causal trigger is still unknown.
+
+Temporarily enabled bounded backboardd trace using verified image/base
+0x1041dc000, but no draws occurred during capture. All three diagnostic values
+were explicitly reset to zero, writes successful. USB listener restarted in
+current chat; no actionable new trace. User was asked to switch Home and back;
+response pending. Earlier calculator partial-redraw evidence remains the best
+lead: program 15 sampling texture 98 introduced pink in that old process.
+
 ## River backlight fixed on RAM test; pink draw isolated (2026-10-29)
 
 Verified serial/product river and SHA256 ae1c78ee129e9747a25454d0edf5c5ff6c0eba90d25d0655c1dc31fa580754bc,
