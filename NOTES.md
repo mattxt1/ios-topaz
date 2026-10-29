@@ -1,5 +1,15 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River recovery app rendering confirmed; folder-only reapply (2026-10-28)
+
+After RAM recovery at02:43:37UTC, SSH returned, early wired30990pages (~484MiB).
+Fresh Settings PID252 screenshot shows normal controls, not pink. Then recompiled
+and reapplied cgprobe staged source335523a (folder/Search plates and diagnostic
+signal only; gray-alpha hook REMOVED). Atomic device library replacement and
+SpringBoard restart done. Fresh app-rendering and revised Search checks pending.
+GLES performance candidate remains entirely undeployed. USB receiver restarted
+in current chat exec64975; recovery log style-fix/recovery-usb-1.txt.
+
 ## River folder/search and glyph investigation; recovery pending (2026-10-28)
 
 Closed-folder material plate was replaced with a small pre-rounded RGBA bitmap
