@@ -18,7 +18,7 @@ sign() {
 	if [ -f "$1-ents.plist" ]; then codesign -f -s - --entitlements "$1-ents.plist" "$out/$1"
 	else codesign -f -s - "$out/$1"; fi
 }
-for c in rput rget psx pstack vibrate; do cc -o "$out/$c" "$c.c"; sign "$c"; done
+for c in rput rget psx pstack vibrate fops; do cc -o "$out/$c" "$c.c"; sign "$c"; done
 for m in oslog exq dumpcls; do cc -fobjc-arc -framework Foundation -o "$out/$m" "$m.m"; sign "$m"; done
 cc -Wno-deprecated-declarations -dynamiclib -install_name /usr/local/lib/libcgprobe.dylib \
 	-framework UIKit -framework CoreGraphics -framework CoreFoundation -o "$out/libcgprobe.dylib" cgprobe.c

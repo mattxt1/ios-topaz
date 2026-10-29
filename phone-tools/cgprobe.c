@@ -19,20 +19,22 @@
 
 static void cglog(const char *fmt, ...)
 {
-	static int fd = -1;
+	char buf[1024];
+	va_list ap;
+	va_start(ap, fmt);
+	int n = vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+	if (n <= 0) return;
+
+	int fd = open("/var/mobile/Library/SpringBoard/cgprobe.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
 	if (fd < 0) {
 		fd = open("/tmp/cgprobe.log", O_WRONLY | O_CREAT | O_APPEND, 0666);
 	}
 	if (fd >= 0) {
-		char buf[1024];
-		va_list ap;
-		va_start(ap, fmt);
-		int n = vsnprintf(buf, sizeof(buf), fmt, ap);
-		va_end(ap);
-		if (n > 0) {
-			write(fd, buf, (size_t)n);
-		}
+		write(fd, buf, (size_t)n);
+		close(fd);
 	}
+	os_log(OS_LOG_DEFAULT, "CGPROBE: %{public}s", buf);
 }
 
 static uint64_t
@@ -396,32 +398,53 @@ static void probe_search_pill_layout(id self, SEL cmd)
 static void (*original_folder_bg_layout)(id, SEL);
 static void probe_folder_bg_layout(id self, SEL cmd)
 {
-	original_folder_bg_layout(self, cmd);
-	if (strcmp(object_getClassName(self), "SBFolderBackgroundView") != 0) return;
-	Ivar bv_ivar = class_getInstanceVariable(object_getClass(self), "_blurView");
-	id bv = bv_ivar ? object_getIvar(self, bv_ivar) : nil;
+	if (original_folder_bg_layout) original_folder_bg_layout(self, cmd);
+	if (!strstr(object_getClassName(self), "FolderBackgroundView")) return;
 	CGRect b = ((CGRect (*)(id, SEL))objc_msgSend)(self, sel_registerName("bounds"));
-	if (bv && b.size.width > 50 && b.size.height > 50) {
-		id blayer = ((id (*)(id, SEL))objc_msgSend)(bv, sel_registerName("layer"));
-		if (blayer) {
-			((void (*)(id, SEL, id))objc_msgSend)(blayer, sel_registerName("setFilters:"), nil);
-			CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-			CGFloat comps[4] = {1.0f, 1.0f, 1.0f, 0.28f};
-			CGColorRef col = CGColorCreate(cs, comps);
-			((void (*)(id, SEL, CGColorRef))objc_msgSend)(blayer, sel_registerName("setBackgroundColor:"), col);
-			((void (*)(id, SEL, CGFloat))objc_msgSend)(blayer, sel_registerName("setCornerRadius:"), 30.0f);
-			((void (*)(id, SEL, BOOL))objc_msgSend)(blayer, sel_registerName("setMasksToBounds:"), YES);
-			CGColorRelease(col);
-			CGColorSpaceRelease(cs);
-			cglog("cgprobe: folder_bg layoutSubviews styled blurView %p\n", bv);
-		}
+	if (b.size.width < 10.0f || b.size.height < 10.0f) return;
+
+	id layer = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("layer"));
+	if (layer) {
+		((void (*)(id, SEL, id))objc_msgSend)(layer, sel_registerName("setFilters:"), nil);
+		CGFloat radius = (b.size.width < 120.0f) ? 14.0f : 30.0f;
+		((void (*)(id, SEL, CGFloat))objc_msgSend)(layer, sel_registerName("setCornerRadius:"), radius);
+		((void (*)(id, SEL, BOOL))objc_msgSend)(layer, sel_registerName("setMasksToBounds:"), YES);
+
+		CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+		CGFloat alpha = (b.size.width < 120.0f) ? 0.32f : 0.38f;
+		CGFloat comps[4] = {1.0f, 1.0f, 1.0f, alpha};
+		CGColorRef col = CGColorCreate(cs, comps);
+		((void (*)(id, SEL, CGColorRef))objc_msgSend)(layer, sel_registerName("setBackgroundColor:"), col);
+		CGColorRelease(col);
+		CGColorSpaceRelease(cs);
 	}
+
+	Ivar tv_iv = class_getInstanceVariable(object_getClass(self), "_tintView");
+	id tv = tv_iv ? object_getIvar(self, tv_iv) : nil;
+	if (tv) {
+		((void (*)(id, SEL, BOOL))objc_msgSend)(tv, sel_registerName("setHidden:"), YES);
+		((void (*)(id, SEL, CGFloat))objc_msgSend)(tv, sel_registerName("setAlpha:"), 0.0f);
+	}
+
+	Ivar bv_iv = class_getInstanceVariable(object_getClass(self), "_blurView");
+	id bv = bv_iv ? object_getIvar(self, bv_iv) : nil;
+	if (bv) {
+		id bl = ((id (*)(id, SEL))objc_msgSend)(bv, sel_registerName("layer"));
+		if (bl) {
+			((void (*)(id, SEL, id))objc_msgSend)(bl, sel_registerName("setFilters:"), nil);
+		}
+		((void (*)(id, SEL, BOOL))objc_msgSend)(bv, sel_registerName("setHidden:"), YES);
+		((void (*)(id, SEL, CGFloat))objc_msgSend)(bv, sel_registerName("setAlpha:"), 0.0f);
+	}
+
+	((void (*)(id, SEL, CGFloat))objc_msgSend)(self, sel_registerName("setAlpha:"), 1.0f);
+	((void (*)(id, SEL, BOOL))objc_msgSend)(self, sel_registerName("setHidden:"), NO);
 }
 
 static void (*original_floaty_folder_layout)(id, SEL);
 static void probe_floaty_folder_layout(id self, SEL cmd)
 {
-	original_floaty_folder_layout(self, cmd);
+	if (original_floaty_folder_layout) original_floaty_folder_layout(self, cmd);
 	if (!strstr(object_getClassName(self), "FloatyFolderView")) return;
 
 	id subviews = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("subviews"));
@@ -436,14 +459,13 @@ static void probe_floaty_folder_layout(id self, SEL cmd)
 				((void (*)(id, SEL, id))objc_msgSend)(l, sel_registerName("setFilters:"), nil);
 				((void (*)(id, SEL, BOOL))objc_msgSend)(l, sel_registerName("setShouldRasterize:"), NO);
 				CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-				CGFloat comps[4] = {1.0f, 1.0f, 1.0f, 0.35f};
+				CGFloat comps[4] = {1.0f, 1.0f, 1.0f, 0.38f};
 				CGColorRef col = CGColorCreate(cs, comps);
 				((void (*)(id, SEL, CGColorRef))objc_msgSend)(l, sel_registerName("setBackgroundColor:"), col);
 				((void (*)(id, SEL, CGFloat))objc_msgSend)(l, sel_registerName("setCornerRadius:"), 30.0f);
 				((void (*)(id, SEL, BOOL))objc_msgSend)(l, sel_registerName("setMasksToBounds:"), YES);
 				CGColorRelease(col);
 				CGColorSpaceRelease(cs);
-				cglog("cgprobe: floaty_folder styled platter %s (%p)\n", cname, sv);
 			}
 		}
 	}
@@ -452,12 +474,11 @@ static void probe_floaty_folder_layout(id self, SEL cmd)
 static void (*original_folder_icon_img_layout)(id, SEL);
 static void probe_folder_icon_img_layout(id self, SEL cmd)
 {
-	original_folder_icon_img_layout(self, cmd);
+	if (original_folder_icon_img_layout) original_folder_icon_img_layout(self, cmd);
 	if (strcmp(object_getClassName(self), "SBFolderIconImageView") != 0) return;
 
 	id layer = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("layer"));
 	if (layer) {
-		((void (*)(id, SEL, id))objc_msgSend)(layer, sel_registerName("setContents:"), nil);
 		((void (*)(id, SEL, BOOL))objc_msgSend)(layer, sel_registerName("setShouldRasterize:"), NO);
 	}
 
@@ -468,37 +489,102 @@ static void probe_folder_icon_img_layout(id self, SEL cmd)
 		((void (*)(id, SEL, BOOL))objc_msgSend)(scb, sel_registerName("setHidden:"), YES);
 	}
 
-	CGRect b = ((CGRect (*)(id, SEL))objc_msgSend)(self, sel_registerName("bounds"));
-	id subviews = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("subviews"));
-	unsigned long count = subviews ? ((unsigned long (*)(id, SEL))objc_msgSend)(subviews, sel_registerName("count")) : 0;
-	if (count > 0 && b.size.width > 30 && b.size.height > 30) {
-		id sv0 = ((id (*)(id, SEL, unsigned long))objc_msgSend)(subviews, sel_registerName("objectAtIndex:"), 0);
-		id l0 = ((id (*)(id, SEL))objc_msgSend)(sv0, sel_registerName("layer"));
-		if (l0) {
-			((void (*)(id, SEL, id))objc_msgSend)(l0, sel_registerName("setFilters:"), nil);
-			((void (*)(id, SEL, BOOL))objc_msgSend)(l0, sel_registerName("setShouldRasterize:"), NO);
-			id sublayers = ((id (*)(id, SEL))objc_msgSend)(l0, sel_registerName("sublayers"));
-			unsigned long slc = sublayers ? ((unsigned long (*)(id, SEL))objc_msgSend)(sublayers, sel_registerName("count")) : 0;
-			for (unsigned long i = 0; i < slc; i++) {
-				id sl = ((id (*)(id, SEL, unsigned long))objc_msgSend)(sublayers, sel_registerName("objectAtIndex:"), i);
-				((void (*)(id, SEL, BOOL))objc_msgSend)(sl, sel_registerName("setHidden:"), YES);
-			}
-			id sv0_subs = ((id (*)(id, SEL))objc_msgSend)(sv0, sel_registerName("subviews"));
-			unsigned long ssc = sv0_subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(sv0_subs, sel_registerName("count")) : 0;
-			for (unsigned long i = 0; i < ssc; i++) {
-				id ch = ((id (*)(id, SEL, unsigned long))objc_msgSend)(sv0_subs, sel_registerName("objectAtIndex:"), i);
-				((void (*)(id, SEL, BOOL))objc_msgSend)(ch, sel_registerName("setHidden:"), YES);
-			}
-			CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-			CGFloat comps[4] = {1.0f, 1.0f, 1.0f, 0.35f};
-			CGColorRef col = CGColorCreate(cs, comps);
-			((void (*)(id, SEL, CGColorRef))objc_msgSend)(l0, sel_registerName("setBackgroundColor:"), col);
-			((void (*)(id, SEL, CGFloat))objc_msgSend)(l0, sel_registerName("setCornerRadius:"), 14.0f);
-			((void (*)(id, SEL, BOOL))objc_msgSend)(l0, sel_registerName("setMasksToBounds:"), YES);
-			CGColorRelease(col);
-			CGColorSpaceRelease(cs);
-			((void (*)(id, SEL, CGFloat))objc_msgSend)(sv0, sel_registerName("setAlpha:"), 1.0f);
-			((void (*)(id, SEL, BOOL))objc_msgSend)(sv0, sel_registerName("setHidden:"), NO);
+	Ivar bg_iv = class_getInstanceVariable(object_getClass(self), "_backgroundView");
+	id bg = bg_iv ? object_getIvar(self, bg_iv) : nil;
+	if (bg) {
+		((void (*)(id, SEL, CGFloat))objc_msgSend)(bg, sel_registerName("setAlpha:"), 1.0f);
+		((void (*)(id, SEL, BOOL))objc_msgSend)(bg, sel_registerName("setHidden:"), NO);
+	}
+}
+
+static void (*original_search_backdrop_layout)(id, SEL);
+static void probe_search_backdrop_layout(id self, SEL cmd)
+{
+	if (original_search_backdrop_layout) original_search_backdrop_layout(self, cmd);
+	if (!strstr(object_getClassName(self), "SearchBackdropView")) return;
+
+	Class uic = objc_getClass("UIColor");
+	id clear = ((id (*)(id, SEL))objc_msgSend)((id)uic, sel_registerName("clearColor"));
+	((void (*)(id, SEL, id))objc_msgSend)(self, sel_registerName("setBackgroundColor:"), clear);
+	((void (*)(id, SEL, BOOL))objc_msgSend)(self, sel_registerName("setOpaque:"), NO);
+
+	id l = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("layer"));
+	if (l) {
+		((void (*)(id, SEL, CGColorRef))objc_msgSend)(l, sel_registerName("setBackgroundColor:"), nil);
+		((void (*)(id, SEL, BOOL))objc_msgSend)(l, sel_registerName("setOpaque:"), NO);
+		((void (*)(id, SEL, id))objc_msgSend)(l, sel_registerName("setFilters:"), nil);
+	}
+
+	Ivar mv_iv = class_getInstanceVariable(object_getClass(self), "_materialView");
+	id mv = mv_iv ? object_getIvar(self, mv_iv) : nil;
+	if (mv) {
+		((void (*)(id, SEL, BOOL))objc_msgSend)(mv, sel_registerName("setHidden:"), YES);
+		((void (*)(id, SEL, CGFloat))objc_msgSend)(mv, sel_registerName("setAlpha:"), 0.0f);
+	}
+}
+
+static void (*original_search_bar_layout)(id, SEL);
+static void probe_search_bar_layout(id self, SEL cmd)
+{
+	if (original_search_bar_layout) original_search_bar_layout(self, cmd);
+	if (strcmp(object_getClassName(self), "SBHSearchBar") != 0) return;
+
+	Ivar bg_iv = class_getInstanceVariable(object_getClass(self), "_backgroundView");
+	id bg = bg_iv ? object_getIvar(self, bg_iv) : nil;
+	if (bg) {
+		((void (*)(id, SEL, BOOL))objc_msgSend)(bg, sel_registerName("setHidden:"), YES);
+		((void (*)(id, SEL, CGFloat))objc_msgSend)(bg, sel_registerName("setAlpha:"), 0.0f);
+	}
+}
+
+static void (*original_library_search_layout)(id, SEL);
+static void probe_library_search_layout(id self, SEL cmd)
+{
+	if (original_library_search_layout) original_library_search_layout(self, cmd);
+	if (strcmp(object_getClassName(self), "SBHLibrarySearchController") != 0) return;
+
+	Class uic = objc_getClass("UIColor");
+	id clear = ((id (*)(id, SEL))objc_msgSend)((id)uic, sel_registerName("clearColor"));
+
+	Ivar sbg_iv = class_getInstanceVariable(object_getClass(self), "_searchBackgroundView");
+	id sbg = sbg_iv ? object_getIvar(self, sbg_iv) : nil;
+	if (sbg) {
+		((void (*)(id, SEL, id))objc_msgSend)(sbg, sel_registerName("setBackgroundColor:"), clear);
+		((void (*)(id, SEL, BOOL))objc_msgSend)(sbg, sel_registerName("setOpaque:"), NO);
+		id l = ((id (*)(id, SEL))objc_msgSend)(sbg, sel_registerName("layer"));
+		if (l) {
+			((void (*)(id, SEL, CGColorRef))objc_msgSend)(l, sel_registerName("setBackgroundColor:"), nil);
+			((void (*)(id, SEL, BOOL))objc_msgSend)(l, sel_registerName("setOpaque:"), NO);
+			((void (*)(id, SEL, id))objc_msgSend)(l, sel_registerName("setFilters:"), nil);
+		}
+	}
+
+	Ivar sdv_iv = class_getInstanceVariable(object_getClass(self), "_searchDimmingView");
+	id sdv = sdv_iv ? object_getIvar(self, sdv_iv) : nil;
+	if (sdv) {
+		((void (*)(id, SEL, BOOL))objc_msgSend)(sdv, sel_registerName("setHidden:"), YES);
+		((void (*)(id, SEL, CGFloat))objc_msgSend)(sdv, sel_registerName("setAlpha:"), 0.0f);
+	}
+
+	Ivar cvg_iv = class_getInstanceVariable(object_getClass(self), "_contentViewGradientMaskLayers");
+	id cvg = cvg_iv ? object_getIvar(self, cvg_iv) : nil;
+	if (cvg) {
+		unsigned long count = ((unsigned long (*)(id, SEL))objc_msgSend)(cvg, sel_registerName("count"));
+		for (unsigned long i = 0; i < count; i++) {
+			id lyr = ((id (*)(id, SEL, unsigned long))objc_msgSend)(cvg, sel_registerName("objectAtIndex:"), i);
+			((void (*)(id, SEL, BOOL))objc_msgSend)(lyr, sel_registerName("setHidden:"), YES);
+			((void (*)(id, SEL, float))objc_msgSend)(lyr, sel_registerName("setOpacity:"), 0.0f);
+		}
+	}
+
+	Ivar srg_iv = class_getInstanceVariable(object_getClass(self), "_searchResultsGradientMaskLayers");
+	id srg = srg_iv ? object_getIvar(self, srg_iv) : nil;
+	if (srg) {
+		unsigned long count = ((unsigned long (*)(id, SEL))objc_msgSend)(srg, sel_registerName("count"));
+		for (unsigned long i = 0; i < count; i++) {
+			id lyr = ((id (*)(id, SEL, unsigned long))objc_msgSend)(srg, sel_registerName("objectAtIndex:"), i);
+			((void (*)(id, SEL, BOOL))objc_msgSend)(lyr, sel_registerName("setHidden:"), YES);
+			((void (*)(id, SEL, float))objc_msgSend)(lyr, sel_registerName("setOpacity:"), 0.0f);
 		}
 	}
 }
@@ -520,9 +606,8 @@ static void probe_window_set_alpha(id self, SEL cmd, CGFloat alpha)
 {
 	const char *cname = object_getClassName(self);
 	if (strstr(cname, "Wallpaper")) {
-		cglog("cgprobe: %s %p setAlpha:%.2f\n", cname, self, alpha);
-		if (alpha < 0.05f) {
-			cglog("cgprobe: %s %p forcing alpha 1.0\n", cname, self);
+		if (alpha < 0.10f) {
+			cglog("cgprobe: %s %p setAlpha:%.2f -> forced 1.0\n", cname, self, alpha);
 			original_window_set_alpha(self, cmd, 1.0f);
 			return;
 		}
@@ -768,6 +853,36 @@ static void dump_all_windows_and_views(void)
 	cglog("cgprobe: ===== END WINDOW TREE =====\n");
 }
 
+static void (*original_pbui_set_wallpaper_hidden)(id, SEL, BOOL, long long, id);
+static void probe_pbui_set_wallpaper_hidden(id self, SEL cmd, BOOL hidden, long long variant, id reason)
+{
+	cglog("cgprobe: PBUI setWallpaperHidden:%d variant:%lld -> forced NO\n", hidden, (long long)variant);
+	original_pbui_set_wallpaper_hidden(self, cmd, NO, variant, reason);
+}
+
+static void (*original_pbui_set_wallpaper_hidden_internal)(id, SEL, BOOL, long long, id);
+static void probe_pbui_set_wallpaper_hidden_internal(id self, SEL cmd, BOOL hidden, long long variant, id reason)
+{
+	cglog("cgprobe: PBUI _setWallpaperHidden:%d variant:%lld -> forced NO\n", hidden, (long long)variant);
+	original_pbui_set_wallpaper_hidden_internal(self, cmd, NO, variant, reason);
+}
+
+static BOOL (*original_pbui_is_wallpaper_hidden)(id, SEL, long long);
+static BOOL probe_pbui_is_wallpaper_hidden(id self, SEL cmd, long long variant)
+{
+	return NO;
+}
+
+static void (*original_pbui_set_alpha_variant)(id, SEL, double, long long);
+static void probe_pbui_set_alpha_variant(id self, SEL cmd, double alpha, long long variant)
+{
+	if (alpha < 0.10) {
+		cglog("cgprobe: PBUI setAlpha:%.2f forWallpaperVariant:%lld -> forced 1.0\n", alpha, (long long)variant);
+		alpha = 1.0;
+	}
+	original_pbui_set_alpha_variant(self, cmd, alpha, variant);
+}
+
 static void (*original_pbui_layout)(id, SEL);
 static void probe_pbui_layout(id self, SEL cmd)
 {
@@ -993,6 +1108,8 @@ static void clear_blackout_in_view(id view)
 		}
 	}
 	if (strstr(cname, "LibraryFrozenSafeAreaInsetsView") || strstr(cname, "SBHLibraryViewController") ||
+	    strstr(cname, "SBHLibrarySearchController") || strstr(cname, "SBSearchBackdropView") ||
+	    strstr(cname, "SBFluidSwitcherViewController") || strstr(cname, "SBSwitcherWallpaperPageBackgroundView") ||
 	    strstr(cname, "Dimming") || strstr(cname, "Underlay") ||
 	    (strstr(cname, "Background") && !strstr(cname, "Pod") && !strstr(cname, "Folder"))) {
 		((void (*)(id, SEL, id))objc_msgSend)(view, sel_registerName("setBackgroundColor:"), clear);
@@ -1001,6 +1118,7 @@ static void clear_blackout_in_view(id view)
 		if (l) {
 			((void (*)(id, SEL, CGColorRef))objc_msgSend)(l, sel_registerName("setBackgroundColor:"), nil);
 			((void (*)(id, SEL, BOOL))objc_msgSend)(l, sel_registerName("setOpaque:"), NO);
+			((void (*)(id, SEL, id))objc_msgSend)(l, sel_registerName("setFilters:"), nil);
 		}
 		cglog("cgprobe: clear_blackout: cleared %s %p\n", cname, view);
 	}
@@ -1028,10 +1146,315 @@ static void clear_blackout_in_view(id view)
 	}
 }
 
+static void install_all_hooks(void)
+{
+	static bool sbf_done = false;
+	if (!sbf_done) {
+		Class image = objc_getClass("UIImage");
+		SEL selector = sel_registerName("sbf_imageFromContextWithSize:scale:type:pool:drawing:");
+		Method method = image ? class_getClassMethod(image, selector) : NULL;
+		if (method != NULL) {
+			original_sbf_image = (void *)method_setImplementation(method, (IMP)probe_sbf_image);
+			sbf_done = true;
+			cglog("cgprobe: installed sbf_image hook\n");
+		}
+	}
+
+	static bool swo_done = false;
+	if (!swo_done) {
+		Class wctrl = objc_getClass("SBWallpaperController");
+		Method swo = wctrl ? class_getInstanceMethod(wctrl, sel_registerName("setWallpaperObscured:")) : NULL;
+		if (swo != NULL) {
+			original_set_wallpaper_obscured = (void *)method_setImplementation(swo, (IMP)probe_set_wallpaper_obscured);
+			swo_done = true;
+			cglog("cgprobe: installed SBWallpaperController setWallpaperObscured hook\n");
+		}
+	}
+
+	static bool pbr_done = false;
+	if (!pbr_done) {
+		Class pbr = objc_getClass("PBUIPosterWallpaperRemoteViewController");
+		if (pbr) {
+			Method pbr_swo = class_getInstanceMethod(pbr, sel_registerName("setWallpaperObscured:"));
+			if (pbr_swo) {
+				original_pbui_remote_set_wallpaper_obscured = (void *)method_setImplementation(pbr_swo, (IMP)probe_pbui_remote_set_wallpaper_obscured);
+				cglog("cgprobe: installed PBUIPosterWallpaperRemoteViewController setWallpaperObscured hook\n");
+			}
+			Method pbr_lay = class_getInstanceMethod(pbr, sel_registerName("viewWillLayoutSubviews"));
+			if (pbr_lay) {
+				original_pbui_remote_layout = (void *)method_setImplementation(pbr_lay, (IMP)probe_pbui_remote_layout);
+				cglog("cgprobe: installed PBUIPosterWallpaperRemoteViewController layout hook\n");
+			}
+			pbr_done = true;
+		}
+	}
+
+	static bool pbp_done = false;
+	if (!pbp_done) {
+		Class pbp = objc_getClass("PBUIPosterWallpaperViewController");
+		if (pbp) {
+			Method pbp_swo = class_getInstanceMethod(pbp, sel_registerName("setWallpaperObscured:"));
+			if (pbp_swo) {
+				original_pbui_poster_set_wallpaper_obscured = (void *)method_setImplementation(pbp_swo, (IMP)probe_pbui_poster_set_wallpaper_obscured);
+				pbp_done = true;
+				cglog("cgprobe: installed PBUIPosterWallpaperViewController setWallpaperObscured hook\n");
+			}
+		}
+	}
+
+	static bool pbui_done = false;
+	if (!pbui_done) {
+		Class pbui = objc_getClass("PBUIWallpaperViewController");
+		if (pbui) {
+			Method pbuim = class_getInstanceMethod(pbui, sel_registerName("viewWillLayoutSubviews"));
+			if (pbuim) {
+				original_pbui_layout = (void *)method_setImplementation(pbuim, (IMP)probe_pbui_layout);
+			}
+			Method set_hid = class_getInstanceMethod(pbui, sel_registerName("setWallpaperHidden:variant:reason:"));
+			if (set_hid) {
+				original_pbui_set_wallpaper_hidden = (void *)method_setImplementation(set_hid, (IMP)probe_pbui_set_wallpaper_hidden);
+			}
+			Method set_hid_int = class_getInstanceMethod(pbui, sel_registerName("_setWallpaperHidden:variant:reason:"));
+			if (set_hid_int) {
+				original_pbui_set_wallpaper_hidden_internal = (void *)method_setImplementation(set_hid_int, (IMP)probe_pbui_set_wallpaper_hidden_internal);
+			}
+			Method is_hid = class_getInstanceMethod(pbui, sel_registerName("_isWallpaperHiddenForVariant:"));
+			if (is_hid) {
+				original_pbui_is_wallpaper_hidden = (void *)method_setImplementation(is_hid, (IMP)probe_pbui_is_wallpaper_hidden);
+			}
+			Method set_alp = class_getInstanceMethod(pbui, sel_registerName("setAlpha:forWallpaperVariant:"));
+			if (set_alp) {
+				original_pbui_set_alpha_variant = (void *)method_setImplementation(set_alp, (IMP)probe_pbui_set_alpha_variant);
+			}
+			pbui_done = true;
+			cglog("cgprobe: installed PBUIWallpaperViewController layout and visibility hooks\n");
+		}
+	}
+
+	static bool win_done = false;
+	if (!win_done) {
+		Class wcls = objc_getClass("UIWindow");
+		if (wcls) {
+			Method whid = class_getInstanceMethod(wcls, sel_registerName("setHidden:"));
+			if (whid) {
+				original_window_set_hidden = (void *)method_setImplementation(whid, (IMP)probe_window_set_hidden);
+			}
+			Method walp = class_getInstanceMethod(wcls, sel_registerName("setAlpha:"));
+			if (walp) {
+				original_window_set_alpha = (void *)method_setImplementation(walp, (IMP)probe_window_set_alpha);
+			}
+			win_done = true;
+			cglog("cgprobe: installed UIWindow visibility hooks\n");
+		}
+	}
+
+	static bool sbd_done = false;
+	if (!sbd_done) {
+		Class sbd = objc_getClass("SBSearchBackdropView");
+		if (sbd) {
+			Method sbdl = class_getInstanceMethod(sbd, sel_registerName("layoutSubviews"));
+			if (sbdl) {
+				original_search_backdrop_layout = (void *)method_setImplementation(sbdl, (IMP)probe_search_backdrop_layout);
+				sbd_done = true;
+				cglog("cgprobe: installed SBSearchBackdropView layout hook\n");
+			}
+		}
+	}
+
+	static bool sbar_done = false;
+	if (!sbar_done) {
+		Class sbar = objc_getClass("SBHSearchBar");
+		if (sbar) {
+			Method sbarl = class_getInstanceMethod(sbar, sel_registerName("layoutSubviews"));
+			if (sbarl) {
+				original_search_bar_layout = (void *)method_setImplementation(sbarl, (IMP)probe_search_bar_layout);
+				sbar_done = true;
+				cglog("cgprobe: installed SBHSearchBar layout hook\n");
+			}
+		}
+	}
+
+	static bool lsc_done = false;
+	if (!lsc_done) {
+		Class lsc = objc_getClass("SBHLibrarySearchController");
+		if (lsc) {
+			Method lscl = class_getInstanceMethod(lsc, sel_registerName("viewWillLayoutSubviews"));
+			if (lscl) {
+				original_library_search_layout = (void *)method_setImplementation(lscl, (IMP)probe_library_search_layout);
+				lsc_done = true;
+				cglog("cgprobe: installed SBHLibrarySearchController layout hook\n");
+			}
+		}
+	}
+
+	static bool lib_done = false;
+	if (!lib_done) {
+		Class lib = objc_getClass("SBHLibraryViewController");
+		if (lib) {
+			Method libm = class_getInstanceMethod(lib, sel_registerName("viewWillLayoutSubviews"));
+			if (libm) {
+				original_library_layout = (void *)method_setImplementation(libm, (IMP)probe_library_layout);
+				lib_done = true;
+				cglog("cgprobe: installed SBHLibraryViewController layout hook\n");
+			}
+		}
+	}
+
+	install_switcher_hooks();
+	install_feather_blur_hooks();
+
+	static bool snap_done = false;
+	if (!snap_done) {
+		Class snap = objc_getClass("SBSwitcherSnapshotImageView");
+		if (snap) {
+			Method snap_set = class_getInstanceMethod(snap, sel_registerName("setImage:"));
+			if (snap_set) {
+				original_switcher_snapshot_set_image = (void *)method_setImplementation(snap_set, (IMP)probe_switcher_snapshot_set_image);
+				cglog("cgprobe: installed SBSwitcherSnapshotImageView setImage hook\n");
+			}
+			Method snap_lay = class_getInstanceMethod(snap, sel_registerName("layoutSubviews"));
+			if (snap_lay) {
+				original_switcher_snapshot_layout = (void *)method_setImplementation(snap_lay, (IMP)probe_switcher_snapshot_layout);
+				cglog("cgprobe: installed SBSwitcherSnapshotImageView layoutSubviews hook\n");
+			}
+			snap_done = true;
+		}
+	}
+
+	static bool fimg_done = false;
+	if (!fimg_done) {
+		Class fimg = objc_getClass("SBFolderIconImageView");
+		if (fimg) {
+			Method fimgl = class_getInstanceMethod(fimg, sel_registerName("layoutSubviews"));
+			if (fimgl != NULL) {
+				original_folder_icon_img_layout = (void *)method_setImplementation(fimgl, (IMP)probe_folder_icon_img_layout);
+				cglog("cgprobe: installed SBFolderIconImageView layout hook\n");
+			}
+			Method fci = class_getInstanceMethod(fimg, sel_registerName("contentsImage"));
+			if (fci != NULL) {
+				original_folder_contents_image = (void *)method_setImplementation(fci, (IMP)probe_folder_contents_image);
+				cglog("cgprobe: installed SBFolderIconImageView contentsImage hook\n");
+			}
+			fimg_done = true;
+		}
+	}
+
+	static bool fbg_done = false;
+	if (!fbg_done) {
+		Class fbg = objc_getClass("SBFolderBackgroundView");
+		if (fbg) {
+			Method fbgl = class_getInstanceMethod(fbg, sel_registerName("layoutSubviews"));
+			if (fbgl != NULL) {
+				original_folder_bg_layout = (void *)method_setImplementation(fbgl, (IMP)probe_folder_bg_layout);
+				fbg_done = true;
+				cglog("cgprobe: installed SBFolderBackgroundView layout hook\n");
+			}
+		}
+	}
+
+	static bool floaty_done = false;
+	if (!floaty_done) {
+		Class floaty = objc_getClass("SBFloatyFolderView");
+		if (floaty) {
+			Method floatyl = class_getInstanceMethod(floaty, sel_registerName("layoutSubviews"));
+			if (floatyl != NULL) {
+				original_floaty_folder_layout = (void *)method_setImplementation(floatyl, (IMP)probe_floaty_folder_layout);
+				floaty_done = true;
+				cglog("cgprobe: installed SBFloatyFolderView layout hook\n");
+			}
+		}
+	}
+
+	static bool dock_done = false;
+	if (!dock_done) {
+		Class dock = objc_getClass("SBDockView");
+		if (dock) {
+			Method dockl = class_getInstanceMethod(dock, sel_registerName("layoutSubviews"));
+			if (dockl != NULL) {
+				original_dock_layout = (void *)method_setImplementation(dockl, (IMP)probe_dock_layout);
+				dock_done = true;
+				cglog("cgprobe: installed SBDockView layout hook\n");
+			}
+		}
+	}
+
+	static bool fiv_done = false;
+	if (!fiv_done) {
+		Class fiv = objc_getClass("SBFFocusIsolationView");
+		if (fiv) {
+			Method fivm = class_getInstanceMethod(fiv, sel_registerName("layoutSubviews"));
+			if (fivm) {
+				original_focus_isolation_layout = (void *)method_setImplementation(fivm, (IMP)probe_focus_isolation_layout);
+				fiv_done = true;
+				cglog("cgprobe: installed SBFFocusIsolationView layout hook\n");
+			}
+		}
+	}
+
+	static bool pill_done = false;
+	if (!pill_done) {
+		Class pill = objc_getClass("SBHSearchPillView");
+		if (pill) {
+			Method pillm = class_getInstanceMethod(pill, sel_registerName("layoutSubviews"));
+			if (pillm) {
+				original_search_pill_layout = (void *)method_setImplementation(pillm, (IMP)probe_search_pill_layout);
+				pill_done = true;
+				cglog("cgprobe: installed SBHSearchPillView layout hook\n");
+			}
+		}
+	}
+
+	static bool cal_done = false;
+	if (!cal_done) {
+		Class cal = objc_getClass("CALayer");
+		if (cal) {
+			Method srm = class_getInstanceMethod(cal, sel_registerName("setShouldRasterize:"));
+			if (srm != NULL) {
+				original_layer_set_should_rasterize = (void *)method_setImplementation(srm, (IMP)probe_layer_set_should_rasterize);
+				cal_done = true;
+				cglog("cgprobe: installed CALayer setShouldRasterize hook\n");
+			}
+		}
+	}
+
+	static bool mtl_done = false;
+	if (!mtl_done) {
+		Class mtl = objc_getClass("MTMaterialLayer");
+		if (mtl) {
+			Method mtl_set = class_getInstanceMethod(mtl, sel_registerName("setContentReplacedWithSnapshot:"));
+			if (mtl_set) {
+				original_material_set_content_replaced_with_snapshot = (void *)method_setImplementation(mtl_set, (IMP)probe_material_set_content_replaced_with_snapshot);
+				cglog("cgprobe: installed MTMaterialLayer setContentReplacedWithSnapshot hook\n");
+			}
+			Method mtl_is = class_getInstanceMethod(mtl, sel_registerName("isContentReplacedWithSnapshot"));
+			if (mtl_is) {
+				original_material_is_content_replaced_with_snapshot = (void *)method_setImplementation(mtl_is, (IMP)probe_material_is_content_replaced_with_snapshot);
+			}
+			mtl_done = true;
+		}
+	}
+
+	static bool mtv_done = false;
+	if (!mtv_done) {
+		Class mtv = objc_getClass("MTMaterialView");
+		if (mtv) {
+			Method mtv_set = class_getInstanceMethod(mtv, sel_registerName("setContentReplacedWithSnapshot:"));
+			if (mtv_set) {
+				original_material_view_set_content_replaced_with_snapshot = (void *)method_setImplementation(mtv_set, (IMP)probe_material_view_set_content_replaced_with_snapshot);
+				cglog("cgprobe: installed MTMaterialView setContentReplacedWithSnapshot hook\n");
+			}
+			Method mtv_is = class_getInstanceMethod(mtv, sel_registerName("isContentReplacedWithSnapshot"));
+			if (mtv_is) {
+				original_material_view_is_content_replaced_with_snapshot = (void *)method_setImplementation(mtv_is, (IMP)probe_material_view_is_content_replaced_with_snapshot);
+			}
+			mtv_done = true;
+		}
+	}
+}
+
 static void fix_all_blackouts(void)
 {
-	install_feather_blur_hooks();
-	install_switcher_hooks();
+	install_all_hooks();
 	Class wcls = objc_getClass("UIWindow");
 	if (!wcls) return;
 	id wins = ((id (*)(id, SEL, BOOL, BOOL))objc_msgSend)((id)wcls, sel_registerName("allWindowsIncludingInternalWindows:onlyVisibleWindows:"), YES, NO);
@@ -1049,6 +1472,17 @@ static void fix_all_blackouts(void)
 				id hhr = hhr_iv ? object_getIvar(rvc, hhr_iv) : nil;
 				if (hhr) {
 					((void (*)(id, SEL))objc_msgSend)(hhr, sel_registerName("removeAllObjects"));
+				}
+				id rvc_view = ((id (*)(id, SEL))objc_msgSend)(rvc, sel_registerName("view"));
+				if (rvc_view) {
+					((void (*)(id, SEL, BOOL))objc_msgSend)(rvc_view, sel_registerName("setHidden:"), NO);
+					((void (*)(id, SEL, CGFloat))objc_msgSend)(rvc_view, sel_registerName("setAlpha:"), 1.0f);
+				}
+				Ivar wcv_iv = class_getInstanceVariable(object_getClass(rvc), "_wallpaperContainerView");
+				id wcv = wcv_iv ? object_getIvar(rvc, wcv_iv) : nil;
+				if (wcv) {
+					((void (*)(id, SEL, BOOL))objc_msgSend)(wcv, sel_registerName("setHidden:"), NO);
+					((void (*)(id, SEL, CGFloat))objc_msgSend)(wcv, sel_registerName("setAlpha:"), 1.0f);
 				}
 			}
 			id subs = ((id (*)(id, SEL))objc_msgSend)(win, sel_registerName("subviews"));
@@ -1073,155 +1507,16 @@ __attribute__((constructor)) static void
 probe_loaded(void)
 {
 	cglog("cgprobe: loaded in pid %d\n", getpid());
-	Class image = objc_getClass("UIImage");
-	SEL selector = sel_registerName("sbf_imageFromContextWithSize:scale:type:pool:drawing:");
-	Method method = image ? class_getClassMethod(image, selector) : NULL;
-	if (method != NULL) {
-		original_sbf_image = (void *)method_setImplementation(method, (IMP)probe_sbf_image);
-	}
-	cglog("cgprobe: sbf_image hook %s\n", original_sbf_image ? "installed" : "unavailable");
-	Class wctrl = objc_getClass("SBWallpaperController");
-	Method swo = wctrl ? class_getInstanceMethod(wctrl, sel_registerName("setWallpaperObscured:")) : NULL;
-	if (swo != NULL) {
-		original_set_wallpaper_obscured = (void *)method_setImplementation(swo, (IMP)probe_set_wallpaper_obscured);
-	}
-	cglog("cgprobe: setWallpaperObscured hook %s\n", original_set_wallpaper_obscured ? "installed" : "unavailable");
+	install_all_hooks();
 
-	Class fimg = objc_getClass("SBFolderIconImageView");
-	Method fimgl = fimg ? class_getInstanceMethod(fimg, sel_registerName("layoutSubviews")) : NULL;
-	if (fimgl != NULL) {
-		original_folder_icon_img_layout = (void *)method_setImplementation(fimgl, (IMP)probe_folder_icon_img_layout);
-	}
-	cglog("cgprobe: folder_icon_img layoutSubviews hook %s\n", original_folder_icon_img_layout ? "installed" : "unavailable");
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 2LL * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+		install_all_hooks();
+	});
 
-	Method fci = fimg ? class_getInstanceMethod(fimg, sel_registerName("contentsImage")) : NULL;
-	if (fci != NULL) {
-		original_folder_contents_image = (void *)method_setImplementation(fci, (IMP)probe_folder_contents_image);
-	}
-	cglog("cgprobe: folder_contents_image hook %s\n", original_folder_contents_image ? "installed" : "unavailable");
-
-	Class dock = objc_getClass("SBDockView");
-	Method dockl = dock ? class_getInstanceMethod(dock, sel_registerName("layoutSubviews")) : NULL;
-	if (dockl != NULL) {
-		original_dock_layout = (void *)method_setImplementation(dockl, (IMP)probe_dock_layout);
-	}
-	cglog("cgprobe: dock layoutSubviews hook %s\n", original_dock_layout ? "installed" : "unavailable");
-
-	Class cal = objc_getClass("CALayer");
-	Method srm = cal ? class_getInstanceMethod(cal, sel_registerName("setShouldRasterize:")) : NULL;
-	if (srm != NULL) {
-		original_layer_set_should_rasterize = (void *)method_setImplementation(srm, (IMP)probe_layer_set_should_rasterize);
-	}
-	cglog("cgprobe: CALayer setShouldRasterize hook %s\n", original_layer_set_should_rasterize ? "installed" : "unavailable");
-
-	Class mtl = objc_getClass("MTMaterialLayer");
-	Method mtl_set = mtl ? class_getInstanceMethod(mtl, sel_registerName("setContentReplacedWithSnapshot:")) : NULL;
-	if (mtl_set) {
-		original_material_set_content_replaced_with_snapshot = (void *)method_setImplementation(mtl_set, (IMP)probe_material_set_content_replaced_with_snapshot);
-		cglog("cgprobe: installed MTMaterialLayer setContentReplacedWithSnapshot hook\n");
-	}
-	Method mtl_is = mtl ? class_getInstanceMethod(mtl, sel_registerName("isContentReplacedWithSnapshot")) : NULL;
-	if (mtl_is) {
-		original_material_is_content_replaced_with_snapshot = (void *)method_setImplementation(mtl_is, (IMP)probe_material_is_content_replaced_with_snapshot);
-		cglog("cgprobe: installed MTMaterialLayer isContentReplacedWithSnapshot hook\n");
-	}
-
-	Class mtv = objc_getClass("MTMaterialView");
-	Method mtv_set = mtv ? class_getInstanceMethod(mtv, sel_registerName("setContentReplacedWithSnapshot:")) : NULL;
-	if (mtv_set) {
-		original_material_view_set_content_replaced_with_snapshot = (void *)method_setImplementation(mtv_set, (IMP)probe_material_view_set_content_replaced_with_snapshot);
-		cglog("cgprobe: installed MTMaterialView setContentReplacedWithSnapshot hook\n");
-	}
-	Method mtv_is = mtv ? class_getInstanceMethod(mtv, sel_registerName("isContentReplacedWithSnapshot")) : NULL;
-	if (mtv_is) {
-		original_material_view_is_content_replaced_with_snapshot = (void *)method_setImplementation(mtv_is, (IMP)probe_material_view_is_content_replaced_with_snapshot);
-		cglog("cgprobe: installed MTMaterialView isContentReplacedWithSnapshot hook\n");
-	}
-
-	install_feather_blur_hooks();
-	install_switcher_hooks();
-
-	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 4LL * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-		cglog("cgprobe: 4s delayed inspection & hooking pass\n");
-		install_feather_blur_hooks();
-		install_switcher_hooks();
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5LL * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+		install_all_hooks();
 		scan_objc_classes();
 		dump_visible_windows();
-		dump_class_info(objc_getClass("SBFolderIconImageView"));
-		dump_class_info(objc_getClass("SBWallpaperController"));
-		dump_class_info(objc_getClass("PBUIWallpaperViewController"));
-		dump_class_info(objc_getClass("PBUIPosterWallpaperRemoteViewController"));
-		dump_class_info(objc_getClass("SBFloatyFolderView"));
-		dump_class_info(objc_getClass("SBFolderBackgroundView"));
-		dump_class_info(objc_getClass("SBFolderView"));
-		dump_class_info(objc_getClass("SBFluidSwitcherViewController"));
-		dump_class_info(objc_getClass("SBSwitcherViewController"));
-		dump_class_info(objc_getClass("SBHomeScreenBackdropView"));
-		dump_class_info(objc_getClass("SBFFeatherBlurView"));
-		dump_class_info(objc_getClass("SBHLibraryViewController"));
-		dump_class_info(objc_getClass("MTMaterialView"));
-		dump_class_info(objc_getClass("MTMaterialLayer"));
-
-		Class fiv = objc_getClass("SBFFocusIsolationView");
-		Method fivm = fiv ? class_getInstanceMethod(fiv, sel_registerName("layoutSubviews")) : NULL;
-		if (fivm) {
-			original_focus_isolation_layout = (void *)method_setImplementation(fivm, (IMP)probe_focus_isolation_layout);
-			cglog("cgprobe: installed SBFFocusIsolationView layout hook\n");
-		}
-
-		Class pill = objc_getClass("SBHSearchPillView");
-		Method pillm = pill ? class_getInstanceMethod(pill, sel_registerName("layoutSubviews")) : NULL;
-		if (pillm) {
-			original_search_pill_layout = (void *)method_setImplementation(pillm, (IMP)probe_search_pill_layout);
-			cglog("cgprobe: installed SBHSearchPillView layout hook\n");
-		}
-
-		Class snap = objc_getClass("SBSwitcherSnapshotImageView");
-		Method snap_set = snap ? class_getInstanceMethod(snap, sel_registerName("setImage:")) : NULL;
-		if (snap_set) {
-			original_switcher_snapshot_set_image = (void *)method_setImplementation(snap_set, (IMP)probe_switcher_snapshot_set_image);
-			cglog("cgprobe: installed SBSwitcherSnapshotImageView setImage hook\n");
-		}
-		Method snap_lay = snap ? class_getInstanceMethod(snap, sel_registerName("layoutSubviews")) : NULL;
-		if (snap_lay) {
-			original_switcher_snapshot_layout = (void *)method_setImplementation(snap_lay, (IMP)probe_switcher_snapshot_layout);
-			cglog("cgprobe: installed SBSwitcherSnapshotImageView layoutSubviews hook\n");
-		}
-
-		Class pbui = objc_getClass("PBUIWallpaperViewController");
-		Method pbuim = pbui ? class_getInstanceMethod(pbui, sel_registerName("viewWillLayoutSubviews")) : NULL;
-		if (pbuim) {
-			original_pbui_layout = (void *)method_setImplementation(pbuim, (IMP)probe_pbui_layout);
-			cglog("cgprobe: installed PBUIWallpaperViewController layout hook\n");
-		}
-
-		Class lib = objc_getClass("SBHLibraryViewController");
-		Method libm = lib ? class_getInstanceMethod(lib, sel_registerName("viewWillLayoutSubviews")) : NULL;
-		if (libm) {
-			original_library_layout = (void *)method_setImplementation(libm, (IMP)probe_library_layout);
-			cglog("cgprobe: installed SBHLibraryViewController layout hook\n");
-		}
-
-		Class pbr = objc_getClass("PBUIPosterWallpaperRemoteViewController");
-		Method pbr_swo = pbr ? class_getInstanceMethod(pbr, sel_registerName("setWallpaperObscured:")) : NULL;
-		if (pbr_swo) {
-			original_pbui_remote_set_wallpaper_obscured = (void *)method_setImplementation(pbr_swo, (IMP)probe_pbui_remote_set_wallpaper_obscured);
-			cglog("cgprobe: installed PBUIPosterWallpaperRemoteViewController setWallpaperObscured hook\n");
-		}
-		Method pbr_lay = pbr ? class_getInstanceMethod(pbr, sel_registerName("viewWillLayoutSubviews")) : NULL;
-		if (pbr_lay) {
-			original_pbui_remote_layout = (void *)method_setImplementation(pbr_lay, (IMP)probe_pbui_remote_layout);
-			cglog("cgprobe: installed PBUIPosterWallpaperRemoteViewController layout hook\n");
-		}
-
-		Class pbp = objc_getClass("PBUIPosterWallpaperViewController");
-		Method pbp_swo = pbp ? class_getInstanceMethod(pbp, sel_registerName("setWallpaperObscured:")) : NULL;
-		if (pbp_swo) {
-			original_pbui_poster_set_wallpaper_obscured = (void *)method_setImplementation(pbp_swo, (IMP)probe_pbui_poster_set_wallpaper_obscured);
-			cglog("cgprobe: installed PBUIPosterWallpaperViewController setWallpaperObscured hook\n");
-		}
-
-
 	});
 
 	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
@@ -1234,6 +1529,22 @@ probe_loaded(void)
 				unlink("/tmp/dump_now");
 				dispatch_async(dispatch_get_main_queue(), ^{
 					dump_all_windows_and_views();
+				});
+			}
+			if (access("/tmp/unlock", F_OK) == 0) {
+				unlink("/tmp/unlock");
+				dispatch_async(dispatch_get_main_queue(), ^{
+					Class sblm = objc_getClass("SBLockScreenManager");
+					if (sblm) {
+						id mgr = ((id (*)(id, SEL))objc_msgSend)(sblm, sel_registerName("sharedInstance"));
+						if (mgr) {
+							SEL sel = sel_registerName("unlockUIFromSource:withOptions:");
+							if (((BOOL (*)(id, SEL, SEL))objc_msgSend)(mgr, sel_registerName("respondsToSelector:"), sel)) {
+								((void (*)(id, SEL, int, id))objc_msgSend)(mgr, sel, 0, nil);
+								cglog("cgprobe: triggered unlockUIFromSource:withOptions:\n");
+							}
+						}
+					}
 				});
 			}
 		}
