@@ -1,5 +1,24 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River second pink recurrence; original dylib restored again (2026-10-28)
+
+IMPORTANT supersedes prior recovery/reapply notes: folder/Search-only335523a,
+with NO gray-alpha hook, also reproduced pink live Settings after respring.
+Original pre-turn dylib restored again; SpringBoard and Preferences terminated
+and restart attempted; user still reports pink. Cannot attribute the persistent
+failure to the glyph hook alone. Respring/scene/surface lifecycle is suspect.
+No new allocation failure established; wired39610pages (~619MiB) after rollback.
+Do NOT reapply any candidate to the final recovered session this turn.
+
+User provided fastboot again. Same image and expected river identity rechecked;
+second RAM recovery accepted, exact result in current chat style-fix/final-recovery-boot.txt.
+Device has original pre-turn cgprobe (93c5e98b...), GLES unmodified. Pending final
+SSH and live-app recovery check. Staged folder fix was user-confirmed visually
+but cannot be left deployed until the app regression/restart behavior is isolated.
+Search revision and SF-symbol fix remain unverified; performance candidate is
+compile/test-only. User had to perform two recovery fastboot handoffs in this
+turn; avoid more disruptive experiments.
+
 ## River recovery app rendering confirmed; folder-only reapply (2026-10-28)
 
 After RAM recovery at02:43:37UTC, SSH returned, early wired30990pages (~484MiB).
