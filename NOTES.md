@@ -1,5 +1,33 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River scrolling measurements and post-boot UI feedback (2026-10-28)
+
+User confirms live apps launch/render normally and Switcher previews work.
+Open folders and App Library background look correct. Closed folders are opaque
+white and flicker transparent in motion, sometimes settling transparent. Switcher
+background is black on this boot. User reports wallpaper appearance after3minutes.
+These remaining visual/startup issues are unresolved; no fix deployed this turn.
+
+Passive host-side timestamping of existing USB sweetgl/framebuffer profiler logs:
+Home Screen page swiping:9complete intervals/~91.6s,20.2renderer flushes/s,
+range9.8–33.6per ten-second window;23.4GPU presents/s,0GPU-blit drops.
+Settings scrolling:6complete intervals/~60.1s,26.1renderer flushes/s,
+range22.4–27.1;25.8GPU presents/s,0GPU-blit drops. Seven idle10.0flush/s
+Settings intervals excluded; includes the first mixed scrolling-onset interval.
+Counters are renderer/present throughput proxies, not unique panel frames, missed
+refreshes or percentile frame times. No new per-frame target instrumentation.
+Settings render-thread CPU29.2ms/flush: MesaGL21.1ms, CA7.2ms, surfaces0.9ms;
+glFinish wait1.5ms (not total GPU work). CPU/compositing is a major limit vs16.7ms.
+
+Wired memory39443->40998pages*16KiB (616.3->640.6MiB, +24.3MiB) across capture.
+No IOSurface NoMemory failures in retained post-test kernel snapshot. vmd and
+ReportCrash remain absent. This supports improvement, not complete leak proof.
+Safari explicitly skipped at user request: phone has no Internet connection.
+No network troubleshooting attempted. FPS watcher stopped; USB receiver continues.
+Current chat outputs/river-fps-report.md and river-fps-samples.json contain
+methodology, selected windows and results. Raw passive events/phase boundaries
+are in current chat work/river-investigation/fps/.
+
 ## River surface-release image RAM boot verified (2026-10-28)
 
 User explicitly requested boot. Expected device/product river verified;
