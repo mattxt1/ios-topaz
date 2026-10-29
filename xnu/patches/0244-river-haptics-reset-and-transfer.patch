@@ -21,12 +21,21 @@ Subject: [PATCH] RIVER: verify AW8691 reset and serialize bounded haptics
   if (!ri_qup_state(qup, 3)) return false;
   for (unsigned i = 0; i < no; i += 4) {
    uint32_t word = 0;
-@@ -149,12 +151,12 @@
+@@ -144,17 +146,20 @@
+  bool ok = false;
+  for (unsigned i = 0; i < 2000; i++) {
+   uint32_t op = ri_rd(qup, 0x18);
+-  if ((ri_rd(qup, 0x404) & 0x38000fcu) || (ri_rd(qup, 0x1c) & 0x3c)) break;
++  uint32_t status = ri_rd(qup, 0x404);
++  if ((status & 0x38000fcu) || (ri_rd(qup, 0x1c) & 0x3c)) break;
+   if (nr && (op & 0x20)) {
     uint32_t word = ri_rd(qup, 0x218);
     for (unsigned j = 0; j < 4 && ni < want; j++) in[ni++] = (uint8_t)(word >> (j*8));
    }
 -  if ((nr && ni == want && (op & 0x800)) || (!nr && (op & 0x500))) { ok = true; break; }
-+  if ((nr && ni == want && (op & 0x800)) || (!nr && (op & 0x400))) { ok = true; break; }
++  /* QUP2 STOP must reach bus idle before reset, including the final ACK. */
++  if (((nr && ni == want && (op & 0x800)) || (!nr && (op & 0x400))) &&
++      (qup != ri_qup2 || !(status & 0x100))) { ok = true; break; }
    delay(10);
   }
   if (!ok) {
@@ -36,7 +45,7 @@ Subject: [PATCH] RIVER: verify AW8691 reset and serialize bounded haptics
   }
   (void)ri_qup_state(qup, 0);
   if (ok && nr) for (unsigned i = 0; i < nr; i++) rx[i] = in[i+2];
-@@ -3028,6 +3030,9 @@
+@@ -3028,6 +3033,9 @@
    printf("RIVER INPUT: GPIO65 edge latch on, INTR_CFG %#x\n", ri_rd(ri_touch, 0x1008));
   }
   for (;;) {
@@ -46,7 +55,7 @@ Subject: [PATCH] RIVER: verify AW8691 reset and serialize bounded haptics
    uint8_t pon=0;
    bool pok=ri_pon(&pon);
    int now[3]={!!(pon&1),vol_ok ? !(ri_rd(ri_key,0x1004)&1) : 0,!!(pon&2)};
-@@ -3146,20 +3151,35 @@
+@@ -3146,20 +3154,35 @@
   for (unsigned i = 0; i < 512; i++) {
    if (((ri_rd(core, 0x800 + i*4) >> 8) & 0xfff) == ppid) return ri_map(0x02400000 + i*0x8000);
   }
@@ -86,7 +95,7 @@ Subject: [PATCH] RIVER: verify AW8691 reset and serialize bounded haptics
   return false;
  }
  
-@@ -3170,37 +3190,53 @@
+@@ -3170,37 +3193,53 @@
   (void)PE_parse_boot_argn("riverhaptics", &enabled, sizeof(enabled));
   if (!enabled) return;
  
@@ -168,7 +177,7 @@ Subject: [PATCH] RIVER: verify AW8691 reset and serialize bounded haptics
  
   ri_qup2 = ri_map(0x078b6000);
   if (!ri_qup2) {
-@@ -3224,29 +3260,33 @@
+@@ -3224,29 +3263,33 @@
   }
   printf("RIVER HAPTICS: AW8691 haptic driver IC detected (chip ID 0x%02x) on I2C QUP2 (0x5b)\n", chipid);
  
@@ -221,7 +230,7 @@ Subject: [PATCH] RIVER: verify AW8691 reset and serialize bounded haptics
  }
  
  void
-@@ -3254,20 +3294,25 @@
+@@ -3254,20 +3297,25 @@
  {
   if (!ri_haptics_ok || !ri_qup2) return;
   if (ms == 0) {
@@ -254,7 +263,7 @@ Subject: [PATCH] RIVER: verify AW8691 reset and serialize bounded haptics
  }
  
  static int
-@@ -3276,7 +3321,9 @@
+@@ -3276,7 +3324,9 @@
   int val = 0, error;
   error = sysctl_handle_int(oidp, &val, 0, req);
   if (error || !req->newptr) return error;

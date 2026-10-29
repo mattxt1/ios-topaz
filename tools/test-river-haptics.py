@@ -31,13 +31,17 @@ static vm_offset_t ri_qup2=2;
 static bool ri_haptics_ok;
 static uint64_t ri_vib_deadline;
 static int ri_vib_request=-1;
+static unsigned busy_reads, late_nack;
 static unsigned op, status, spmi_status, loops, command, status_writes, clk, reg, value;
 static unsigned aw_count, aw_fail;
 static bool readback=true;
 static uint32_t ri_rd(vm_offset_t base,unsigned off) {
  if(base==3) return spmi_status;
  if(off==0x18) return op;
- if(off==0x404) return status;
+ if(off==0x404) {
+  if (busy_reads) {busy_reads--;return 0x100;}
+  return status | (late_nack ? 8 : 0);
+ }
  if(off==0x218) return 0x00910187; /* tag, count, chip ID */
  return 0;
 }
@@ -69,6 +73,9 @@ int main(void) {
  assert(!ri_qup_xfer(2,0x5b,&tx,1,NULL,0)); assert(loops==2000);
  op=0x400; assert(ri_qup_xfer(2,0x5b,&tx,1,NULL,0)); assert(clk==0x35d);
  assert(ri_qup_xfer(1,1,&tx,1,NULL,0)); assert(clk==((62u<<16)|124u));
+ status=0x100;loops=0;assert(!ri_qup_xfer(2,0x5b,&tx,1,NULL,0));assert(loops==2000);
+ status=0;busy_reads=3;assert(ri_qup_xfer(2,0x5b,&tx,1,NULL,0));assert(busy_reads==0);
+ busy_reads=3;late_nack=1;assert(!ri_qup_xfer(2,0x5b,&tx,1,NULL,0));late_nack=0;
  status=8; assert(!ri_qup_xfer(2,0x5b,&tx,1,NULL,0));status=0;
  op=0x820; assert(ri_qup_xfer(2,0x5b,&tx,1,&rx,1));assert(rx==0x91);
  assert(!ri_qup_xfer(2,0x5b,&tx,17,NULL,0));

@@ -1,5 +1,14 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River haptics final STOP completion guard (2026-10-28)
+
+Follow-up to50834ad: QUP2 now waits for BUS_ACTIVE to clear after completion
+before resetting the engine, matching Linux qup_i2c_xfer_v2 bus-idle handling.
+The model additionally passes permanently active bus timeout, delayed idle
+and NACK arriving after output-done. Final isolated arm64 compile passes.
+Intermediate CI40798153448 built50834ad; final revision build recorded below.
+This guard is restricted to QUP2; no new device action.
+
 ## River haptics reset and transfer fix staged (2026-10-28)
 
 Patch0244 follows0243; hardware validation on r152 is still pending. No reboot,
