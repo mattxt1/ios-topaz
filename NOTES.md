@@ -1,5 +1,24 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River backlight fixed on RAM test; pink draw isolated (2026-10-29)
+
+Verified serial/product river and SHA256 ae1c78ee129e9747a25454d0edf5c5ff6c0eba90d25d0655c1dc31fa580754bc,
+RAM-booted riverbl=1 image successfully, no flashing. Running /tmp/getbootargs
+confirms option. User confirms backlight turns off on sleep and returns on wake;
+kernel logs confirm DCS level 0 and 0x999 both reported done. Also user reports
+haptic feedback on screen and volume presses; separate haptics work not changed.
+Image copied to current chat outputs/river-backlight-boot.img. This solves the
+observed backlight symptom on this image; command-failure and ordering risks in
+the driver remain untested, and any future boot image must retain riverbl=1.
+
+Earlier pink calculator-trace.txt lines 120-137 provide stronger evidence than
+the full-screen trace: a 128x64 region of display framebuffer 1 was black after
+program 3, then program 15 sampled texture 98 and the same region became uniform
+b34db3ff. This identifies a draw that introduces pink, but does not determine
+whether its input texture, shader, or GL state is wrong. Capture shader 15 and
+texture 98 provenance/content in a newly reproduced failure before patching.
+User asked to repeat multi-app switcher test on current boot; result pending.
+
 ## River pink reproduced after switcher navigation (2026-10-29)
 
 Following the clean RAM boot and baseline respring documented below, Settings
