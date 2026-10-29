@@ -291,9 +291,11 @@ static void probe_dock_layout(id self, SEL cmd)
 {
 	original_dock_layout(self, cmd);
 	if (strcmp(object_getClassName(self), "SBDockView") != 0) return;
+	CGRect df = ((CGRect (*)(id, SEL))objc_msgSend)(self, sel_registerName("frame"));
 	Ivar bg_iv = class_getInstanceVariable(object_getClass(self), "_backgroundView");
 	id bg = bg_iv ? object_getIvar(self, bg_iv) : nil;
 	if (bg) {
+		CGRect bgf = ((CGRect (*)(id, SEL))objc_msgSend)(bg, sel_registerName("frame"));
 		id bgl = ((id (*)(id, SEL))objc_msgSend)(bg, sel_registerName("layer"));
 		if (bgl) {
 			((void (*)(id, SEL, id))objc_msgSend)(bgl, sel_registerName("setFilters:"), nil);
@@ -319,7 +321,9 @@ static void probe_dock_layout(id self, SEL cmd)
 			CGColorSpaceRelease(cs);
 			((void (*)(id, SEL, CGFloat))objc_msgSend)(bg, sel_registerName("setAlpha:"), 1.0f);
 			((void (*)(id, SEL, BOOL))objc_msgSend)(bg, sel_registerName("setHidden:"), NO);
-
+			cglog("cgprobe: dock_layout styled bg %p (f=%.1f,%.1f %.1fx%.1f, dock=%.1f,%.1f %.1fx%.1f) layer %p\n",
+			    bg, bgf.origin.x, bgf.origin.y, bgf.size.width, bgf.size.height,
+			    df.origin.x, df.origin.y, df.size.width, df.size.height, bgl);
 		}
 	}
 }
@@ -371,85 +375,24 @@ static void probe_focus_isolation_layout(id self, SEL cmd)
 	}
 }
 
-/* Rasterize only these small fallback plates once per size. Rounded alpha is
- * baked into pixels: no material child, backdrop filter, or corner-mask pass. */
-static char plate_key;
-static CGImageRef create_plate_image(CGSize size, CGFloat radius, CGFloat alpha)
-{
-	const CGFloat scale = 3.0;
-	size_t w = (size_t)(size.width * scale + 0.5), h = (size_t)(size.height * scale + 0.5);
-	if (!w || !h || w > 2048 || h > 2048) return NULL;
-	CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-	CGContextRef ctx = CGBitmapContextCreate(NULL, w, h, 8, w * 4, cs,
-	    kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
-	CGColorSpaceRelease(cs);
-	if (!ctx) return NULL;
-	CGPathRef path = CGPathCreateWithRoundedRect(CGRectMake(0, 0, w, h), radius * scale, radius * scale, NULL);
-	CGContextAddPath(ctx, path);
-	CGContextSetRGBFillColor(ctx, 1, 1, 1, alpha);
-	CGContextFillPath(ctx);
-	CGPathRelease(path);
-	CGImageRef image = CGBitmapContextCreateImage(ctx);
-	CGContextRelease(ctx);
-	return image;
-}
-
-static void style_plate(id host, CGFloat radius, CGFloat alpha)
-{
-	CGRect bounds = ((CGRect (*)(id, SEL))objc_msgSend)(host, sel_registerName("bounds"));
-	if (bounds.size.width <= 0 || bounds.size.height <= 0) return;
-	id plate = objc_getAssociatedObject(host, &plate_key);
-	CGRect frame = plate ? ((CGRect (*)(id, SEL))objc_msgSend)(plate, sel_registerName("frame")) : CGRectZero;
-	if (plate && CGRectEqualToRect(frame, bounds)) return;
-	CGImageRef image = create_plate_image(bounds.size, radius, alpha);
-	if (!image) return;
-	if (!plate) {
-		plate = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("UIView"), sel_registerName("alloc"));
-		plate = ((id (*)(id, SEL, CGRect))objc_msgSend)(plate, sel_registerName("initWithFrame:"), bounds);
-		((void (*)(id, SEL, BOOL))objc_msgSend)(plate, sel_registerName("setUserInteractionEnabled:"), NO);
-		((void (*)(id, SEL, BOOL))objc_msgSend)(plate, sel_registerName("setOpaque:"), NO);
-		((void (*)(id, SEL, id, long))objc_msgSend)(host, sel_registerName("insertSubview:atIndex:"), plate, 0);
-		objc_setAssociatedObject(host, &plate_key, plate, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-		((void (*)(id, SEL))objc_msgSend)(plate, sel_registerName("release"));
-	} else {
-		((void (*)(id, SEL, CGRect))objc_msgSend)(plate, sel_registerName("setFrame:"), bounds);
-	}
-	id layer = ((id (*)(id, SEL))objc_msgSend)(plate, sel_registerName("layer"));
-	((void (*)(id, SEL, id))objc_msgSend)(layer, sel_registerName("setContents:"), (id)image);
-	((void (*)(id, SEL, CGFloat))objc_msgSend)(layer, sel_registerName("setContentsScale:"), 3.0);
-	CGImageRelease(image);
-}
-
-static void hide_material_children(id host)
-{
-	id subs = ((id (*)(id, SEL))objc_msgSend)(host, sel_registerName("subviews"));
-	unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count"));
-	for (unsigned long i = 0; i < n; i++) {
-		id child = ((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i);
-		const char *name = object_getClassName(child);
-		if (strstr(name, "Material") || strstr(name, "Backdrop") || strstr(name, "Background")) {
-			if (!((BOOL (*)(id, SEL))objc_msgSend)(child, sel_registerName("isHidden")))
-				((void (*)(id, SEL, BOOL))objc_msgSend)(child, sel_registerName("setHidden:"), YES);
-		}
-	}
-}
-
 static void (*original_search_pill_layout)(id, SEL);
 static void probe_search_pill_layout(id self, SEL cmd)
 {
 	original_search_pill_layout(self, cmd);
 	if (strcmp(object_getClassName(self), "SBHSearchPillView") != 0) return;
 	id layer = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("layer"));
-	if (((CGColorRef (*)(id, SEL))objc_msgSend)(layer, sel_registerName("backgroundColor")))
-		((void (*)(id, SEL, CGColorRef))objc_msgSend)(layer, sel_registerName("setBackgroundColor:"), NULL);
-	((void (*)(id, SEL, BOOL))objc_msgSend)(self, sel_registerName("setOpaque:"), NO);
-	((void (*)(id, SEL, BOOL))objc_msgSend)(layer, sel_registerName("setOpaque:"), NO);
-	Ivar bgiv = class_getInstanceVariable(object_getClass(self), "_backgroundView");
-	id bg = bgiv ? object_getIvar(self, bgiv) : nil;
-	if (bg) ((void (*)(id, SEL, BOOL))objc_msgSend)(bg, sel_registerName("setHidden:"), YES);
-	hide_material_children(self);
-	CGRect b = ((CGRect (*)(id, SEL))objc_msgSend)(self, sel_registerName("bounds"));
-	style_plate(self, b.size.height / 2, 0.25);
+	if (layer) {
+		((void (*)(id, SEL, id))objc_msgSend)(layer, sel_registerName("setFilters:"), nil);
+		CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+		CGFloat comps[4] = {1.0f, 1.0f, 1.0f, 0.25f};
+		CGColorRef col = CGColorCreate(cs, comps);
+		((void (*)(id, SEL, CGColorRef))objc_msgSend)(layer, sel_registerName("setBackgroundColor:"), col);
+		((void (*)(id, SEL, CGFloat))objc_msgSend)(layer, sel_registerName("setCornerRadius:"), 14.0f);
+		((void (*)(id, SEL, BOOL))objc_msgSend)(layer, sel_registerName("setMasksToBounds:"), YES);
+		CGColorRelease(col);
+		CGColorSpaceRelease(cs);
+		cglog("cgprobe: search_pill layout styled layer %p\n", layer);
+	}
 }
 
 static void (*original_folder_bg_layout)(id, SEL);
@@ -559,15 +502,38 @@ static void probe_folder_icon_img_layout(id self, SEL cmd)
 {
 	if (original_folder_icon_img_layout) original_folder_icon_img_layout(self, cmd);
 	if (strcmp(object_getClassName(self), "SBFolderIconImageView") != 0) return;
-	/* Preserve the native preview grid; replace only the material/solid plate. */
-	const char *names[] = {"_backgroundView", "_solidColorBackgroundView"};
-	for (unsigned i = 0; i < 2; i++) {
-		Ivar iv = class_getInstanceVariable(object_getClass(self), names[i]);
-		id bg = iv ? object_getIvar(self, iv) : nil;
-		if (bg && !((BOOL (*)(id, SEL))objc_msgSend)(bg, sel_registerName("isHidden")))
-			((void (*)(id, SEL, BOOL))objc_msgSend)(bg, sel_registerName("setHidden:"), YES);
+
+	id layer = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("layer"));
+	if (layer) {
+		((void (*)(id, SEL, BOOL))objc_msgSend)(layer, sel_registerName("setShouldRasterize:"), NO);
 	}
-	style_plate(self, 14, 0.35);
+
+	Ivar scb_iv = class_getInstanceVariable(object_getClass(self), "_solidColorBackgroundView");
+	id scb = scb_iv ? object_getIvar(self, scb_iv) : nil;
+	if (scb) {
+		((void (*)(id, SEL, CGFloat))objc_msgSend)(scb, sel_registerName("setAlpha:"), 0.0f);
+		((void (*)(id, SEL, BOOL))objc_msgSend)(scb, sel_registerName("setHidden:"), YES);
+	}
+
+	Ivar bg_iv = class_getInstanceVariable(object_getClass(self), "_backgroundView");
+	id bg = bg_iv ? object_getIvar(self, bg_iv) : nil;
+	if (bg) {
+		((void (*)(id, SEL, CGFloat))objc_msgSend)(bg, sel_registerName("setAlpha:"), 1.0f);
+		((void (*)(id, SEL, BOOL))objc_msgSend)(bg, sel_registerName("setHidden:"), NO);
+		id bgl = ((id (*)(id, SEL))objc_msgSend)(bg, sel_registerName("layer"));
+		if (bgl) {
+			((void (*)(id, SEL, id))objc_msgSend)(bgl, sel_registerName("setFilters:"), nil);
+			((void (*)(id, SEL, BOOL))objc_msgSend)(bgl, sel_registerName("setShouldRasterize:"), NO);
+			CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+			CGFloat comps[4] = {1.0f, 1.0f, 1.0f, 0.35f};
+			CGColorRef col = CGColorCreate(cs, comps);
+			((void (*)(id, SEL, CGColorRef))objc_msgSend)(bgl, sel_registerName("setBackgroundColor:"), col);
+			((void (*)(id, SEL, CGFloat))objc_msgSend)(bgl, sel_registerName("setCornerRadius:"), 14.0f);
+			((void (*)(id, SEL, BOOL))objc_msgSend)(bgl, sel_registerName("setMasksToBounds:"), YES);
+			CGColorRelease(col);
+			CGColorSpaceRelease(cs);
+		}
+	}
 }
 
 static void (*original_search_backdrop_layout)(id, SEL);
@@ -890,50 +856,6 @@ static void dump_view_tree(id view, int depth)
 		id sv = ((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i);
 		dump_view_tree(sv, depth + 1);
 	}
-}
-
-/* One-shot targeted image/material diagnostics, never part of layout. */
-static void style_diagnostic_tree(id view, int depth)
-{
-	if (!view || depth > 32) return;
-	const char *name = object_getClassName(view);
-	BOOL target = strstr(name, "FolderIconImage") || strstr(name, "SearchPill") ||
-	    strstr(name, "ImageView") || strstr(name, "Trash") || strstr(name, "Delete");
-	if (target) {
-		id layer = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("layer"));
-		CGColorRef bg = ((CGColorRef (*)(id, SEL))objc_msgSend)(layer, sel_registerName("backgroundColor"));
-		id contents = ((id (*)(id, SEL))objc_msgSend)(layer, sel_registerName("contents"));
-		CGRect b = ((CGRect (*)(id, SEL))objc_msgSend)(view, sel_registerName("bounds"));
-		cglog("STYLE %s %p %.0fx%.0f hidden=%d alpha=%.2f opaque=%d bgAlpha=%.3f contents=%p\n", name, view,
-		    b.size.width, b.size.height, ((BOOL (*)(id, SEL))objc_msgSend)(view, sel_registerName("isHidden")),
-		    ((CGFloat (*)(id, SEL))objc_msgSend)(view, sel_registerName("alpha")),
-		    ((BOOL (*)(id, SEL))objc_msgSend)(layer, sel_registerName("isOpaque")), bg ? CGColorGetAlpha(bg) : -1.0, contents);
-		SEL imageSel = sel_registerName("image");
-		if (((BOOL (*)(id, SEL, SEL))objc_msgSend)(view, sel_registerName("respondsToSelector:"), imageSel)) {
-			id img = ((id (*)(id, SEL))objc_msgSend)(view, imageSel);
-			CGImageRef cg = img ? ((CGImageRef (*)(id, SEL))objc_msgSend)(img, sel_registerName("CGImage")) : NULL;
-			if (cg) cglog("STYLE image %s view=%p cg=%p %zux%zu bpp=%zu bpc=%zu alpha=%u mask=%d\n", object_getClassName(img), view, cg,
-			    CGImageGetWidth(cg), CGImageGetHeight(cg), CGImageGetBitsPerPixel(cg), CGImageGetBitsPerComponent(cg), CGImageGetAlphaInfo(cg), CGImageIsMask(cg));
-		}
-		if (strstr(name, "FolderIconImage") || strstr(name, "SearchPill")) {
-			dump_class_info(object_getClass(view));
-			dump_view_tree(view, 1);
-		}
-	}
-	id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
-	unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count"));
-	for (unsigned long i = 0; i < n; i++)
-		style_diagnostic_tree(((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i), depth + 1);
-}
-
-static void style_diagnostic(void)
-{
-	id wins = ((id (*)(id, SEL, BOOL, BOOL))objc_msgSend)((id)objc_getClass("UIWindow"),
-	    sel_registerName("allWindowsIncludingInternalWindows:onlyVisibleWindows:"), YES, YES);
-	unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(wins, sel_registerName("count"));
-	cglog("STYLE begin\n");
-	for (unsigned long i = 0; i < n; i++) style_diagnostic_tree(((id (*)(id, SEL, unsigned long))objc_msgSend)(wins, sel_registerName("objectAtIndex:"), i), 0);
-	cglog("STYLE end\n");
 }
 
 static void dump_all_windows_and_views(void)
@@ -1617,10 +1539,6 @@ probe_loaded(void)
 	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
 		while (1) {
 			sleep(2);
-			if (access("/tmp/style_dump", F_OK) == 0) {
-				unlink("/tmp/style_dump");
-				dispatch_async(dispatch_get_main_queue(), ^{ style_diagnostic(); });
-			}
 			if (access("/tmp/dump_now", F_OK) == 0) {
 				unlink("/tmp/dump_now");
 				dispatch_async(dispatch_get_main_queue(), ^{

@@ -1,5 +1,23 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River final state stable; default source restored (2026-10-28)
+
+User CONFIRMED Settings rendering normally after final RAM recovery02:52:20UTC.
+Leave this running session unchanged. Exact pre-turn cgprobe binary reverified
+SHA25693c5e98b1c0f14daf4f2fda9c48b568ed19f59664ed5db5126ff13779b35d374.
+GLES library never modified. Default phone-tools/cgprobe.c now also restored to
+pre-turn source, so routine build does not silently reintroduce the candidates.
+Folder/Search changes and one-shot diagnostics moved to explicitly withheld
+phone-tools/candidates/rounded-plates.patch with risk/applicability README.
+Folder visual improvement was confirmed but candidate not safe overall; revised
+Search, missing symbols and any FPS gains remain unresolved/unverified.
+Performance compile/test-only patch remains in mesa/candidates.
+Final report: current chat outputs/folder-symbol-performance-investigation.md.
+Full handoff updated. Do not describe the earlier glyph hook as proven sole
+cause: respringing with folder-only candidate reproduced the same persistent
+pink state. Next isolate rendering/scene/surface lifetime across resprings and
+use an isolated gray-alpha format reproducer, rather than more global hooks.
+
 ## River second pink recurrence; original dylib restored again (2026-10-28)
 
 IMPORTANT supersedes prior recovery/reapply notes: folder/Search-only335523a,
