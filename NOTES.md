@@ -1,5 +1,43 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River pink compositor investigation (2026-10-29, ongoing)
+
+Unchanged-respring failure persists in freshly restarted Preferences and after
+backboardd+SpringBoard restart (current observed PIDs413/415, Preferences435).
+Home renders normally (explicit surface672 screenshot), apps produce solid
+0xffb34db3. User reports touch still works and previews initially good until
+scrolling toward them, then pink; also backlight no longer turns off on sleep.
+No root cause established. App pixel generation works: live compositor trace
+shows normal grayscale Settings controls in intermediate FBO2/texture3, and
+white-center BGRA app surface2329 successfully imported. Final display surfaces
+672/674 uniformly pink. Thus prioritize final compositor path/shader/texture
+state, not app startup. Three standalone sweetgl_selftest contexts PASSED red
+triangle/blue background readback during pink state. Existing on-device GLES
+SHA2563605822ddd0c68bb5f357d6460cd2f1f3c4350b3ee07f4a18034ff8d8208a6dd
+matches local Mesa build exactly. No library changes deployed this turn.
+
+Existing renderer debug variables enabled temporarily via task_for_pid helper
+/tmp/render-debug. Dylib base in backboardd413=0x1015ac000; offsets GLERR0x126d9f0,
+trace_left0x123dae0, win_left0x123dadc. NEED RESET ALL THREE TO ZERO when SSH
+returns (SSH timed out during investigation). Last set GLERR1, trace4000,
+window500; traces add overhead. Before writing recheck PID/base/hash. Helper
+accepts PID OFFSET VALUE, prints old and writes4 bytes. Attempted reset timedout.
+No changes to persistent binaries/config. Scratch helper source in chat
+work/respring/render-debug.c; GPU selftest source/results there too.
+
+Repeated compositor copy errors0x506 observed before tracing, but current valid
+imports and draws also occur; no causal attribution yet. GLERR captured0x502
+on glLabelObjectEXT, not proven relevant. Final trace shows program3 fullscreen
+black vertex colors yet resulting destination pink; inspect compiled shaders,
+context-global caches and framebuffer destination. Avoid assuming kernel GPU
+hang: basic GPU tests pass. GPU owner_release ignores fence timeout before
+freeing buffers (source issue, NOT established cause). Backlight path in
+SweetFramebuffer.cpp kSweetFBRequestPowerChange sends River DCSlevel0 only if
+fPowerOff changes; inspect live off/on log + DCS result when reconnected.
+Evidence chat work/respring/*.txt/.png (DO NOT commit Apple binary/dumps).
+Current SSH unreachable and no fastboot device, asked user reconnect/unlock.
+
+
 ## River unchanged-respring control reproduces pink (2026-10-28)
 
 At user's explicit request, resprung ONLY SpringBoard on the clean RAM-recovered
