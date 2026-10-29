@@ -1,5 +1,40 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River pink rendering fixed in live session (2026-10-29)
+
+Single-cache isolation was negative: user reported apps still pink and a newly
+created PaperBoard cache path was mapped in backboardd with the same pink ASTC
+block. The temporarily moved cache file was restored to its original path after
+the test; no cache deletion remains.
+
+Root cause identified in baseline cgprobe's UIWindow setAlpha: swizzle.
+On the phone, Objective-C runtime fixture confirmed UIWindow inherits setAlpha:
+from UIView (same Method; UIWindow does not declare it), whereas setHidden: is
+declared by UIWindow. method_setImplementation on the inherited Method therefore
+changed UIView globally. The hook forces alpha<0.1 to 1 for any class name
+containing Wallpaper; actual baseline SpringBoard log shows SBWallpaperEffectView
+being forced from 0/0.03 to 1. The result displayed PaperBoard's solid-pink
+tinted wallpaper snapshot over app content. The image was already pink in CPU
+ASTC upload, as documented below; not an ASTC decoding failure.
+
+Fix phone-tools/cgprobe.c: install setAlpha: as a UIWindow-local override with
+class_addMethod and preserve the old implementation, falling back to replacing
+the UIWindow Method only when it already has its own method. Standalone on-phone
+fixture passed: UIView implementation unchanged; synthetic wallpaper effect
+view alpha remains0 and wallpaper window alpha forced1. Build passed (one
+pre-existing incompatible-pointer warning at unlock code). User explicitly
+waived prior request to keep original cgprobe and approved test deployment.
+Deployed and readback verified SHA256
+eb0fe34da2d91dc64f6282d7d93192de1dd4396467c8271f65495d6d1a30a3f7,
+SpringBoard877->1030; original cgprobe backup remains verified at
+/usr/local/lib/libcgprobe.pink-original.dylib SHA256
+93c5e98b1c0f14daf4f2fda9c48b568ed19f59664ed5db5126ff13779b35d374.
+User reports apps and previews normal, no pink. New SpringBoard log shows hook
+installation and no forced SBWallpaperEffectView alpha entries in initial window.
+Cold boot persistence and prolonged regression testing still unverified.
+Asked user to retest switcher and sleep/wake after restoring the cache; response
+pending. Running RAM image retains previously verified riverbl=1 backlight fix.
+
 ## River single PaperBoard cache isolation test underway (2026-10-29)
 
 User approved test. Atomically renamed the exact pink PaperBoard cpbitmap named

@@ -1264,7 +1264,14 @@ static void install_all_hooks(void)
 			}
 			Method walp = class_getInstanceMethod(wcls, sel_registerName("setAlpha:"));
 			if (walp) {
-				original_window_set_alpha = (void *)method_setImplementation(walp, (IMP)probe_window_set_alpha);
+				/* setAlpha: is inherited from UIView on iOS 16. Installing on
+				 * the returned Method mutates UIView globally, forcing every
+				 * Wallpaper-named effect view opaque. Override UIWindow only. */
+				original_window_set_alpha = (void *)method_getImplementation(walp);
+				if (!class_addMethod(wcls, sel_registerName("setAlpha:"),
+				    (IMP)probe_window_set_alpha, method_getTypeEncoding(walp))) {
+					original_window_set_alpha = (void *)method_setImplementation(walp, (IMP)probe_window_set_alpha);
+				}
 			}
 			win_done = true;
 			cglog("cgprobe: installed UIWindow visibility hooks\n");
