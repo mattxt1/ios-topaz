@@ -1,5 +1,56 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River pink ASTC source is PaperBoard wallpaper blur cache (2026-10-29)
+
+With user-coordinated restarts, v7 captured compressed ASTC4x4 texture: all
+96884 blocks encoded solid b34dB3, void-extent block
+fcfdffffffffffffb3b34d4db3b3ffff; CPU Mesa decoder confirms last 8 bytes are
+16-bit RGBA values. This is not the ff00ff ASTC decode error color. v8 then
+logged source bytes before glCompressedTexImage2D: same pink blocks, CPU memory
+pointer 0x10e878000, 846x1827, 1550144 bytes; 96879/96884 identical. Symbolicated
+QuartzCore call stack: CA::OGL::GLESContext::update_compressed_image,
+bind_image_impl, CA::OGL::Context::bind_image,
+CA::OGL::render_contents_background. No evidence Mesa changed the upload.
+
+Read-only proc_pidinfo(PID716, region path, 0x10e878000) identified that exact
+mapped address as the PaperBoardUI cache file:
+/private/var/containers/Data/System/09E383D3-1016-41EC-A46B-5A6A819908B4/Library/Caches/com.apple.PaperBoardUI/PosterViewController-0x10100fa00-1F064B16-FE99-4C7E-B11A-889209ADDCDF/MappedImageCache/Variant-home/CachedSnapshot-MediumGrayTintedBlur_tinted_2020:0:0:0.0:10:0.5:0.6.cpbitmap
+Live 16-byte pointer read reverified same pink block. Read-only file capture:
+current chat work/pink-probe/paperboard-pink.cpbitmap, size1566614; payload at
+offset16384 has 96879 identical pink blocks plus five exceptions, exactly
+matching v8 CPU upload. User changed wallpaper previously; apps remained pink,
+so stale/incorrect wallpaper-derived layer hypothesis needs a controlled test.
+67 SplashBoard cache KTX files scanned read-only: no 846x1827 match.
+
+User asked whether ready to move this exact cache file aside reversibly and
+restart wallpaper/display processes; answer pending. Do not perform restart or
+rename until coordinated. Current v8 probe SHA256
+860aac263d25e8b34642515f00f1eea3be5942b110f9ea637064ae4c7bb88ddb active in
+backboardd716/SpringBoard715, PosterBoard719. Original verified sweetgl backup
+at /usr/local/lib/sweetgl.pink-original.dylib. Cache has not been modified yet.
+
+## River pink texture is ASTC 4x4 (2026-10-29)
+
+With user-coordinated restart deployed verified v6 probe SHA256
+b03baf76144c3332e3d987a0ac6c2c338ba9b1060d9644bacff66dcd90ba5d5d.
+User reproduced pink. Capture work/river-v5-trace.log PINKPROBE lines 1993-2034:
+actual/cached unit0 texture45; its context-tagged history idx229 is kind8
+(glCompressedTexImage2D), 846x1827, internal format 0x93b0
+(GL_COMPRESSED_RGBA_ASTC_4x4_KHR). glGetTexLevelParameter confirms internal
+format 0x93b0; Mesa uncompressed readback is uniformly b34db3ff. Final fragment
+shader copies the sampled RGB. This identifies the compressed upload path, not
+yet whether the input compressed bytes are already pink or decoding is wrong.
+
+Built scratch v7 probe to dump _mesa_GetCompressedTexImage to /tmp/pink-astc.raw
+at the matching draw, with bounded size, first-block and repetition logging.
+Transfer to /usr/local/lib/sweetgl.pink-probe-v7.dylib in progress; local SHA256
+0a80a11c170f9875b737460bf8919d5ca3b90045c1cda16bfbe64753921a7e52.
+User asked to coordinate next display restart; answer pending. v6 is currently
+running and its one-shot probe has fired; verified original backup remains at
+/usr/local/lib/sweetgl.pink-original.dylib. No fix deployed, no uncoordinated
+restart. Mesa ASTC decoder's explicit error color is ff00ff, which differs from
+observed b34db3; this observation alone does not rule out decode issues.
+
 ## River v5 texture-source investigation (2026-10-29)
 
 User authorized v5 display restart; deployed SHA256
