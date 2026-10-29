@@ -1,5 +1,27 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River pink-app surface fix CI passed and RAM image ready (2026-10-28)
+
+Source0f90a68 includes patch0245 (release zombie view's retired pixel surface,
+retain independent state mapping). Initial CI40798850172 failed without a runner;
+GitHub annotated hosted macOS capacity constraints. User requested retry.
+Explicit board=river retry40802933806 PASSED, including full build/link.
+Kernel SHA2566c35e97e6e974ffb4115906a4dbd189d4cd6987ea5bf38391d8c7bbda218a609
+matches the downloaded artifact SHA256SUMS; River marker and arm64 subtype checked.
+
+Packaged current chat outputs/river-surface-release-boot.img,25141248bytes,
+SHA2568800d2de78cfde979e086d5e9ef112d8d2a60efaf8336f153ec9f87c9d5f2f28.
+Preserves exact r152 shim, Android DTB, Apple tree settings,597-byte command line
+and four private firmware blobs; new blob placements are regenerated for the new
+kernel. Payload round-trip and independent Android header digest/readback pass.
+Manifest, checksum file and RAM-only test instructions are beside the image.
+This kernel also contains the separately staged0244 haptics fixes.
+No phone reboot, deployment or partition flash was performed in this retry turn.
+Pink-app cure, sustained memory behavior, haptics and cold-boot wallpaper timing
+remain hardware-unverified. Next: coordinated physical fastboot handoff, identity
+check, fastboot boot only, then live-app/folder/Library/Switcher stress and memory
+samples. Preserve the running phone until the user arranges that handoff.
+
 ## River haptics CI pass and local RAM image ready (2026-10-28)
 
 Haptics source commits50834ad +419d7bb pushed to river. Explicit River/macOS15
