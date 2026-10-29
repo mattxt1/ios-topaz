@@ -1,5 +1,27 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River continuation: offline inspection (2026-10-29)
+
+USB en6 remains inactive and SSH to 192.168.7.2 times out. No device or
+binary changes; temporary backboardd tracing cleanup remains pending exactly as
+below. Asked user to reconnect/unlock without rebooting. Rendering and backlight
+are unresolved.
+
+Trace clarification: the full-screen program 3 black draw is followed by a
+full-screen program 15 draw sampling texture 98, before the observed pink output.
+The full-size trace lines omit pixel readbacks, so they do not establish which
+draw introduces pink; capture texture 98 and the destination at each stage when
+live access returns.
+
+Backlight source review (buildtree, corroborated by repo patches 0104/0107/0147):
+setPanelLevel logs DCS failure but returns no status; both power change and
+blWork set fBlSent before the command completes. An off request is sent only on
+an fPowerOff transition, so a failed send can be treated as complete and a
+repeated off request will not retry. Also blWork snapshots fPowerOff before
+sending, leaving a potential ordering race with power change. These are source
+risks, not proof of the user's symptom. Capture SWEET FB display and panel
+level/NO DONE logs around physical sleep and wake before choosing a fix.
+
 ## Final chat handoff prepared (2026-10-29)
 
 User requested handoff to a new Codex chat. Detailed current-state handoff:
