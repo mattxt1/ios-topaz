@@ -1,0 +1,27 @@
+--- a/src/gallium/drivers/freedreno/sweetgl/eagl.c
++++ b/src/gallium/drivers/freedreno/sweetgl/eagl.c
+@@ -1327,14 +1327,16 @@
+ sgl_Clear(void *rctx, GLbitfield mask)
+ {
+ 	SGL_CUR(rctx);
+-	GLint fb = 0;
+-	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
+-	GLfloat cc[4] = {0};
+-	GLint sc[4] = {0};
+-	glGetFloatv(GL_COLOR_CLEAR_VALUE, cc);
+-	glGetIntegerv(GL_SCISSOR_BOX, sc);
+-	WTRACE("Clear fb %d mask %#x color %.3g,%.3g,%.3g,%.3g scissor %d %d,%d %dx%d", fb, mask, cc[0], cc[1], cc[2], cc[3],
+-	    glIsEnabled(GL_SCISSOR_TEST), sc[0], sc[1], sc[2], sc[3]);
++	if (trace_left > 0 && win_left > 0) {
++		GLint fb = 0;
++		glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fb);
++		GLfloat cc[4] = {0};
++		GLint sc[4] = {0};
++		glGetFloatv(GL_COLOR_CLEAR_VALUE, cc);
++		glGetIntegerv(GL_SCISSOR_BOX, sc);
++		WTRACE("Clear fb %d mask %#x color %.3g,%.3g,%.3g,%.3g scissor %d %d,%d %dx%d", fb, mask, cc[0], cc[1], cc[2], cc[3],
++		    glIsEnabled(GL_SCISSOR_TEST), sc[0], sc[1], sc[2], sc[3]);
++	}
+ 	glClear(mask);
+ 	SGL_POST(10);
+ }

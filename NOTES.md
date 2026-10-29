@@ -1,5 +1,46 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River folder/search and glyph investigation; recovery pending (2026-10-28)
+
+Closed-folder material plate was replaced with a small pre-rounded RGBA bitmap
+below intact native previews. User confirmed folders look good. The bitmap
+helper caches per host/size, uses alpha35%, and passes a pixel-level test for
+transparent corners and center alpha. Search pill's native _backgroundView is a
+plain UIView, not Material/Backdrop; root isOpaque=1. Initial bitmap replacement
+left a rectangle. Candidate now hides that exact ivar and clears view/layer
+opaque flags; user has NOT confirmed the revised Search fix. Dock layout disk
+log removed. One-shot /tmp/style_dump collects image/layer format diagnostics.
+These source changes remain staged in cgprobe.c; they are NOT the current device
+library after rollback described below.
+
+User's SF-symbol issue concerns icons beside existing items, not missing lists.
+Captured wallpaper trash control renders as red rectangle. UIKit symbolprobe
+returns nonempty trash, flag, ellipsis and person icons as16-bit gray+alpha;
+calendar/list examples are32-bit. Exported trash PNG alpha has2318clear pixels,
+672opaque and544partial, so the glyph asset itself is present. A SpringBoard
+CALayer setContents gray-alpha->RGBA experiment was deployed; user then reported
+all live apps pink. Removing the hook and respring did not recover; restoring
+exact pre-turn cgprobe plus backboardd restart also did not recover. Attribution
+is not established; the bad state persisted after rollback. No new NoMemory
+failures in the retained snapshot; wired~750MiB. Never re-enable the glyph hook
+without isolating this regression. It is removed from staged source.
+
+Exact restored device cgprobe SHA256:
+93c5e98b1c0f14daf4f2fda9c48b568ed19f59664ed5db5126ff13779b35d374.
+Readback matched pre-turn backup byte-for-byte. Mesa/GLES library untouched.
+User arranged fastboot recovery. Expected river identity and existing image
+SHA2568800d2de78cfde979e086d5e9ef112d8d2a60efaf8336f153ec9f87c9d5f2f28
+rechecked; RAM-only fastboot boot accepted02:43:37UTC (Oct28,22:43EDT),
+send0.572s/boot0.215s. No partition flash. SSH/app recovery verification pending.
+
+Performance: identified unconditional diagnostic glGet state queries per clear
+and repeated negative rectangle-uniform lookup. Narrow clear-query patch staged
+in mesa/candidates with explicit local-source applicability; arm64 compile and
+ASan/UBSan actual-function mock pass. Not linked/deployed/benchmarked. Broader
+cache withheld for context/invalidation review. Do not claim an FPS gain.
+User also reports feeling haptics on a press (qualitative only).
+Private evidence: current chat work/river-investigation/style-fix/.
+
 ## River scrolling measurements and post-boot UI feedback (2026-10-28)
 
 User confirms live apps launch/render normally and Switcher previews work.
