@@ -1,5 +1,27 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River switcher candidate test pending (2026-10-29)
+
+User approved one-shot diagnostic and opened switcher. Captured deep tree in
+current chat work/pink-fix/switcher-deep.log: background cards contain
+SBWallpaperEffectView alpha0.15 with PBUIFakeBlurView/PBUISnapshotReplicaView,
+which plausibly explains the pink tint. Full-screen switcher wrapper views are
+opaque despite clear/nil backgrounds; plausible black-background factor, not
+proven. The exact view colors and opacities are recorded in the private log.
+
+Prepared scratch work/pink-fix/cgprobe-switcher-candidate.c, based on committed
+pink fix: during switcher layout sets SBWallpaperEffectView alpha0 inside the
+switcher and marks named switcher wrappers/window nonopaque. It does not modify
+normal app or wallpaper trees. This is an unverified candidate, traversing
+switcher view trees on layout; watch responsiveness. User approved coordinated
+SpringBoard restart and the candidate was deployed/readback-verified SHA256
+32efe708a0283fa242de3e9b842437b9e516d1b03b0ea9e6ace36e7e6227d7db.
+Current SpringBoard1185/backboardd878. Working pink-fix rollback remains at
+/usr/local/lib/libcgprobe.pink-fixed.dylib, verified SHA256
+eb0fe34da2d91dc64f6282d7d93192de1dd4396467c8271f65495d6d1a30a3f7.
+User asked to assess tint, wallpaper, and normal apps; response pending. Do not
+claim switcher fixed, commit candidate, or restart without coordinated response.
+
 ## River switcher one-shot diagnostic staged (2026-10-29)
 
 Prepared scratch work/pink-fix/cgprobe-switcher-debug.c with working pink fix
