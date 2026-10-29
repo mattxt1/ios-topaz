@@ -1,0 +1,19 @@
+Subject: [PATCH] SweetSurface: retain only state mappings in released-view cache
+
+Released views keep state mappings for racing IOSurfaceClientGetSeed readers.
+The mapping owns the state descriptor; retaining SweetSurface too pins retired
+pixel allocations until up to 256 later releases in every client. Drop that
+separate surface reference after dropping its table user count.
+
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -1559,6 +1559,9 @@
+ 		 */
+ 		OSSafeReleaseNULL(ref->data);
+ 		sweet_surface_put(ref->surface);
++		/* The state mapping retains its descriptor independently. A zombie must
++		 * not retain the surface and its retired (often full-screen) pixels. */
++		OSSafeReleaseNULL(ref->surface);
+ 		ref->released = true;
+ 		ref->detached = false;
+ 		if (fZombies != NULL && fZombies->setObject(ref)) {

@@ -736,27 +736,15 @@ static void probe_layer_set_should_rasterize(id self, SEL cmd, BOOL rasterize)
 static void (*original_switcher_snapshot_set_image)(id, SEL, id);
 static void probe_switcher_snapshot_set_image(id self, SEL cmd, id img)
 {
-	if (img == nil) {
-		id current = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("image"));
-		if (current != nil) {
-			cglog("cgprobe: retaining switcher snapshot image %p instead of clearing to nil\n", current);
-			return;
-		}
-	}
+	/* A recycled snapshot view must be allowed to clear its previous app image. */
 	original_switcher_snapshot_set_image(self, cmd, img);
-	cglog("cgprobe: switcher snapshot %p setImage:%p\n", self, img);
 }
 
 static void (*original_switcher_snapshot_layout)(id, SEL);
 static void probe_switcher_snapshot_layout(id self, SEL cmd)
 {
+	/* Keep the layout path free of synchronous diagnostic I/O. */
 	original_switcher_snapshot_layout(self, cmd);
-	if (strcmp(object_getClassName(self), "SBSwitcherSnapshotImageView") != 0) return;
-	Ivar iv_ivar = class_getInstanceVariable(object_getClass(self), "_imageView");
-	id iv = iv_ivar ? object_getIvar(self, iv_ivar) : nil;
-	id img = iv ? ((id (*)(id, SEL))objc_msgSend)(iv, sel_registerName("image")) : nil;
-	CGRect b = ((CGRect (*)(id, SEL))objc_msgSend)(self, sel_registerName("bounds"));
-	cglog("cgprobe: switcher snapshot %p layout bounds %.1fx%.1f iv %p img %p\n", self, b.size.width, b.size.height, iv, img);
 }
 
 static void (*original_backdrop_set_filters)(id, SEL, id);
@@ -966,11 +954,6 @@ static void probe_library_layout(id self, SEL cmd)
 			((void (*)(id, SEL, CGFloat))objc_msgSend)(sdv, sel_registerName("setAlpha:"), 0.0f);
 		}
 		clear_blackout_in_view(v);
-		static int logged;
-		if (logged++ < 5) {
-			cglog("cgprobe: library view %p tree:\n", v);
-			dump_view_tree(v, 1);
-		}
 	}
 }
 
@@ -1131,6 +1114,8 @@ static void clear_blackout_in_view(id view)
 {
 	if (!view) return;
 	const char *cname = object_getClassName(view);
+	/* App content and snapshots are not wallpaper backdrops. Do not mutate them. */
+	if (strstr(cname, "ApplicationScene") || strstr(cname, "SwitcherSnapshot")) return;
 	Class uic = objc_getClass("UIColor");
 	id clear = ((id (*)(id, SEL))objc_msgSend)((id)uic, sel_registerName("clearColor"));
 
@@ -1158,7 +1143,7 @@ static void clear_blackout_in_view(id view)
 			((void (*)(id, SEL, BOOL))objc_msgSend)(l, sel_registerName("setOpaque:"), NO);
 			((void (*)(id, SEL, id))objc_msgSend)(l, sel_registerName("setFilters:"), nil);
 		}
-		cglog("cgprobe: clear_blackout: cleared %s %p\n", cname, view);
+		/* This traversal runs during layout; logging each view stalls gestures. */
 	}
 	if (strcmp(cname, "SBFFeatherBlurView") == 0 || strcmp(cname, "SBHFeatherBlurView") == 0) {
 		((void (*)(id, SEL, BOOL))objc_msgSend)(view, sel_registerName("setHidden:"), YES);
@@ -1548,8 +1533,7 @@ probe_loaded(void)
 
 	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 5LL * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
 		install_all_hooks();
-		scan_objc_classes();
-		dump_visible_windows();
+		/* Full diagnostics are available through the one-shot dump signal. */
 	});
 
 	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
@@ -1558,6 +1542,8 @@ probe_loaded(void)
 			if (access("/tmp/dump_now", F_OK) == 0) {
 				unlink("/tmp/dump_now");
 				dispatch_async(dispatch_get_main_queue(), ^{
+					scan_objc_classes();
+					dump_visible_windows();
 					dump_all_windows_and_views();
 				});
 			}

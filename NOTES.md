@@ -1,5 +1,31 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River retired IOSurface pixel retention fix prepared (2026-10-28)
+
+Patch0245 drops the zombie view's separate SweetSurface retain after dropping
+its table user count. The state IOMemoryMap already owns its state descriptor,
+so racing seed readers keep their state mapping while retired pixel allocations
+can be freed. Previously each client's256-entry fZombies cache retained entire
+surfaces despite its comment promising state pages only; at1125x2436 BGRA this
+can pin ~2.68GiB per client. This is a confirmed source lifetime defect and a
+plausible contributor to the observed graphics allocation exhaustion, not yet a
+hardware-confirmed complete cure. Do not increase the wired budget as a workaround.
+
+Device evidence: repeated kIOReturnNoMemory (0xe00002bd) creating full-screen
+SpringBoard/backboardd surfaces before restarts; later AegirPoster also failed.
+vm_stat reports146504 wired16KiB pages (~2.24GiB) and4112 free (~64MiB).
+A full1..4096 surface enumeration found60 discoverable surfaces totaling33.9MB;
+retired retained surfaces can be absent from that table. IDs are bounded4096.
+Existing screencap only searches1..32 and can choose stale buffers; do not use
+its autodetection as an authoritative active-scanout capture.
+
+Local River arm64 SweetSurface object compile passed. The regression harness
+extracts and executes the actual trapRelease body with refcount/mapping mocks:
+300 sequential11.2MB retirements free pixels immediately while keeping state;
+a second live client keeps shared pixels until it releases; cache stays bounded.
+ASan/UBSan passes patched source; original fails retired-pixel release assertion.
+Full CI and RAM-only hardware test pending. No reboot or partition flash.
+
 ## River haptics final STOP completion guard (2026-10-28)
 
 Follow-up to50834ad: QUP2 now waits for BUS_ACTIVE to clear after completion
@@ -59,6 +85,47 @@ After probe/setup success, test vibrate25/50/0, physical response and automatic
 stop/retrigger, then touch/buttons and UI responsiveness. No test boot until
 user arranges the shared-device handoff. A passed model/compile/CI is not a
 hardware pass. Detailed local evidence and handoff live in this haptics chat.
+
+## River userland verification and daemon load (2026-10-28)
+
+- Closed Utilities folder previews are intact; the icon plate appears white.
+  Physical open-folder screenshot confirms rounded translucent FloatyFolder plate
+  and visible icons. User verified App Library search scrolling has no blackout,
+  though frame rate remains low. Switcher wallpaper is visible, but user found
+  a new solid pink/purple failure in BOTH live apps and their switcher cards.
+  Do not report the switcher/app-rendering check as passed.
+- Live vmd logs confirm repeated CoreTelephony XPC4099 reconnects with no baseband.
+  ReportCrash also consumed sustained CPU. Renamed individual .plist.disabled
+  files did not disable either job: both were still in the packed launchd cache.
+  Removed both live with legacy launch_msg RemoveJob (reply errno36/EINPROGRESS;
+  subsequent ps confirmed exit), and removed just those two job entries from
+  /System/Library/xpc/launchd.plist with atomic rename and byte-identical readback.
+  tools/river-launchd-plist.py now removes them too; repeated generation validated.
+  Original packed plist and original cgprobe dylib backed up in the current chat
+  work/river-investigation directory. Next full boot persistence remains untested.
+- Battery cause confirmed by source0242 AND on-device battcheck: static85%,
+  SweetBatteryFallback=1, HardwareSampleValid=0, fixed4100mV, FullyCharged=1,
+  IsCharging=0, ExternalConnected=1. UI charging bolt reflects AC/ShowChargingUI,
+  not a measured charging state. No River fuel-gauge poll/timer is started.
+  Temperature2500 is synthetic. Do not treat it as hardware thermal evidence.
+- Safe boot-arg inspection: cpus=4, rivergpuclk=320, sweetfb_hz=60,
+  riverblit=1, riverfbinv=0. NSProcessInfo thermalState=0 at sample time only.
+  GPU present logs show no dropped frames in sampled windows; aggregate rates
+  include idle time and are NOT scrolling FPS measurements.
+- cgprobe: removed per-view blackout and snapshot-layout synchronous logging,
+  moved automatic class/window diagnostics to explicit /tmp/dump_now, stopped
+  retaining stale images when snapshot views receive nil, and excluded app scene
+  and snapshot subtrees from wallpaper blackout traversal. Compiled/ad-hoc signed
+  for arm64 iOS16, deployed atomically; SpringBoard restart loaded new library.
+  Pink live apps persisted after SpringBoard restart and fresh Settings process.
+  Pink also persisted after backboardd restart. Kernel logs predating either
+  restart show repeated full-screen IOSurface kIOReturnNoMemory failures.
+- Wallpaper after warm SpringBoard restart reached CoverSheet appearance at
+  ~20s in captured log. This is not a cold-boot PosterBoard timing result;
+  initial 1–2minute boot delay still needs clean boot tracing.
+- Haptics delegated at user's explicit request to separate chat
+  01a18527-9676-7420-8097-daa629434280; that chat owns haptics source only and
+  was told to avoid reboots, kernel deployment or UI disruption during these tests.
 
 ## River r145 WPA2 group rekey, auto-reconnect, and DHCP renewal daemon prepared (2026-10-25)
 
