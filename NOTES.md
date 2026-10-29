@@ -1,5 +1,19 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River surface-release image RAM boot verified (2026-10-28)
+
+User explicitly requested boot. Expected device/product river verified;
+image SHA2568800d2de78cfde979e086d5e9ef112d8d2a60efaf8336f153ec9f87c9d5f2f28
+rechecked. fastboot boot only at02:02:42UTC (Oct28,22:02EDT): send OKAY0.572s,
+boot OKAY0.219s, total0.798s. No partition flashed. SSH returned; SpringBoard26
+and backboardd58 running; live USB kernel log confirms GPU display presents.
+Early vm_stat:29779 wired16KiB pages (~465MiB),102975 free; vmd and ReportCrash
+absent. This confirms boot, not the pink-app lifetime fix or sustained UI/FPS.
+Cold-boot wallpaper, repeated app/Library/Switcher transitions and memory growth
+still require testing. Private current-chat work/river-investigation contains
+ram-boot-log.txt, boot-process-memory.txt and surface-release-usb-1.txt.
+USB receiver running in this chat's exec session25760, following reboots.
+
 ## River pink-app surface fix CI passed and RAM image ready (2026-10-28)
 
 Source0f90a68 includes patch0245 (release zombie view's retired pixel surface,
