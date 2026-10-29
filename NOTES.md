@@ -1,5 +1,23 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River single PaperBoard cache isolation test underway (2026-10-29)
+
+User approved test. Atomically renamed the exact pink PaperBoard cpbitmap named
+below to the same path plus `.river-backup`; verified original path absent and
+backup present. Restored verified original sweetgl from
+/usr/local/lib/sweetgl.pink-original.dylib by rename, and announced/terminated
+old backboardd716/SpringBoard715/PosterBoard719. New processes observed
+backboardd878/SpringBoard877/PosterBoard883. A combined kill returned 1 because
+one target was already gone, but each process was observed replaced. No partition
+flash, no other cache file deliberately removed. Surface scan after restart found
+display buffer689 with varying non-pink pixels, not a substitute for user visual
+app/switcher validation. User asked to check Settings, other apps and switcher;
+response pending. Do not call pink fixed until visual and sustained checks pass.
+Rollback is the exact cache path below with `.river-backup` suffix; avoid
+overwriting a new file at the original path when restoring. The renderer is the
+original baseline, tracing probe removed. Coordinate before any further display
+or wallpaper restart.
+
 ## River pink ASTC source is PaperBoard wallpaper blur cache (2026-10-29)
 
 With user-coordinated restarts, v7 captured compressed ASTC4x4 texture: all
