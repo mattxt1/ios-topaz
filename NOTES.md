@@ -1,5 +1,28 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River pink texture confirmed; wallpaper test underway (2026-10-29)
+
+User was interrupted by an uncoordinated restart in the previous attempt; do not
+restart display processes without coordinating with them. Reloaded diagnostic
+with their consent and captured pink; fragment shader samples texture RGB and
+outputs it unchanged. First probe could not attach source texture as framebuffer
+(0x8cd6), so built a second probe that calls Mesa _mesa_GetTexImage after the
+same black-to-pink draw. Probe SHA256 23f191e7f45367c6e4f80abe40c48523303f5584cf945fa91e7b45fdc0948485,
+readback verified before deployment. Running backboardd613/SpringBoard612 with
+probe v2, original sweetgl backup /usr/local/lib/sweetgl.pink-original.dylib
+verified SHA256 3605822ddd0c68bb5f357d6460cd2f1f3c4350b3ee07f4a18034ff8d8208a6dd.
+Pink draw program15 samples texture104 846x1827; _mesa_GetTexImage returned
+error0, center RGBA179,77,179,255, and 1,545,621 of 1,545,642 pixels match pink.
+Thus the sampled texture itself is nearly solid pink before final output. Its
+provenance, upstream producer and cause remain unknown. Full evidence is in
+current chat work/river-current-trace.log, PINKPROBE lines. Probe disables itself
+after first hit, but remains installed; restore verified original once user is
+ready for a coordinated process restart. No fix deployed.
+
+User reports a pink gradient wallpaper and proposed changing it to test whether
+app color changes. Agreed; wallpaper change/user feedback pending. Do not infer
+the pink texture is wallpaper until the controlled test resolves that question.
+
 ## River diagnostic renderer prepared; no capture yet (2026-10-29)
 
 Built a temporary Mesa renderer to detect a black-to-b34db3 pixel transition,
