@@ -1,5 +1,26 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River switcher tint candidate visually passes; wallpaper still black (2026-10-29)
+
+User confirms with switcher candidate below: no pink tint, open apps render
+normally, and switcher scrolling is smooth. Wallpaper background remains black,
+so marking wrappers nonopaque did not fix it. Candidate still deployed as
+SHA256 32efe708a0283fa242de3e9b842437b9e516d1b03b0ea9e6ace36e7e6227d7db;
+working pink-app fix rollback /usr/local/lib/libcgprobe.pink-fixed.dylib remains
+verified. Candidate source is scratch work/pink-fix/cgprobe-switcher-candidate.c;
+not committed as production because it combines a successful tint change with
+ineffective opacity changes and traverses the switcher hierarchy twice per
+layout. Isolate and optimize tint intervention before committing; validate new
+binary and continued normal apps. Wallpaper requires separate investigation.
+
+Deep switcher diagnostic confirms background card SBWallpaperEffectView at
+alpha0.15 contains PBUIFakeBlurView/PBUISnapshotReplicaView; setting its alpha0
+within the switcher is the tested tint mitigation. Backdrop black persists with
+nonopaque named wrapper candidate. Further inspect wallpaper source and layer
+composition; do not imply black background fixed. Previous diagnostic binary
+was replaced with candidate; no diagnostic active. All changes documented in
+current chat work/pink-fix/ and earlier handoffs.
+
 ## River switcher candidate test pending (2026-10-29)
 
 User approved one-shot diagnostic and opened switcher. Captured deep tree in
