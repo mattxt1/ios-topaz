@@ -1,5 +1,31 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River haptics CI pass and local RAM image ready (2026-10-28)
+
+Haptics source commits50834ad +419d7bb pushed to river. Explicit River/macOS15
+CI https://github.com/mattxt1/ios-topaz/actions/runs/40798562197 PASSED.
+CI artifact sweet_keys.c matches the locally compiled/tested source byte for
+byte; ASan/UBSan fixture passes against CI's copy too. Four deliberately
+reintroduced defects are caught (premature completion, RESET opcode,
+DONE+DENIED acceptance, reset before STOP). Source/patch checks and arm64
+object compile pass; no unresolved atomic-runtime helper symbols.
+
+Private staged image: /Users/matttyson/Documents/Codex/2026-10-28/river-haptics-investigation/work/river-haptics-419d7bb-staged.img
+Image bytes25141248; SHA256 703e98e4da9dbce0065a0b808c93cc3794be19d057e673172e413d309bb06047.
+Kernel SHA256 c59fe51b3c971107bcdfe80759957074bbc65e3231dd9b361253bca85dc6d9aa.
+Packaging verifies original r152 kernel/payload/image round trips exactly,
+new payload round trip, unchanged firmware/shim and597-byte command line
+matching the live phone. Image mode0600. NO DEVICE BOOT/DEPLOYMENT; hardware
+NACK resolution and physical vibration remain unverified. Capture boot
+clocks/pins/reset readback and require ID0x91 before pulse tests.
+
+Dedicated image419d7bb excludes the later UI kernel patch0245 in0f90a68.
+Combined CI40798850172 includes the haptics changes; prefer its validated
+combined image for the shared UI/haptics trial. Do not reboot or deploy until
+the user arranges the shared-device handoff. Other chat owns that UI work.
+Detailed evidence/test requirements: /Users/matttyson/Documents/Codex/2026-10-28/river-haptics-investigation/outputs/haptics-investigation.md
+Staging manifest: /Users/matttyson/Documents/Codex/2026-10-28/river-haptics-investigation/outputs/staged-manifest.json
+
 ## River retired IOSurface pixel retention fix prepared (2026-10-28)
 
 Patch0245 drops the zombie view's separate SweetSurface retain after dropping
