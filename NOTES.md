@@ -1,5 +1,28 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River diagnostic renderer prepared; no capture yet (2026-10-29)
+
+Built a temporary Mesa renderer to detect a black-to-b34db3 pixel transition,
+dump attached shader source and sample the bound input texture. Source, object,
+and linked library are in current chat work/pink-probe/; probe SHA256
+da2344943505dcd499f02806d0f1c34fbc99f92218cf5c4946afe415590183b3.
+Used original Mesa build objects without editing the Mesa source tree. Device
+original sweetgl SHA256 3605822ddd0c68bb5f357d6460cd2f1f3c4350b3ee07f4a18034ff8d8208a6dd;
+on-device rollback copy was read back and verified before installing probe, and
+probe readback verified too. Restarted backboardd and SpringBoard with probe;
+phone remained asleep and no PINKPROBE event was captured. Restored the verified
+original by atomic rename and restarted processes again. /bin/ps reports new
+backboardd481/SpringBoard483; /tmp/render-debug confirms original-library trace
+and window counters 0. Note psx showed stale old process records during restart;
+use /bin/ps to verify live PIDs. No probe left installed.
+
+The user interaction request to wake and trigger pink is pending. To retry, use
+the scratch diagnostic with a verified rollback, trigger live app draws while
+the diagnostic is running, capture bounded PINKPROBE logs, then restore the
+original. The probe is instrumentation, not a fix, and its framebuffer source
+read may report incomplete for non-renderable input textures. Existing pink and
+backlight findings remain as below.
+
 ## River compositor capture on riverbl boot (2026-10-29)
 
 User switched Home and back during bounded trace. Fresh capture in current chat
