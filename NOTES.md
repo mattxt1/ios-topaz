@@ -1,5 +1,17 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River compositor capture on riverbl boot (2026-10-29)
+
+User switched Home and back during bounded trace. Fresh capture in current chat
+work/river-current-trace.log: program 37 sampled texture 93 on unit 0 into
+framebuffer 9 (attachment 19), with blending disabled; 992x160 scissored region
+was black before the draw and uniformly b34db3ff after. This independently
+repeats the old finding on a different boot with different GL names. The capture
+does not show texture 93's creation or shader source, so input-vs-shader cause is
+still unproven. The counters were reset immediately: GLERR 0, trace_left 0,
+win_left 0; backboardd PID58 and dylib base 0x1041dc000. No persistent renderer
+changes. Current session remains pink; backlight test remains confirmed working.
+
 ## River pink also occurs after backlight-enabled boot (2026-10-29)
 
 User reports Settings already pink when revisited through switcher after fresh
