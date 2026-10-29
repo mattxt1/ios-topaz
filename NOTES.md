@@ -1,5 +1,26 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River pink fix follow-up and switcher observations (2026-10-29)
+
+After restoring the temporarily isolated PaperBoard cache file, user confirmed
+another switcher pass and sleep/wake both work: apps display normally when open,
+and backlight works. User reports a slight pink tint on switcher cards farther
+away and missing App Switcher wallpaper. Explicit display surface687 capture in
+current chat work/pink-fix/switcher.png shows normal foreground Settings card,
+pink-tinted background cards and black space behind cards. This is a separate
+remaining issue; do not claim the switcher wallpaper or tint is fixed.
+
+One-shot SpringBoard window tree in work/pink-fix/switcher-tree.log shows
+_SBWallpaperSecureWindow visible and SBMainSwitcherWindow visible, and
+SBHomeScreenBackdropView with a visible full-screen UIImageView. It does not
+establish why the switcher background is black or which layer tints cards.
+Existing cgprobe switcher and wallpaper hooks clear several backgrounds and
+hide wallpaper-window subviews after index0; these are candidate factors, not
+yet proven. No follow-up UI candidate deployed or new display restart. Current
+original sweetgl and fixed cgprobe stay active, with cgprobe rollback binary
+on device. Next inspect switcher background and card layer opacity/color in a
+targeted way before changing these hooks; preserve working live-app rendering.
+
 ## River pink rendering fixed in live session (2026-10-29)
 
 Single-cache isolation was negative: user reported apps still pink and a newly
