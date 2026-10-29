@@ -1,5 +1,28 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River wallpaper control and texture provenance caveat (2026-10-29)
+
+User changed pink wallpaper; apps remained pink. With user-coordinated display
+restart, deployed/readback-verified provenance probe v3 SHA256
+987e2c001748465698b0d6d68224f6eeef6e6089e7f9f147b5aa232e70ba6eeb.
+User reproduced pink. Probe logged program37 sampling texture94 846x1827,
+all 1,545,642 pixels read back RGBA179,77,179,255. Its process-global registry
+reported last associated texture94: texImageIOSurface surface3451 format0x1906
+(GL_ALPHA), but IOSurfaceLookup(3451) failed and source metadata lacks dimensions.
+Registry shares texture IDs across contexts, so this is potentially a stale or
+colliding entry and must not be attributed as the actual source. Need record
+context identity, texture ID, dimensions and chronological creation/update
+events, then correlate a fresh pink draw. Current v3 probe remains installed;
+the verified original is /usr/local/lib/sweetgl.pink-original.dylib. Coordinate
+with user before any process restart or renderer restoration.
+
+## River wallpaper control (2026-10-29)
+
+User changed their pink-gradient wallpaper and reports apps remain pink. This
+control makes a simple match to the original wallpaper unlikely; it does not
+exclude other wallpaper or scene composition mechanisms. User agreed to a
+coordinated display-process restart for the staged texture-provenance probe v3.
+
 ## River pink texture confirmed; wallpaper test underway (2026-10-29)
 
 User was interrupted by an uncoordinated restart in the previous attempt; do not
