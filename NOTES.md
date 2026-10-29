@@ -1,5 +1,16 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## Final chat handoff prepared (2026-10-29)
+
+User requested handoff to a new Codex chat. Detailed current-state handoff:
+/Users/matttyson/Documents/Codex/2026-10-28/here-is-a-ready-to-use/outputs/river-pink-handoff.md
+Ready-to-paste prompt: same outputs/river-next-chat-prompt.md.
+After latest physical replug River XNU USB device enumerates, en6 still inactive,
+SSH times out. Saved macOS service correctly manual192.168.7.1/24; reapplying
+networksetup manual made no difference. No fastboot device. Temporary renderer
+debug flag cleanup still PENDING due unreachable device; see handoff offsets
+and recheck PID/library before disabling. No recovery boot or binary change.
+
 ## River pink compositor investigation (2026-10-29, ongoing)
 
 Unchanged-respring failure persists in freshly restarted Preferences and after
