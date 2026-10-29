@@ -1,5 +1,30 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River backlight boot-argument finding (2026-10-29)
+
+User authorized restart. Verified expected fastboot River serial/product and the
+surface-release image SHA256, then RAM-booted it successfully; SSH returned and
+old process-memory tracing was cleared by the reboot. User reports Settings
+normal, but backlight remains on during sleep. Kernel logs show display off/on/
+off; no panel command status retained. Running /tmp/getbootargs shows riverbl=1
+is absent. River framebuffer's riverMdpSetup initializes fDsi only when that
+argument is enabled, so the current boot does not initialize its DCS backlight
+path. This is a concrete explanation for the missing backlight control; an
+enabled-driver hardware test is needed before calling it fixed.
+
+Prepared RAM-only image in current chat work/river-backlight-test-boot.img,
+SHA256 ae1c78ee129e9747a25454d0edf5c5ff6c0eba90d25d0655c1dc31fa580754bc.
+Byte comparison verifies only payload cmdline changed: appended ` riverbl=1`,
+597 -> 607 bytes in 608-byte field. Everything else matches verified image.
+Not yet booted. User asked to enter fastboot for the test; verify identity and
+hash again. Capture early USB logs and test physical sleep AND wake.
+
+Clean-boot baseline SpringBoard 26 was terminated; restarted as 341 with
+backboardd 58 retained; cgprobe readback SHA256 93c5e98b1c0f14daf4f2fda9c48b568ed19f59664ed5db5126ff13779b35d374.
+User reports Settings is not pink after this respring. Pink remains unresolved;
+this attempt did not reproduce the prior confirmed failure. Asked user to try
+switcher navigation; result pending. No renderer changes deployed.
+
 ## River continuation: offline inspection (2026-10-29)
 
 USB en6 remains inactive and SSH to 192.168.7.2 times out. No device or
