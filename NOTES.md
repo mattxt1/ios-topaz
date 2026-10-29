@@ -1,5 +1,27 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River resumed from fastboot (2026-10-29)
+
+User returned with River in fastboot. Verified serial/product and RAM-booted the
+backlight-enabled image SHA256 ae1c78ee129e9747a25454d0edf5c5ff6c0eba90d25d0655c1dc31fa580754bc.
+After SSH returned restored the previously readback-verified original sweetgl by
+rename from /usr/local/lib/sweetgl.pink-original.dylib and announced/restarted
+backboardd and SpringBoard; new PIDs229/235 observed. No partition flash.
+
+Last context-aware v4 trace showed cached and actual GL texture bindings agree,
+pink 846x1827 input, but no creation event for that texture in same context.
+Potential untracked framebuffer copy / texture storage paths or diagnostic
+history loss remain hypotheses. Built scratch probe v5 that adds those paths and
+larger context-tagged history. User asked whether ready for a coordinated restart;
+response pending. Staging a fresh backup and probe separately; do not replace the
+running library until staging and readback verified and user is ready.
+Staging subsequently completed: /usr/local/lib/sweetgl.pink-original.dylib
+readback SHA256 3605822ddd0c68bb5f357d6460cd2f1f3c4350b3ee07f4a18034ff8d8208a6dd;
+/usr/local/lib/sweetgl.pink-probe-v5.dylib readback SHA256
+3c366f372e7ae594e64267fa497fd35a9d8364594d3e4835d4555235b8871eb8.
+Both separately staged; original remains running. User response to restart
+coordination remains pending. Do not infer consent from time passing.
+
 ## River wallpaper control and texture provenance caveat (2026-10-29)
 
 User changed pink wallpaper; apps remained pink. With user-coordinated display
