@@ -22,6 +22,12 @@ ready for a coordinated process restart. No fix deployed.
 User reports a pink gradient wallpaper and proposed changing it to test whether
 app color changes. Agreed; wallpaper change/user feedback pending. Do not infer
 the pink texture is wallpaper until the controlled test resolves that question.
+Prepared but did not deploy work/pink-probe/eagl-v3.c and
+sweetgl-probe-v3.dylib: adds diagnostic texture creation / IOSurface ID tracking
+and samples any associated IOSurface at the pink draw. This uses process-global
+texture IDs and is diagnostic only; IDs may collide between contexts or be
+reused, so corroborate provenance and never treat the entry alone as proof. It
+compiled/linked. No device restart or deployment while wallpaper test is pending.
 
 ## River diagnostic renderer prepared; no capture yet (2026-10-29)
 
