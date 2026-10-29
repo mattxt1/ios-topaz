@@ -1,5 +1,15 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River pink reproduced after switcher navigation (2026-10-29)
+
+Following the clean RAM boot and baseline respring documented below, Settings
+was initially normal. User then opened three more apps, returned to Settings via
+the app switcher, and reports Settings and all apps became pink. Thus this
+respring did not immediately reproduce the symptom, but later app/switcher
+activity did. SpringBoard 341, backboardd 58, Preferences 286 observed; no
+renderer changes or tracing enabled. User is preparing fastboot for the
+backlight test below; do not claim pink was fixed by this reboot.
+
 ## River backlight boot-argument finding (2026-10-29)
 
 User authorized restart. Verified expected fastboot River serial/product and the
