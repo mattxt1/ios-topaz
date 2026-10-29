@@ -1,5 +1,29 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River v5 texture-source investigation (2026-10-29)
+
+User authorized v5 display restart; deployed SHA256
+3c366f372e7ae594e64267fa497fd35a9d8364594d3e4835d4555235b8871eb8,
+pink reproduced (kernel log PINKPROBE: program15 texture96 846x1827, all pixels
+RGBA179,77,179,255). Bound and cached unit0 both texture96. Context-tagged event
+history included framebuffer copies and 2D storage, and no event for texture96.
+Read-only task-for-pid scan of the entire 131072-event buffer found no texture96
+in any context and no 846x1827 creation, although it found hundreds of other
+valid events. Thus source remains unknown; do not infer it is shared across
+contexts. Nearby texture creation pathways include compressed images and 3D.
+No accessible IOSurface >=800x1700 matching 846x1827 during a live scan.
+
+Prepared scratch v6 probe, adding internal-format readout and compressed and 3D
+upload tracking; staged and readback verified at
+/usr/local/lib/sweetgl.pink-probe-v6.dylib SHA256
+b03baf76144c3332e3d987a0ac6c2c338ba9b1060d9644bacff66dcd90ba5d5d.
+Current running/disk renderer remains v5 (probe disables itself after hit);
+verified original backup at /usr/local/lib/sweetgl.pink-original.dylib, SHA256
+3605822ddd0c68bb5f357d6460cd2f1f3c4350b3ee07f4a18034ff8d8208a6dd. User asked
+if ready for next coordinated restart; response pending. Do not interrupt user
+or restore/restart without coordination. Trace listener restarted in current
+chat work/river-v5-trace.log; dmesg retained last v5 event as of capture.
+
 ## River resumed from fastboot (2026-10-29)
 
 User returned with River in fastboot. Verified serial/product and RAM-booted the
