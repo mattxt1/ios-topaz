@@ -1,0 +1,267 @@
+From: mattxt1 <matttysonx1@gmail.com>
+Subject: [PATCH] RIVER: verify AW8691 reset and serialize bounded haptics
+
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -46,6 +46,7 @@
+ static vm_offset_t ri_qup2;
+ static bool ri_haptics_ok;
+ static uint64_t ri_vib_deadline;
++static int ri_vib_request = -1; /* sysctl mailbox; only input worker touches QUP2 */
+ void river_haptics_init(void);
+ void river_vibrate(unsigned ms);
+ static int ri_chan;
+@@ -133,7 +134,8 @@
+  ri_wr(qup, 0x150, no);
+  ri_wr(qup, 0x1c, 0x3c); ri_wr(qup, 0x18, 0x300);
+  if (!ri_qup_state(qup, 1)) return false;
+- ri_wr(qup, 0x400, (62u << 16) | 124u); /* XO 19.2 MHz, ~100 kHz */
++ ri_wr(qup, 0x400, qup == ri_qup2 ? 0x35d : (62u << 16) | 124u);
++ /* QUP2: XO 19.2 MHz, standard-mode FS_DIV=93, HS_DIV=3 => 100 kHz. */
+  if (!ri_qup_state(qup, 3)) return false;
+  for (unsigned i = 0; i < no; i += 4) {
+   uint32_t word = 0;
+@@ -149,12 +151,12 @@
+    uint32_t word = ri_rd(qup, 0x218);
+    for (unsigned j = 0; j < 4 && ni < want; j++) in[ni++] = (uint8_t)(word >> (j*8));
+   }
+-  if ((nr && ni == want && (op & 0x800)) || (!nr && (op & 0x500))) { ok = true; break; }
++  if ((nr && ni == want && (op & 0x800)) || (!nr && (op & 0x400))) { ok = true; break; }
+   delay(10);
+  }
+  if (!ok) {
+   static unsigned errors;
+-  if ((errors++ % 100) == 0) printf("RIVER INPUT: QUP transfer error status=%#x op=%#x err=%#x rx=%u/%u\n", ri_rd(qup,0x404),ri_rd(qup,0x18),ri_rd(qup,0x1c),ni,want);
++  if (qup == ri_qup2 || (errors++ % 100) == 0) printf("RIVER INPUT: QUP addr=%#x reg=%#x nt=%u nr=%u state=%#x status=%#x op=%#x err=%#x rx=%u/%u\n", addr,tx[0],nt,nr,ri_rd(qup,4),ri_rd(qup,0x404),ri_rd(qup,0x18),ri_rd(qup,0x1c),ni,want);
+  }
+  (void)ri_qup_state(qup, 0);
+  if (ok && nr) for (unsigned i = 0; i < nr; i++) rx[i] = in[i+2];
+@@ -3028,6 +3030,9 @@
+   printf("RIVER INPUT: GPIO65 edge latch on, INTR_CFG %#x\n", ri_rd(ri_touch, 0x1008));
+  }
+  for (;;) {
++  int request = __atomic_exchange_n(&ri_vib_request, -1, __ATOMIC_ACQUIRE);
++  if (request >= 0) river_vibrate((unsigned)request);
++  if (ri_vib_deadline && mach_absolute_time() >= ri_vib_deadline) river_vibrate(0);
+   uint8_t pon=0;
+   bool pok=ri_pon(&pon);
+   int now[3]={!!(pon&1),vol_ok ? !(ri_rd(ri_key,0x1004)&1) : 0,!!(pon&2)};
+@@ -3146,20 +3151,35 @@
+  for (unsigned i = 0; i < 512; i++) {
+   if (((ri_rd(core, 0x800 + i*4) >> 8) & 0xfff) == ppid) return ri_map(0x02400000 + i*0x8000);
+  }
+- return ri_map(0x02898000);
++ return 0; /* Never write an unrelated APID when lookup fails. */
+ }
+ static bool
+ ri_spmi_write(vm_offset_t chnl, unsigned addr, uint8_t val)
+ {
+  if (!chnl) return false;
+  ri_wr(chnl, 0x10, (uint32_t)val);
+- ri_wr(chnl, 0x00, (3u << 27) | ((addr & 0xff) << 4));
++ /* PMIC arbiter opcode 0 = EXT_WRITEL; opcode 3 is RESET. */
++ ri_wr(chnl, 0x00, (addr & 0xff) << 4);
+  for (unsigned i = 0; i < 2000; i++) {
+   uint32_t s = ri_rd(chnl, 0x08);
+-  if (s & 1) { ri_wr(chnl, 0x08, 1); return true; }
+-  if (s & 0xe) { ri_wr(chnl, 0x08, s & 0xf); return false; }
++  if (s & 1) {
++   if (!(s & 0xe)) return true;
++   printf("RIVER HAPTICS: SPMI write reg=%#x status=%#x\n", addr, s);
++   return false;
++  }
+   delay(1);
+  }
++ printf("RIVER HAPTICS: SPMI write timeout reg=%#x status=%#x\n", addr, ri_rd(chnl, 8));
++ return false;
++}
++
++/* Read back every reset configuration write through the observer channel. */
++static bool
++ri_reset_wr(vm_offset_t ch, vm_offset_t obs, unsigned reg, uint8_t val)
++{
++ uint32_t got = 0;
++ if (ri_spmi_write(ch, reg, val) && ri_spmi_read(obs, reg, 1, &got) && (got & 0xff) == val) return true;
++ printf("RIVER HAPTICS: reset verify reg=%#x want=%#x got=%#x\n", reg, val, got);
+  return false;
+ }
+ 
+@@ -3170,37 +3190,53 @@
+  (void)PE_parse_boot_argn("riverhaptics", &enabled, sizeof(enabled));
+  if (!enabled) return;
+ 
+- if (ri_gcc_vote) ri_wr(ri_gcc_vote, 0x1004, ri_rd(ri_gcc_vote, 0x1004) | (1u << 10));
+- if (ri_gcc_ahb) ri_wr(ri_gcc_ahb, 0x1008, ri_rd(ri_gcc_ahb, 0x1008) | 1);
+-
++ if (!ri_gcc_vote || !ri_gcc_ahb) return;
++ ri_wr(ri_gcc_vote, 0x1004, ri_rd(ri_gcc_vote, 0x1004) | (1u << 10));
+  vm_offset_t gcc_qup2 = ri_map(0x01803000);
+- if (gcc_qup2) {
+-  ri_wr(gcc_qup2, 4, 1); ri_wr(gcc_qup2, 0, ri_rd(gcc_qup2, 0) | 1);
+-  for (unsigned i = 0; i < 1000 && (ri_rd(gcc_qup2, 0) & 1); i++) delay(1);
+-  ri_wr(gcc_qup2, 0x10, ri_rd(gcc_qup2, 0x10) | 1);
+-  for (unsigned i = 0; i < 1000 && (ri_rd(gcc_qup2, 0) & 0x80000000u); i++) delay(1);
+- }
++ if (!gcc_qup2) return;
++ ri_wr(gcc_qup2, 4, 1); /* XO, HID /1 */
++ ri_wr(gcc_qup2, 0, ri_rd(gcc_qup2, 0) | 1);
++ for (unsigned i = 0; i < 1000 && (ri_rd(gcc_qup2, 0) & 1); i++) delay(1);
++ if (ri_rd(gcc_qup2, 0) & 1) { printf("RIVER HAPTICS: RCG update timeout\n"); return; }
++ ri_wr(gcc_qup2, 0x10, ri_rd(gcc_qup2, 0x10) | 1);
++ for (unsigned i = 0; i < 1000 && ((ri_rd(gcc_qup2, 0x10) | ri_rd(ri_gcc_ahb, 0x1008)) & 0x80000000u); i++) delay(1);
++ printf("RIVER HAPTICS: clocks cmd=%#x cfg=%#x cbcr=%#x ahb=%#x vote=%#x\n",
++  ri_rd(gcc_qup2,0),ri_rd(gcc_qup2,4),ri_rd(gcc_qup2,0x10),ri_rd(ri_gcc_ahb,0x1008),ri_rd(ri_gcc_vote,0x1004));
++ if ((ri_rd(gcc_qup2,0x10) | ri_rd(ri_gcc_ahb,0x1008)) & 0x80000000u) return;
+ 
+  vm_offset_t tlmm_qup2 = ri_map(0x01006000);
+- if (tlmm_qup2) {
+-  ri_wr(tlmm_qup2, 0x0000, 0x0c);
+-  ri_wr(tlmm_qup2, 0x1000, 0x0c);
+- }
+-
+- vm_offset_t spmi_core = ri_map(0x0200f000);
+- if (spmi_core) {
+-  vm_offset_t ch_rst = ri_spmi_chnl(spmi_core, 0x2c7);
+-  printf("RIVER HAPTICS: AW8691 reset pin init ch=%p\n", (void*)ch_rst);
+-  if (ch_rst) {
+-+   ri_spmi_write(ch_rst, 0x41, 0);
+-   ri_spmi_write(ch_rst, 0x45, 0x30);
+-   ri_spmi_write(ch_rst, 0x46, 0x80);
+-   ri_spmi_write(ch_rst, 0x40, 0x10);
+-   delay(10000);
+-   ri_spmi_write(ch_rst, 0x40, 0x11);
+-   delay(15000);
+-  }
+- }
++ if (!tlmm_qup2) return;
++ ri_wr(tlmm_qup2, 0, 0x0c); /* GPIO6/7 function3, 2mA, no internal pull */
++ ri_wr(tlmm_qup2, 0x1000, 0x0c);
++ printf("RIVER HAPTICS: pins sda=%#x/%#x scl=%#x/%#x\n", ri_rd(tlmm_qup2,0),ri_rd(tlmm_qup2,4),ri_rd(tlmm_qup2,0x1000),ri_rd(tlmm_qup2,0x1004));
++ if (ri_rd(tlmm_qup2,0) != 0x0c || ri_rd(tlmm_qup2,0x1000) != 0x0c) return;
++
++ vm_offset_t core = ri_map(0x0200f000);
++ if (!core) return;
++ uint32_t version = ri_rd(core, 0);
++ if (version < 0x20010000 || version >= 0x50000000) {
++  printf("RIVER HAPTICS: unsupported SPMI version=%#x\n", version); return;
++ }
++ vm_offset_t ch = ri_spmi_chnl(core, 0x2c7), obs = ri_spmi_obs(core, 0x2c7);
++ uint32_t type=0, sub=0, vin=0, mode=0, out=0;
++ if (!ch || !obs || !ri_spmi_read(obs,4,1,&type) || !ri_spmi_read(obs,5,1,&sub) ||
++     !ri_spmi_read(obs,0x41,1,&vin) || !ri_spmi_read(obs,0x40,1,&mode) || !ri_spmi_read(obs,0x45,1,&out)) {
++  printf("RIVER HAPTICS: reset PPID 0x2c7 unavailable\n"); return;
++ }
++ printf("RIVER HAPTICS: reset type=%#x subtype=%#x vin=%#x mode=%#x out=%#x\n", type,sub,vin,mode,out);
++ bool lv = sub >= 0x10 && sub <= 0x15;
++ if (type != 0x10 || (!lv && sub != 1 && sub != 5 && sub != 9 && sub != 0xd)) return;
++ /* Preserve bootloader VIN. CMOS push-pull, high drive (3), pull disabled (5).
++  * Legacy GPIOs encode output in MODE_CTL; LV/MV use SOURCE_CTL bit7. */
++ if (!ri_reset_wr(ch,obs,0x46,0) || !ri_reset_wr(ch,obs,0x42,5) ||
++     !ri_reset_wr(ch,obs,0x45,3) || !ri_reset_wr(ch,obs,0x40,lv ? 1 : 0x10) ||
++     (lv && !ri_reset_wr(ch,obs,0x44,0)) || !ri_reset_wr(ch,obs,0x46,0x80)) return;
++ delay(10000);
++ if (!ri_reset_wr(ch,obs,lv ? 0x44 : 0x40,lv ? 0x80 : 0x11)) return;
++ delay(15000);
++ uint32_t level=0;
++ if (!ri_spmi_read(obs,0x10,1,&level)) return;
++ printf("RIVER HAPTICS: reset released RT_STS=%#x\n", level);
+ 
+  ri_qup2 = ri_map(0x078b6000);
+  if (!ri_qup2) {
+@@ -3224,29 +3260,33 @@
+  }
+  printf("RIVER HAPTICS: AW8691 haptic driver IC detected (chip ID 0x%02x) on I2C QUP2 (0x5b)\n", chipid);
+ 
+- ri_aw_wr(0x04, 0x01);
++ if (!ri_aw_wr(0x04, 0x01)) goto setup_failed;
+  delay(1000);
+- ri_aw_wr(0x36, 0x01);
+- ri_aw_wr(0x34, 0x38);
+- ri_aw_wr(0x39, 0x20);
+-
+- ri_aw_wr(0x04, 0x21);
++ if (!ri_aw_wr(0x36, 0x01)) goto setup_failed;
++ if (!ri_aw_wr(0x34, 0x38)) goto setup_failed;
++ if (!ri_aw_wr(0x39, 0x20)) goto setup_failed;
++
++ if (!ri_aw_wr(0x04, 0x21)) goto setup_failed;
+  delay(1000);
+- ri_aw_wr(0x21, 0x10);
+- ri_aw_wr(0x22, 0x00);
+- ri_aw_wr(0x23, 0x04);
+- ri_aw_wr(0x24, 0x00);
+- ri_aw_wr(0x25, 0x0c);
+- ri_aw_wr(0x26, 0x00);
+- ri_aw_wr(0x40, 0x10);
+- ri_aw_wr(0x41, 0x00);
++ if (!ri_aw_wr(0x21, 0x10)) goto setup_failed;
++ if (!ri_aw_wr(0x22, 0x00)) goto setup_failed;
++ if (!ri_aw_wr(0x23, 0x04)) goto setup_failed;
++ if (!ri_aw_wr(0x24, 0x00)) goto setup_failed;
++ if (!ri_aw_wr(0x25, 0x0c)) goto setup_failed;
++ if (!ri_aw_wr(0x26, 0x00)) goto setup_failed;
++ if (!ri_aw_wr(0x40, 0x10)) goto setup_failed;
++ if (!ri_aw_wr(0x41, 0x00)) goto setup_failed;
+  for (unsigned i = 0; i < sizeof(ri_aw869x_fw); i++) {
+-  ri_aw_wr(0x42, ri_aw869x_fw[i]);
+- }
+- ri_aw_wr(0x04, 0x01);
+-
+- ri_haptics_ok = true;
++  if (!ri_aw_wr(0x42, ri_aw869x_fw[i])) goto setup_failed;
++ }
++ if (!ri_aw_wr(0x04, 0x01)) goto setup_failed;
++
++ __atomic_store_n(&ri_haptics_ok, true, __ATOMIC_RELEASE);
+  printf("RIVER HAPTICS: AW8691 initialized with Motorola haptic waveform table (ready)\n");
++ return;
++setup_failed:
++ (void)ri_aw_wr(0x04, 0x01);
++ printf("RIVER HAPTICS: configuration/upload failed; haptics withheld\n");
+ }
+ 
+ void
+@@ -3254,20 +3294,25 @@
+ {
+  if (!ri_haptics_ok || !ri_qup2) return;
+  if (ms == 0) {
+-  ri_aw_wr(0x04, 0x01);
++  if (!ri_aw_wr(0x04, 0x01)) __atomic_store_n(&ri_haptics_ok, false, __ATOMIC_RELEASE);
+   ri_vib_deadline = 0;
+   return;
+  }
+- ri_aw_wr(0x07, 0x01);
+- ri_aw_wr(0x08, 0x00);
+- ri_aw_wr(0x39, ms > 50 ? 0x28 : 0x20);
+- ri_aw_wr(0x04, 0x20);
+- ri_aw_wr(0x02, 0xff);
+- ri_aw_wr(0x05, 0x01);
++ if (!ri_aw_wr(0x07, 0x01)) goto play_failed;
++ if (!ri_aw_wr(0x08, 0x00)) goto play_failed;
++ if (!ri_aw_wr(0x39, ms > 50 ? 0x28 : 0x20)) goto play_failed;
++ if (!ri_aw_wr(0x04, 0x20)) goto play_failed;
++ if (!ri_aw_wr(0x02, 0xff)) goto play_failed;
++ if (!ri_aw_wr(0x05, 0x01)) goto play_failed;
+ 
+  uint64_t dur_mat = 0;
+  nanoseconds_to_absolutetime((uint64_t)ms * NSEC_PER_MSEC, &dur_mat);
+  ri_vib_deadline = mach_absolute_time() + dur_mat;
++ return;
++play_failed:
++ (void)ri_aw_wr(0x04, 0x01);
++ ri_vib_deadline = 0;
++ __atomic_store_n(&ri_haptics_ok, false, __ATOMIC_RELEASE);
+ }
+ 
+ static int
+@@ -3276,7 +3321,9 @@
+  int val = 0, error;
+  error = sysctl_handle_int(oidp, &val, 0, req);
+  if (error || !req->newptr) return error;
+- river_vibrate((unsigned)val);
++ if (val < 0 || val > 1000) return EINVAL;
++ if (!__atomic_load_n(&ri_haptics_ok, __ATOMIC_ACQUIRE)) return ENXIO;
++ __atomic_store_n(&ri_vib_request, val, __ATOMIC_RELEASE);
+  return 0;
+ }
+ SYSCTL_PROC(_debug, OID_AUTO, river_vibrate, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,

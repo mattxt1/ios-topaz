@@ -1,5 +1,56 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River haptics reset and transfer fix staged (2026-10-28)
+
+Patch0244 follows0243; hardware validation on r152 is still pending. No reboot,
+respring, kernel deployment, UI process action or live hardware-register write
+was performed by the haptics chat. SSH/read-only logs succeeded; current128KiB
+msgbuf has already overwritten boot haptics lines, so the handoff NACK has NOT
+been independently reproduced. /tmp/klog helper exposed only4 bytes and is not
+an independent full boot log. Keep the shared phone available to the UI chat.
+
+Source defects confirmed against Linux spmi-pmic-arb, pinctrl-spmi-gpio,
+i2c-qup and gcc-msm8953: arbiter opcode3 is RESET, not EXT_WRITEL(0);
+DONE+error was incorrectly accepted; fallback APID could target another
+peripheral; output-control0x30 encodes invalid buffer type3 and strength0;
+QUP service bit0x100 was accepted as write completion instead of0x400;
+clock halt polling checked CMD rather than CBCR. Correct AHB vote address is
+0x01845004 (ri_gcc_vote0x01844000+0x1004), not0x01844004 in old handoff.
+
+0244 uses checked opcode0 writes and observer readback, no APID fallback,
+PMIC type/subtype detection (legacy and LV/MV layouts), CMOS/high drive3,
+pull-disable5 and preserved bootloader VIN. Keeps GPIO6/7 function3 and logs
+both config/level registers. Validates RCG update and CBCR/AHB halt and logs
+clock registers. QUP2 alone uses standard100kHz divider0x35d from19.2MHz XO;
+QUP3 retains its existing divider. Errors include address/register/counts.
+All setup/upload writes must succeed before ready; runtime transfer failure
+withholds haptics. Restores removed pulse-stop deadline in the input loop.
+Sysctl accepts0..1000ms, returns ENXIO when unavailable and queues requests
+atomically; only the input worker accesses QUP2 (10ms scheduling granularity,
+latest userspace request wins). Source for waveform/boost remains0243 and is
+not yet physically validated; no claim of actual vibration or resolved NACK.
+
+Verification:0243+0244 apply to saved r145 sweet_keys.c, exact resulting source
+matches isolated compile input. Full sweet_keys.c arm64 Mach-O object passes
+with recorded CI flags and -DRIVER=1 using local scratch/buildtree headers.
+No external atomic runtime symbols. tools/test-river-haptics.py extracts actual
+functions from supplied patched source and passes ASan/UBSan for QUP completion,
+NACK/read framing, retained QUP3 clock, SPMI opcode/DONE+denied/failed/dropped,
+timeout/readback mismatch, pulse deadline/stop/failure and sysctl bounds/mailbox.
+Each of premature completion, wrong opcode and DONE+denied regressions is caught
+when deliberately reintroduced. CI build/run and final commit recorded below.
+
+Coordinated test: preserve current userland fixes in next RAM image; use board=river
+and existing private boot arguments/firmware, never default topaz or flash.
+Capture boot console early (before msgbuf wraps), inspect HAPTICS clocks/pins,
+reset subtype/VIN/readback/RT_STS, then require successful register0 chipID0x91.
+If NACK persists, inspect logged bus levels and SPMI status/ownership/power;
+weak pulls or unpowered AW8691 remain hypotheses, not measured causes.
+After probe/setup success, test vibrate25/50/0, physical response and automatic
+stop/retrigger, then touch/buttons and UI responsiveness. No test boot until
+user arranges the shared-device handoff. A passed model/compile/CI is not a
+hardware pass. Detailed local evidence and handoff live in this haptics chat.
+
 ## River r145 WPA2 group rekey, auto-reconnect, and DHCP renewal daemon prepared (2026-10-25)
 
 Phone remains running r144 with verified Safari browsing.
