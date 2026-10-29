@@ -447,6 +447,32 @@ static void probe_floaty_folder_layout(id self, SEL cmd)
 	if (original_floaty_folder_layout) original_floaty_folder_layout(self, cmd);
 	if (!strstr(object_getClassName(self), "FloatyFolderView")) return;
 
+	Ivar pbv_iv = class_getInstanceVariable(object_getClass(self), "_pageBackgroundViews");
+	id pbv = pbv_iv ? object_getIvar(self, pbv_iv) : nil;
+	if (pbv) {
+		unsigned long count = ((unsigned long (*)(id, SEL))objc_msgSend)(pbv, sel_registerName("count"));
+		for (unsigned long i = 0; i < count; i++) {
+			id bgv = ((id (*)(id, SEL, unsigned long))objc_msgSend)(pbv, sel_registerName("objectAtIndex:"), i);
+			if (bgv) {
+				((void (*)(id, SEL, CGFloat))objc_msgSend)(bgv, sel_registerName("setAlpha:"), 1.0f);
+				((void (*)(id, SEL, BOOL))objc_msgSend)(bgv, sel_registerName("setHidden:"), NO);
+				id bgl = ((id (*)(id, SEL))objc_msgSend)(bgv, sel_registerName("layer"));
+				if (bgl) {
+					((void (*)(id, SEL, id))objc_msgSend)(bgl, sel_registerName("setFilters:"), nil);
+					((void (*)(id, SEL, BOOL))objc_msgSend)(bgl, sel_registerName("setShouldRasterize:"), NO);
+					CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+					CGFloat comps[4] = {1.0f, 1.0f, 1.0f, 0.40f};
+					CGColorRef col = CGColorCreate(cs, comps);
+					((void (*)(id, SEL, CGColorRef))objc_msgSend)(bgl, sel_registerName("setBackgroundColor:"), col);
+					((void (*)(id, SEL, CGFloat))objc_msgSend)(bgl, sel_registerName("setCornerRadius:"), 30.0f);
+					((void (*)(id, SEL, BOOL))objc_msgSend)(bgl, sel_registerName("setMasksToBounds:"), YES);
+					CGColorRelease(col);
+					CGColorSpaceRelease(cs);
+				}
+			}
+		}
+	}
+
 	id subviews = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("subviews"));
 	unsigned long count = subviews ? ((unsigned long (*)(id, SEL))objc_msgSend)(subviews, sel_registerName("count")) : 0;
 	for (unsigned long i = 0; i < count; i++) {
@@ -459,7 +485,7 @@ static void probe_floaty_folder_layout(id self, SEL cmd)
 				((void (*)(id, SEL, id))objc_msgSend)(l, sel_registerName("setFilters:"), nil);
 				((void (*)(id, SEL, BOOL))objc_msgSend)(l, sel_registerName("setShouldRasterize:"), NO);
 				CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-				CGFloat comps[4] = {1.0f, 1.0f, 1.0f, 0.38f};
+				CGFloat comps[4] = {1.0f, 1.0f, 1.0f, 0.40f};
 				CGColorRef col = CGColorCreate(cs, comps);
 				((void (*)(id, SEL, CGColorRef))objc_msgSend)(l, sel_registerName("setBackgroundColor:"), col);
 				((void (*)(id, SEL, CGFloat))objc_msgSend)(l, sel_registerName("setCornerRadius:"), 30.0f);
@@ -494,6 +520,19 @@ static void probe_folder_icon_img_layout(id self, SEL cmd)
 	if (bg) {
 		((void (*)(id, SEL, CGFloat))objc_msgSend)(bg, sel_registerName("setAlpha:"), 1.0f);
 		((void (*)(id, SEL, BOOL))objc_msgSend)(bg, sel_registerName("setHidden:"), NO);
+		id bgl = ((id (*)(id, SEL))objc_msgSend)(bg, sel_registerName("layer"));
+		if (bgl) {
+			((void (*)(id, SEL, id))objc_msgSend)(bgl, sel_registerName("setFilters:"), nil);
+			((void (*)(id, SEL, BOOL))objc_msgSend)(bgl, sel_registerName("setShouldRasterize:"), NO);
+			CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+			CGFloat comps[4] = {1.0f, 1.0f, 1.0f, 0.35f};
+			CGColorRef col = CGColorCreate(cs, comps);
+			((void (*)(id, SEL, CGColorRef))objc_msgSend)(bgl, sel_registerName("setBackgroundColor:"), col);
+			((void (*)(id, SEL, CGFloat))objc_msgSend)(bgl, sel_registerName("setCornerRadius:"), 14.0f);
+			((void (*)(id, SEL, BOOL))objc_msgSend)(bgl, sel_registerName("setMasksToBounds:"), YES);
+			CGColorRelease(col);
+			CGColorSpaceRelease(cs);
+		}
 	}
 }
 
@@ -927,7 +966,6 @@ static void probe_library_layout(id self, SEL cmd)
 			((void (*)(id, SEL, CGFloat))objc_msgSend)(sdv, sel_registerName("setAlpha:"), 0.0f);
 		}
 		clear_blackout_in_view(v);
-		fix_all_blackouts();
 		static int logged;
 		if (logged++ < 5) {
 			cglog("cgprobe: library view %p tree:\n", v);
@@ -1330,11 +1368,6 @@ static void install_all_hooks(void)
 				original_folder_icon_img_layout = (void *)method_setImplementation(fimgl, (IMP)probe_folder_icon_img_layout);
 				cglog("cgprobe: installed SBFolderIconImageView layout hook\n");
 			}
-			Method fci = class_getInstanceMethod(fimg, sel_registerName("contentsImage"));
-			if (fci != NULL) {
-				original_folder_contents_image = (void *)method_setImplementation(fci, (IMP)probe_folder_contents_image);
-				cglog("cgprobe: installed SBFolderIconImageView contentsImage hook\n");
-			}
 			fimg_done = true;
 		}
 	}
@@ -1521,10 +1554,7 @@ probe_loaded(void)
 
 	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
 		while (1) {
-			usleep(500000); /* 500ms auto-fix loop */
-			dispatch_async(dispatch_get_main_queue(), ^{
-				fix_all_blackouts();
-			});
+			sleep(2);
 			if (access("/tmp/dump_now", F_OK) == 0) {
 				unlink("/tmp/dump_now");
 				dispatch_async(dispatch_get_main_queue(), ^{
