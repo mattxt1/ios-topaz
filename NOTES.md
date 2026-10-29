@@ -1,5 +1,21 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River unchanged-respring control reproduces pink (2026-10-28)
+
+At user's explicit request, resprung ONLY SpringBoard on the clean RAM-recovered
+session with no binary/configuration changes. PID26->344, backboardd remains58.
+User confirms apps pink again. Settings launch succeeded (existing PID265).
+Readback cgprobe SHA25693c5e98b1c0f14daf4f2fda9c48b568ed19f59664ed5db5126ff13779b35d374
+matches pre-investigation baseline exactly. Thus new folder/Search/glyph code is
+NOT necessary to trigger pink: unchanged baseline respring is a confirmed trigger.
+Do not attribute the previous recurrence solely to those candidate changes.
+This does not establish which baseline/kernel/renderer component is responsible.
+Wired pages39817->39180 (16KiB each), so this control does not show wired growth.
+No further changes/recovery boot performed in this control turn; device remains
+pink after respring. Private evidence style-fix/control-respring*.txt/.dylib.
+Next inspect scene/IOSurface/renderer resource lifetime across SpringBoard restarts
+and distinguish old vs freshly restarted app rendering. Preserve control evidence.
+
 ## River final state stable; default source restored (2026-10-28)
 
 User CONFIRMED Settings rendering normally after final RAM recovery02:52:20UTC.
