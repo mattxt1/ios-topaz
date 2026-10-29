@@ -1,5 +1,20 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River switcher one-shot diagnostic staged (2026-10-29)
+
+Prepared scratch work/pink-fix/cgprobe-switcher-debug.c with working pink fix
+and a one-shot /tmp/switcher_dump command to log only switcher/wallpaper view
+tree, depths up to20, bounded2500 views, with background RGBA, alpha, opacity,
+and frame. This is diagnostic, not a fix. Built and signed; readback-verified
+/usr/local/lib/libcgprobe.switcher-debug.dylib SHA256
+6d228258d28857fa7371fd1375975b7c058d1e9e7283e99d7b4e85461e3c6b32.
+Current working fixed cgprobe separately backed up and readback-verified at
+/usr/local/lib/libcgprobe.pink-fixed.dylib SHA256
+eb0fe34da2d91dc64f6282d7d93192de1dd4396467c8271f65495d6d1a30a3f7;
+older baseline backup also retained. No replacement or restart performed. User
+asked if ready for coordinated restart to inspect switcher; response pending.
+Do not interrupt user before the response.
+
 ## River pink fix follow-up and switcher observations (2026-10-29)
 
 After restoring the temporarily isolated PaperBoard cache file, user confirmed
