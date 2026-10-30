@@ -1,5 +1,17 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River media read-only inventory (2026-10-30)
+
+After haptics chat handed off, SSH process list and `ioreg -l` were read.
+mediaserverd is running; text search of the registry found no obvious camera,
+codec, torch or audio hardware service. VirtualAudio.plugin remains in
+/Library/Audio/Plug-Ins/HAL.disabled. This is a limited software inventory,
+not proof of absent physical hardware or of recording availability. Raw
+registry output is private in this chat's work/ioreg.txt. No files or registers
+were changed on the phone and no display restart was performed. Phone released
+back to haptics chat for its coordinated tactile test. Next: investigate
+charger readiness and fault-safe torch design offline before any new test.
+
 ## River media offline survey (2026-10-30)
 
 Source-based hardware and integration map: RIVER-MEDIA-HANDOFF.md. River
