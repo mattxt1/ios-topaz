@@ -9,8 +9,10 @@ implemented. ADC/SOC values can be stale; they are observations, not proof of
 safe operation. Local arm64 compile and host snapshot and torch failure-path
 tests pass, including the USB-present no-write case. No device boot or PMIC
 write of these patches. The charger control 0xff and threshold 0 also remain
-hard blockers. Do not force a pulse. Earlier 0248 CI 41019294076 is building;
-build the complete patch set separately before any device trial.
+hard blockers. Do not force a pulse. Earlier 0248 CI 41019294076 passed;
+complete patch-set CI 41019965959 is building commit 80e1579. No device trial
+of the pulse candidate; hardware timer, QG freshness, VBUS and cleanup remain
+unverified.
 
 ## River camera discovery wait (2026-10-30)
 
