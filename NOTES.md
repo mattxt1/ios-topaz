@@ -11,6 +11,11 @@ implementation changes were performed. The user directed the haptics chat to
 use the phone first; it confirmed it will hand off when done. Preserve the
 working UI and coordinate all device testing.
 
+Offline LED driver audit found PMI632 enable waits for charger FLASH_TRIGGER
+readiness and disables the module on timeout; the base torch node has no
+configured safety duration. Charger interaction and bounded shutdown remain
+blockers to a safe test, not yet implemented or hardware-verified.
+
 ## River haptics integration investigation (2026-10-30)
 
 User reports light haptics on every screen and volume press. Patch 0243
