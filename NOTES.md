@@ -7,7 +7,7 @@ AVFoundation probe reported AVAudioSession availableInputs count 0 and
 inputAvailable=0 without activating a session. Video discovery entered the
 framework but did not return; probe stopped after waiting, so no device count
 is established. Probe source and binary are in this chat's work/; no persistent
-phone files changed. Patch 0246 adds an opt-in `riverflashsurvey=1` read-only
+phone files changed. Patch 0246 adds an opt-in `riverfs=1` read-only
 SPMI snapshot exposed as debug.river_flash_survey: LED SID3/d3 and charger
 SID2/a6 identification, enable, fault and readiness values. No PMIC register
 writes; observer transaction command MMIO is used for reads. Local arm64

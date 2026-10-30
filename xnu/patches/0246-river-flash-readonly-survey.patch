@@ -27,7 +27,7 @@
 +river_flash_survey(void)
 +{
 + int enabled = 0;
-+ if (!PE_parse_boot_argn("riverflashsurvey", &enabled, sizeof(enabled)) || enabled != 1) return;
++ if (!PE_parse_boot_argn("riverfs", &enabled, sizeof(enabled)) || enabled != 1) return;
 + char note[512];
 + vm_offset_t core = ri_map(0x0200f000);
 + if (!core) { snprintf(note, sizeof(note), "SPMI core map failed"); goto done; }
