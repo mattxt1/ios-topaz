@@ -30,3 +30,11 @@ It refuses writes with the observed charger control 0xff and SOC threshold 0.
 Its timer, QG SOC freshness, VBUS handling and fault behavior need hardware and
 source validation; do not bypass the guard to force a pulse. The phone currently
 runs the read-only survey, not patch 0248.
+
+With `riverfs=1`, `river-torch-test --pulse` queues at most one test per boot.
+The result is 1 if the modeled sequence and shutdown readback completed, 2
+while queued, or negative on a failure: -1 mapping/opt-in, -2 register read,
+-3 prerequisite, -4 module/readiness, -5 LED enable, -6 shutdown verification,
+-7 fault/read during the pulse. A result of 1 would not prove visible light or
+timer behavior. Patch 0250 also refuses with USB present until the charger VBUS
+coordination is implemented. No version of this pulse has been run on River.
