@@ -1,5 +1,17 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River flash PMIC survey hardware result (2026-10-30)
+
+User placed device in fastboot and approved RAM-only survey boot. Verified
+product river and image SHA256 e0eb58c1b4299813ed71552703e8f794ac68b54e6c59cc49b2c6d2d08e70b94e;
+fastboot send and boot OKAY (0.796s total), no flash. SSH reader reported LED
+type 0x18, subtype 0x05, status 0, module control 0, LED enable 0; charger type
+0x02, subtype 0x90, status2/status3/status5 0 and control 0xff. Values are
+observations, not validated interpretation or evidence torch can be enabled.
+LED not activated. The 0xff charger control and required initialization,
+fault handling and shutdown need audit. UI visual confirmation pending. Device
+remains assigned to media chat; coordinate any further reboot with user.
+
 ## River media probes and PMIC survey candidate (2026-10-30)
 
 With the user assigning this chat exclusive device access, a temporary signed
