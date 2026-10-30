@@ -48,9 +48,13 @@ case-insensitive haptic/vibrat matches. User confirmed feeling and prompt
 cessation of separate controlled /usr/local/bin/vibrate 50 and 25 requests.
 AudioServicesPlaySystemSound(kSystemSoundID_Vibrate) probe: user felt nothing
 when the process exited immediately, but that may prevent asynchronous delivery;
-repeat with process alive three seconds was reported unsure. Thus system sound
-vibration remains inconclusive. Probes are in this chat's work/ and /tmp on the
-device. No display restart or haptics implementation change. Next: identify and
+repeat with process alive three seconds was reported unsure; a further repeat
+was felt as nothing. An experimental per-process interposer translating that
+call to a 50ms sysctl did not produce a felt pulse: DYLD_INSERT_LIBRARIES did
+not load it, and a directly linked copy logged its constructor but not the
+replacement function. This is a failed test of that interposition setup, not a
+working integration. Probes are in this chat's work/ and /tmp on the device.
+No display restart or haptics implementation change. Next: identify and
 test an actual iOS feedback integration path, preserving working touch/button
 behavior until a replacement is verified. Never flash partitions.
 
