@@ -14,9 +14,11 @@ material children of the page control content when Search pill lays out under
 SBFolderScrollAccessoryView, retaining indicator content. Compiled and staged
 /usr/local/lib/libcgprobe.search-sibling.dylib, readback SHA256
 a65f4b72200959fbbf6d63740c239bd1750eeeead0a4ff6314df5b7ce6073d3d.
-Not active or visually verified. Asked user to coordinate display restart;
-response pending. Use atomic rput, preserve previous rollback and test dots as
-well as Search, folders and apps. Switcher wallpaper remains unresolved.
+User approved restart; installed atomically with verified readback matching the
+hash above. SpringBoard26 restarted as PID406, backboardd58 unchanged. Asked
+user to test Search, page dots and folders; response pending. Previous candidate
+remains in work/libcgprobe-plates-tint.dylib and pink-fixed rollback on device.
+Switcher wallpaper remains unresolved.
 
 ## River RAM reboot after USB link loss (2026-10-30)
 
