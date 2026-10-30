@@ -1,0 +1,13 @@
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -3256,6 +3256,10 @@
+  uint32_t lt, ls, st1, st2, mod, en, timer, current, ires, strobe, derate;
+  uint32_t cfg, threshold, s2, s3, qstatus, qirq, voltage, soc, usbstatus;
+  if (!PE_parse_boot_argn("riverfs", &enabled, sizeof(enabled)) || enabled != 1) goto done;
++#if !defined(RIVER_TORCH_MODEL_ONLY)
++ /* SOC freshness, charger and timer behavior are not yet established. */
++ result = -8; goto done;
++#endif
+  core = ri_map(0x0200f000);
+  if (!core || ri_rd(core, 0) < 0x20010000 || ri_rd(core, 0) >= 0x50000000) goto done;
+  led = ri_spmi_obs(core, 0x3d3); ch = ri_spmi_chnl(core, 0x3d3);

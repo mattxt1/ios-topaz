@@ -45,6 +45,10 @@ int main(void){
 }
 '''
 with tempfile.TemporaryDirectory(prefix='river-torch-test-') as d:
- src=Path(d)/'test.c'; exe=Path(d)/'test'; src.write_text(preamble+fn+main)
+ src=Path(d)/'test.c'; exe=Path(d)/'test'
+ src.write_text(preamble+fn+'int main(void){river_torch_pulse();assert(ri_torch_status == -8 && writes == 0);puts("PASS: production interlock makes no writes");}')
  subprocess.run(['clang','-fsanitize=address,undefined',str(src),'-o',str(exe)],check=True)
+ subprocess.run([str(exe)],check=True)
+ src.write_text(preamble+fn+main)
+ subprocess.run(['clang','-DRIVER_TORCH_MODEL_ONLY=1','-fsanitize=address,undefined',str(src),'-o',str(exe)],check=True)
  subprocess.run([str(exe)],check=True)

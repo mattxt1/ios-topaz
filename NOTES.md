@@ -1,5 +1,24 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River torch guard hardware check and production interlock (2026-10-30)
+
+User approved RAM-only boot; verified product river and SHA256
+f97810ee159a879479ce120d99f70f16e058fed1e4c81a5c8492de4ff3919986.
+Send/boot OKAY (0.803s); no partition flashed. Boot snapshot retained LED off,
+charger control 0xff and threshold 0, USB interrupt 0x10 (USB present), QG
+status 0xc1, IRQ 0, monotonic SOC 0x0a and last voltage ADC 0x485b. Android
+conversion gives 3,605,261 uV for the last voltage sample; freshness is not
+established. Android QG source writes monotonic SOC from software-maintained
+SOC, which this port does not yet provide; it is not reliable proof of charge.
+The user-approved no-light guard request returned -3; that source path exits
+before PMIC writes. SpringBoard26 and backboardd58 running; visual UI not yet
+confirmed. Patch 0251 now hard-disables the experimental pulse in production
+builds (status -8) until charger, gauge freshness and hardware timer are
+validated; model-only builds exercise the rest. Local arm64 compile and
+ASan/UBSan tests pass for production refusal and modeled failure paths. No
+hardware test of 0251. Active boot is 0250; its one permitted request has
+already been consumed. Phone remains with media chat.
+
 ## River torch USB gate and power diagnostics (2026-10-30)
 
 Patches 0249/0250 extend the opt-in snapshot with QG raw last ADC voltage,

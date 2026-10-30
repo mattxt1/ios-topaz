@@ -35,6 +35,9 @@ With `riverfs=1`, `river-torch-test --pulse` queues at most one test per boot.
 The result is 1 if the modeled sequence and shutdown readback completed, 2
 while queued, or negative on a failure: -1 mapping/opt-in, -2 register read,
 -3 prerequisite, -4 module/readiness, -5 LED enable, -6 shutdown verification,
--7 fault/read during the pulse. A result of 1 would not prove visible light or
+-7 fault/read during the pulse, -8 production interlock. A result of 1 would not prove visible light or
 timer behavior. Patch 0250 also refuses with USB present until the charger VBUS
 coordination is implemented. No version of this pulse has been run on River.
+Patch 0251 disables the pulse path altogether in production until QG freshness,
+charger configuration and timer behavior are established; only the host model
+enables it for tests.
