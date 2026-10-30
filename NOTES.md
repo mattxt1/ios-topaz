@@ -73,6 +73,8 @@ Read-only on-device inspection found the capture framework contains the string
 `com.apple.coremedia.capturesource`; the installed mediaserverd launch plist
 declares that Mach service and mediaserverd is running. This is a lead, not a
 verified identification of the synchronous call's endpoint or its root cause.
+On-device stat confirms /usr/sbin/applecamerad exists as a 0755 root-owned
+Mach-O executable; this does not establish that its launch condition was met.
 
 ## River guarded torch test candidate (2026-10-30)
 
