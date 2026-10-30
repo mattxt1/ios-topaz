@@ -1,5 +1,18 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River USB link lost after visual test (2026-10-30)
+
+User reports phone connected and responsive after successful folder, sleep/wake,
+open-app and switcher checks; Search still square and switcher wallpaper black.
+SSH timed out after the sleep/wake test, first with en6 active and address present;
+after user reconnect attempt en6 is inactive. Requested coordination for another
+RAM-only fastboot recovery; response pending. Candidate remains active by last
+verified state. Recheck fastboot product and exact image SHA256 before any boot;
+no partition flashing. App Library clearing of backdrop/dimming is already broadly
+applied to switcher too, so do not infer it solves black switcher; target settled
+transition and layer composition. Candidate includes a one-shot /tmp/style_dump
+for Search view inspection when SSH returns, without a display restart.
+
 ## River atomic plate/tint retry active; visual test pending (2026-10-29)
 
 User approved retry and coordinated restart. Atomically installed staged
