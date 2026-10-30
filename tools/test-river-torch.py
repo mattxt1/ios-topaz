@@ -2,7 +2,7 @@ from pathlib import Path
 import subprocess, sys, tempfile
 if len(sys.argv) != 2:
  raise SystemExit('usage: test-river-torch.py PATCHED_SWEET_KEYS_C')
-s=Path(sys.argv[1]).read_text(); a=s.index('static void\nriver_torch_pulse(void)\n{');b=s.index('\nSYSCTL_PROC(_debug, OID_AUTO, river_torch_test',a);fn=s[a:b]
+s=Path(sys.argv[1]).read_text(); a=s.index('static void\nriver_torch_pulse(void)\n{');b=s.index('\nSYSCTL_PROC(_debug, OID_AUTO, river_torch_test',a);fn=s[s.index('static bool\nri_power_read('):s.index('\n/* On-demand',s.index('static bool\nri_power_read('))]+s[a:b]
 preamble=r'''#include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>

@@ -1,5 +1,17 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River observer byte-width correction (2026-10-30)
+
+The existing ri_spmi_read returns the entire 32-bit data register even for
+one- or two-byte transactions; Android's arbiter copies only the requested
+bytes. Patch 0256 adds a width-masking wrapper for the new live power and
+charge samplers and experimental torch checks, leaving existing drivers alone.
+It does not explain the observed changes in the low-order bytes. Local arm64
+compile and sanitizer tests pass, including artificial nonzero unused bytes,
+unsupported widths, sampler failures and the interlocked torch model. It has
+not been CI-built or run on the phone. The preceding CI 41084628698 is running;
+build this additional patch after it completes. Keep USB connected as requested.
+
 ## River charger-state survey candidate (2026-10-30)
 
 User prefers to keep USB connected. USB-present does not establish charging.

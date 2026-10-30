@@ -1,0 +1,102 @@
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -3210,6 +3210,18 @@
+ }
+ SYSCTL_PROC(_debug, OID_AUTO, river_flash_survey, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
+             NULL, 0, river_flash_survey_sysctl, "A", "River flash PMIC survey");
++
++/* Ignore unused bytes in the arbiter's 32-bit data register. */
++static bool
++ri_power_read(vm_offset_t obs, unsigned addr, unsigned count, uint32_t *out)
++{
++ uint32_t value;
++ if ((count != 1 && count != 2 && count != 4) || !ri_spmi_read(obs, addr, count, &value)) return false;
++ if (count == 1) value &= 0xffu;
++ else if (count == 2) value &= 0xffffu;
++ *out = value;
++ return true;
++}
+ 
+ /* On-demand, read-only observer sample. The atomic gate prevents concurrent
+  * readers from racing on the same SPMI observer command registers. */
+@@ -3222,13 +3234,13 @@
+  uint32_t mod, en, s2, s3, cfg, threshold, usb, qstatus, qirq, soc, voltage, voltage2, vlo, vhi;
+  uint32_t obs_before = ri_rd(ri_power_qg, 8), obs_after;
+  int error = EIO;
+- if (ri_spmi_read(ri_power_led, 0x46, 1, &mod) && ri_spmi_read(ri_power_led, 0x4c, 1, &en) &&
+-     ri_spmi_read(ri_power_charger, 7, 1, &s2) && ri_spmi_read(ri_power_charger, 8, 1, &s3) &&
+-     ri_spmi_read(ri_power_charger, 0x60, 1, &cfg) && ri_spmi_read(ri_power_charger, 0x68, 1, &threshold) &&
+-     ri_spmi_read(ri_power_usb, 0x10, 1, &usb) && ri_spmi_read(ri_power_qg, 8, 1, &qstatus) &&
+-     ri_spmi_read(ri_power_qg, 0x10, 1, &qirq) && ri_spmi_read(ri_power_qg, 0xbf, 1, &soc) &&
+-     ri_spmi_read(ri_power_qg, 0xc0, 2, &voltage) && ri_spmi_read(ri_power_qg, 0xc0, 1, &vlo) &&
+-     ri_spmi_read(ri_power_qg, 0xc1, 1, &vhi) && ri_spmi_read(ri_power_qg, 0xc0, 2, &voltage2)) {
++ if (ri_power_read(ri_power_led, 0x46, 1, &mod) && ri_power_read(ri_power_led, 0x4c, 1, &en) &&
++     ri_power_read(ri_power_charger, 7, 1, &s2) && ri_power_read(ri_power_charger, 8, 1, &s3) &&
++     ri_power_read(ri_power_charger, 0x60, 1, &cfg) && ri_power_read(ri_power_charger, 0x68, 1, &threshold) &&
++     ri_power_read(ri_power_usb, 0x10, 1, &usb) && ri_power_read(ri_power_qg, 8, 1, &qstatus) &&
++     ri_power_read(ri_power_qg, 0x10, 1, &qirq) && ri_power_read(ri_power_qg, 0xbf, 1, &soc) &&
++     ri_power_read(ri_power_qg, 0xc0, 2, &voltage) && ri_power_read(ri_power_qg, 0xc0, 1, &vlo) &&
++     ri_power_read(ri_power_qg, 0xc1, 1, &vhi) && ri_power_read(ri_power_qg, 0xc0, 2, &voltage2)) {
+   obs_after = ri_rd(ri_power_qg, 8);
+   char note[512];
+   snprintf(note, sizeof(note), "led_mod=%#x led_en=%#x charger=%#x/%#x cfg=%#x threshold=%#x usb_irq=%#x qg=%#x/%#x soc=%#x voltage_raw=%#x bytes=%#x/%#x repeat=%#x obs_status=%#x/%#x", mod, en, s2, s3, cfg, threshold, usb, qstatus, qirq, soc, voltage, vlo, vhi, voltage2, obs_before, obs_after);
+@@ -3249,10 +3261,10 @@
+  if (!__atomic_compare_exchange_n(&ri_power_busy, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return EBUSY;
+  uint32_t type, subtype, state, err, limits, temp, command, path;
+  int error = EIO;
+- if (ri_spmi_read(ri_charge_chgr, 4, 1, &type) && ri_spmi_read(ri_charge_chgr, 5, 1, &subtype) &&
+-     ri_spmi_read(ri_charge_chgr, 6, 1, &state) && ri_spmi_read(ri_charge_chgr, 7, 1, &err) &&
+-     ri_spmi_read(ri_charge_chgr, 0xb, 1, &limits) && ri_spmi_read(ri_charge_chgr, 0xd, 1, &temp) &&
+-     ri_spmi_read(ri_charge_chgr, 0x42, 1, &command) && ri_spmi_read(ri_charge_dcdc, 0xb, 1, &path)) {
++ if (ri_power_read(ri_charge_chgr, 4, 1, &type) && ri_power_read(ri_charge_chgr, 5, 1, &subtype) &&
++     ri_power_read(ri_charge_chgr, 6, 1, &state) && ri_power_read(ri_charge_chgr, 7, 1, &err) &&
++     ri_power_read(ri_charge_chgr, 0xb, 1, &limits) && ri_power_read(ri_charge_chgr, 0xd, 1, &temp) &&
++     ri_power_read(ri_charge_chgr, 0x42, 1, &command) && ri_power_read(ri_charge_dcdc, 0xb, 1, &path)) {
+   char note[256];
+   snprintf(note, sizeof(note), "type=%#x subtype=%#x state=%#x errors=%#x modes=%#x temp=%#x command=%#x power_path=%#x", type, subtype, state, err, limits, temp, command, path);
+   error = sysctl_handle_string(oidp, note, 0, req);
+@@ -3324,15 +3336,15 @@
+  usb = ri_spmi_obs(core, 0x213);
+  if (!led || !ch || !charger || !qg || !usb) goto done;
+  result = -2;
+- if (!ri_spmi_read(led,4,1,&lt) || !ri_spmi_read(led,5,1,&ls) ||
+-     !ri_spmi_read(led,8,1,&st1) || !ri_spmi_read(led,9,1,&st2) ||
+-     !ri_spmi_read(led,0x46,1,&mod) || !ri_spmi_read(led,0x4c,1,&en) ||
+-     !ri_spmi_read(led,0x40,1,&timer) || !ri_spmi_read(led,0x43,1,&current) ||
+-     !ri_spmi_read(led,0x47,1,&ires) || !ri_spmi_read(led,0x49,1,&strobe) ||
+-     !ri_spmi_read(led,0x76,1,&derate) || !ri_spmi_read(charger,0x60,1,&cfg) ||
+-     !ri_spmi_read(charger,0x68,1,&threshold) || !ri_spmi_read(qg,8,1,&qstatus) ||
+-     !ri_spmi_read(qg,0x10,1,&qirq) || !ri_spmi_read(qg,0xbf,1,&soc) ||
+-     !ri_spmi_read(qg,0xc0,2,&voltage) || !ri_spmi_read(usb,0x10,1,&usbstatus)) goto done;
++ if (!ri_power_read(led,4,1,&lt) || !ri_power_read(led,5,1,&ls) ||
++     !ri_power_read(led,8,1,&st1) || !ri_power_read(led,9,1,&st2) ||
++     !ri_power_read(led,0x46,1,&mod) || !ri_power_read(led,0x4c,1,&en) ||
++     !ri_power_read(led,0x40,1,&timer) || !ri_power_read(led,0x43,1,&current) ||
++     !ri_power_read(led,0x47,1,&ires) || !ri_power_read(led,0x49,1,&strobe) ||
++     !ri_power_read(led,0x76,1,&derate) || !ri_power_read(charger,0x60,1,&cfg) ||
++     !ri_power_read(charger,0x68,1,&threshold) || !ri_power_read(qg,8,1,&qstatus) ||
++     !ri_power_read(qg,0x10,1,&qirq) || !ri_power_read(qg,0xbf,1,&soc) ||
++     !ri_power_read(qg,0xc0,2,&voltage) || !ri_power_read(usb,0x10,1,&usbstatus)) goto done;
+  result = -3; /* unknown or unsafe initial configuration; no writes */
+  if (lt != 0x18 || ls != 5 || st1 != 0 || (st2 & 0x10) || mod != 0 || en != 0 ||
+      timer != 0x93 || current != 0 || (ires & 3) != 0 || (strobe & 4) != 0 ||
+@@ -3343,7 +3355,7 @@
+  result = -4;
+  if (!ri_reset_wr(ch, led, 0x46, 0x80)) goto cleanup;
+  for (unsigned i=0;i<30;i++) {
+-  if (!ri_spmi_read(charger,7,1,&s2) || !ri_spmi_read(charger,8,1,&s3)) goto cleanup;
++  if (!ri_power_read(charger,7,1,&s2) || !ri_power_read(charger,8,1,&s3)) goto cleanup;
+   if ((s3 & 7) == 7) goto cleanup;
+   if (s2 & 0x10) { result = 0; break; }
+   ri_wait(10);
+@@ -3354,8 +3366,8 @@
+  result = 1;
+  for (unsigned i=0;i<10;i++) {
+   ri_wait(10);
+-  if (!ri_spmi_read(led,8,1,&st1) || !ri_spmi_read(led,9,1,&st2) ||
+-      !ri_spmi_read(charger,8,1,&s3) || st1 != 0 || (st2 & 0x10) || (s3 & 7) == 7) {
++  if (!ri_power_read(led,8,1,&st1) || !ri_power_read(led,9,1,&st2) ||
++      !ri_power_read(charger,8,1,&s3) || st1 != 0 || (st2 & 0x10) || (s3 & 7) == 7) {
+    result = -7; break;
+   }
+  }
