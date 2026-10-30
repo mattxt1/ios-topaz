@@ -9,8 +9,13 @@ percentage is synthetic; it cannot establish actual battery condition. The
 QG readiness/low-battery bits and LED protection state are still unmeasured.
 Patch applied exactly to the 0246 source; local arm64 compile and host
 opt-in, missing-channel, read-failure and complete-snapshot checks passed.
-No PMIC writes. River CI 41017972132 is building commit 8fa0cc4. Another
-coordinated RAM test remains pending; no
+No PMIC writes. River CI 41017972132 passed for commit 8fa0cc4; kernel
+SHA256 9a973918f9c3df1b56b6b2458d3c73be3b0aed730f7e59636cc655fc8b1ac3c8.
+The RAM-only image is staged at
+/Users/matttyson/Documents/Codex/2026-10-30/river-camera-microphone-flashlight/work/river-flash-survey2-boot.img
+SHA256 c1b720a9f3610f73c9d93802edc26aabbca92ab1e6b26fbb931eb20994cd08cd;
+same packaging checks as the first survey image. Another coordinated RAM
+test remains pending; no
 claim that QG status alone measures charge or proves safe torch operation.
 
 On the survey boot, video discovery again stalled. A pstack capture is in
