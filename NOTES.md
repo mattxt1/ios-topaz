@@ -1,5 +1,23 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River haptics integration investigation (2026-10-30)
+
+User reports light haptics on every screen and volume press. Patch 0243
+explicitly requests 25ms on new touch and 35ms on button down; this is a
+plausible explanation, not independent proof of the running code path. The
+currently verified backlight image includes the earlier haptics changes by
+ancestry, and the user previously reported physical taps on that boot. No
+evidence yet that iOS feedback generators or Core Haptics reach this driver.
+Apple's Core Haptics checks hardware capability before playback. A signed,
+read-only capability probe was built at
+/Users/matttyson/Documents/Codex/2026-10-30/river-haptics-integration/work/haptic-capability
+(source alongside); it has not been deployed or run. Shared-device test
+coordination requested from user; no device testing, display restart, reboot,
+or haptics implementation change has occurred in this investigation. Next:
+with user coordination, verify capability and controlled sysctl pulses and
+observe iOS feedback paths before selecting an integration. Preserve the
+working display and never flash partitions.
+
 ## River RAM boot after stalled display restart (2026-10-30)
 
 User placed River in fastboot; verified fastboot product river and recovery image
