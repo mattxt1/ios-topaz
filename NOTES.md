@@ -1,5 +1,20 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River camera discovery wait (2026-10-30)
+
+Repeated video discovery on the extended survey boot and captured pstack.
+Resolved the same-boot addresses with dladdr on device: main thread waits in
+mach_msg / xpc_connection_send_message_with_reply_sync, from CoreMedia
+FigXPCRemoteClientCreate and CMCapture FigCaptureSourceRemoteCopyCaptureSources.
+This is a synchronous remote capture client wait, not a measured camera count
+or established cause. No camera-named process appeared in that process sample;
+mediaserverd was running. Its sampled VideoToolbox work is not proven related.
+applecamerad launch plist declares IOResources applecamerad-property launch
+events and a Mach service; the binary path exists, but whether this is the
+specific awaited service is unverified. Temporary probe stopped; no daemon
+restart or system file changes. Stack and resolved symbols are in this chat's
+work/; preserve the UI while investigating service launch and capture stack.
+
 ## River guarded torch test candidate (2026-10-30)
 
 Patch 0248 adds an experimental, opt-in, once-per-boot `debug.river_torch_test`
