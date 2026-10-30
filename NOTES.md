@@ -9,8 +9,9 @@ charge samplers and experimental torch checks, leaving existing drivers alone.
 It does not explain the observed changes in the low-order bytes. Local arm64
 compile and sanitizer tests pass, including artificial nonzero unused bytes,
 unsupported widths, sampler failures and the interlocked torch model. It has
-not been CI-built or run on the phone. The preceding CI 41084628698 is running;
-build this additional patch after it completes. Keep USB connected as requested.
+not been CI-built or run on the phone. The preceding CI 41084628698 passed;
+CI 41085760391 is building commit 4b3957c including this patch. Keep USB
+connected as requested.
 
 ## River charger-state survey candidate (2026-10-30)
 
