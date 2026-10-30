@@ -10,7 +10,12 @@ safe operation. Local arm64 compile and host snapshot and torch failure-path
 tests pass, including the USB-present no-write case. No device boot or PMIC
 write of these patches. The charger control 0xff and threshold 0 also remain
 hard blockers. Do not force a pulse. Earlier 0248 CI 41019294076 passed;
-complete patch-set CI 41019965959 is building commit 80e1579. No device trial
+complete patch-set CI 41019965959 passed for commit 80e1579. Kernel SHA256
+a47fb77c4229b0cd0f0610983820e908350e15d71d756de16a4467c01a86c456.
+Checked RAM-only image:
+/Users/matttyson/Documents/Codex/2026-10-30/river-camera-microphone-flashlight/work/river-flash-survey3-boot.img
+SHA256 f97810ee159a879479ce120d99f70f16e058fed1e4c81a5c8492de4ff3919986.
+Golden payload, shim and blobs verified as before; riverbl=1 retained. No device trial
 of the pulse candidate; hardware timer, QG freshness, VBUS and cleanup remain
 unverified.
 
