@@ -1,5 +1,29 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River continuation: USB link down; tint-only candidate prepared (2026-10-29)
+
+This continuation read the latest handoff and confirmed macOS en6 is present but
+status inactive; SSH to 192.168.7.2 timed out. Asked user to reconnect USB, with
+no reboot or display restart. No device files or processes changed in this turn;
+last reported device state remains the previous entry, not newly verified.
+
+Prepared and signed scratch-only `work/cgprobe-tint-only.c` and
+`work/libcgprobe-tint-only.dylib` in the current Codex workspace. SHA256
+061b135f779d7befa1ca6d622be08495cc3213c12dccd76f5766ab764eab523e.
+It integrates switcher-only SBWallpaperEffectView alpha suppression into the
+existing switcher traversal and excludes the unsuccessful wrapper opacity
+changes. Compiled successfully with existing warnings. It is not deployed or
+visually tested; compare coverage with prior candidate when testing because the
+existing traversal skips app scene and snapshot subtrees. Preserve current binary
+and verify rollback before a coordinated restart.
+
+Existing `clear_blackout_in_view` hides UIImageView children of
+SBHomeScreenBackdropView. Earlier hierarchy capture shows such a view and image,
+but does not prove this is responsible for settled switcher black; investigate
+state and layer composition before drawing conclusions. The rounded-plates patch
+still applies cleanly, but its Search revision and folder stability remain
+unverified. No fixes for these three issues are claimed in this continuation.
+
 ## River switcher tint candidate visually passes; wallpaper still black (2026-10-29)
 
 User confirms with switcher candidate below: no pink tint, open apps render
