@@ -15,6 +15,14 @@ single-file compile passed; patch applied to saved post-0244 source and matched
 compiled input. CI, RAM boot and hardware result remain pending. Preserve UI,
 coordinate reboot with user, and do not flash.
 
+Survey kernel source is commit 3da50c7; River/macOS15 Actions run 41016688219
+is building. The golden backlight image has 607 command-line bytes, so planned
+test substitutes riverfs=1 for optional riverperf=1, preserving riverbl=1 and
+all other options. Golden payload reconstructs exactly from the prior kernel,
+ADT and firmware. Its Android header ID differs from the recalculated digest;
+all other boot bytes reconstruct exactly. The new image will preserve the raw
+shim/DTB and firmware and carry a recalculated header digest. No boot yet.
+
 ## River torch charger dependency audit (2026-10-30)
 
 Pinned Android SMB5 source shows FLASH_ACTIVE changes charger state and can
