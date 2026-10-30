@@ -1,5 +1,23 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River Search sibling-material candidate staged (2026-10-30)
+
+User confirmed Home Screen after RAM boot. One-shot existing /tmp/style_dump
+captured work/search-style.log without restarting. Current Search pill is 78x30,
+clear and contains its raster plate, while earlier complete hierarchy in
+work/pink-fix/switcher-tree.log shows a sibling SBIconListPageControl containing
+_UIPageControlContentView/MTMaterialView at the same frame behind the pill.
+This is a plausible square background source, not yet proved in current tree.
+
+Prepared scratch work/cgprobe-search-sibling.c on top of plate/tint test: hides
+material children of the page control content when Search pill lays out under
+SBFolderScrollAccessoryView, retaining indicator content. Compiled and staged
+/usr/local/lib/libcgprobe.search-sibling.dylib, readback SHA256
+a65f4b72200959fbbf6d63740c239bd1750eeeead0a4ff6314df5b7ce6073d3d.
+Not active or visually verified. Asked user to coordinate display restart;
+response pending. Use atomic rput, preserve previous rollback and test dots as
+well as Search, folders and apps. Switcher wallpaper remains unresolved.
+
 ## River RAM reboot after USB link loss (2026-10-30)
 
 User entered fastboot and authorized recovery. Verified product river and image
