@@ -5,9 +5,10 @@
 This continuation read the latest handoff and confirmed macOS en6 is present but
 status inactive; SSH to 192.168.7.2 timed out. Asked user to reconnect USB, with
 no reboot or display restart. User reported plugged in, but USB profiler still
-showed no River device, en6 remained inactive and SSH timed out; asked user to
-check phone power and cable/port without restarting. No device files or processes
-changed in this turn;
+returned no output, en6 remained inactive and SSH timed out. User reports iOS
+is responsive. Subsequent IORegistry inspection confirms the River XNU USB
+device is enumerated; the Ethernet link is inactive and has no IP. Asked user
+to replug phone end without restarting. No device files or processes changed;
 last reported device state remains the previous entry, not newly verified.
 
 Prepared and signed scratch-only `work/cgprobe-tint-only.c` and
