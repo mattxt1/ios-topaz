@@ -7,8 +7,10 @@ With cached-source performance candidate SHA256
 user reports switcher scrolling feels about the same and phone froze during
 wallpaper customization. Cause and candidate relationship unproven. At user
 request announced and terminated SpringBoard745; SpringBoard843 started and
-backboardd58 remained running. User asked to confirm visual recovery; response
-pending. No library replacement in this respring; cached candidate remains active.
+backboardd58 remained running. User reports screen did not recover. SpringBoard843, PosterBoard747, and
+backboardd58 are running; captured stacks, no conclusion yet. Asked user to
+coordinate a broader display restart and restore previous tested library;
+response pending. No library replacement in this respring; cached candidate remains active.
 The candidate has no user-observed performance benefit and wallpaper-change
 correctness is unverified. Consider coordinated atomic rollback to prior tested
 replica before further testing. Avoid claiming freeze is caused by this change.
