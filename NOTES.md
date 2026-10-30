@@ -1,5 +1,19 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River fuel gauge and flash protection snapshot (2026-10-30)
+
+User approved a second RAM-only boot; fastboot product river and image SHA256
+c1b720a9f3610f73c9d93802edc26aabbca92ab1e6b26fbb931eb20994cd08cd verified.
+Send and boot OKAY (0.795s), no flash. Read-only snapshot: LED type 0x18,
+subtype 0x05, statuses 0/0, module and enable 0, timer 0x93, current 0,
+ires 0, strobe 1, derate 0x9f; charger type 2 subtype 0x90, status2/3/5 0,
+control 0xff, SOC-disable threshold 0; QG type 0x0d subtype 3, status 0xc1,
+IRQ 0. Android source identifies QG status bits 7 and 0 as ready and battery
+present, IRQ bit 1 as low-battery; these do not give actual SOC. Android
+configures a 10% SOC-disable threshold, but observed threshold is zero and
+control 0xff remains unexplained. No torch activation or PMIC writes yet.
+UI visual confirmation pending; phone remains with media chat.
+
 ## River flash protection survey extension (2026-10-30)
 
 Patch 0247 extends the opt-in snapshot with PMI632 QG SID2/48 identity,
