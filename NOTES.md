@@ -16,7 +16,12 @@ compiled input. CI, RAM boot and hardware result remain pending. Preserve UI,
 coordinate reboot with user, and do not flash.
 
 Survey kernel source is commit 3da50c7; River/macOS15 Actions run 41016688219
-is building. The golden backlight image has 607 command-line bytes, so planned
+passed. Kernel SHA256 469dca473715ce5fb22281cd59fab8a43ed4c2116532d5a306fa180a92e71edf;
+checksum and River/survey markers verified. A RAM-only survey image is staged at
+/Users/matttyson/Documents/Codex/2026-10-30/river-camera-microphone-flashlight/work/river-flash-survey-boot.img
+SHA256 e0eb58c1b4299813ed71552703e8f794ac68b54e6c59cc49b2c6d2d08e70b94e.
+Host harness passes opt-in, absent channel, read-failure and snapshot cases.
+The golden backlight image has 607 command-line bytes, so the test
 test substitutes riverfs=1 for optional riverperf=1, preserving riverbl=1 and
 all other options. Golden payload reconstructs exactly from the prior kernel,
 ADT and firmware. Its Android header ID differs from the recalculated digest;
