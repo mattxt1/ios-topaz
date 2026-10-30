@@ -1,5 +1,18 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River live power sampler candidate (2026-10-30)
+
+Patch 0252 adds `debug.river_power_sample` on opt-in survey boots to read
+LED enable, charger status, USB presence and QG raw SOC/voltage on demand.
+It uses an atomic gate to serialize its own observer transactions; it performs
+no PMIC register writes. The 0251 production interlock prevents simultaneous
+experimental torch access. The phone-tools reader accepts --live. Local arm64
+compile and ASan/UBSan model tests passed (unavailable, busy, read error and
+successful sample), as did the interlocked torch tests. Not yet CI-built or
+booted. Sampling may reveal change over time but cannot alone establish ADC
+freshness or SOC correctness. CI 41021314224 is building 0251; wait for it
+before building the complete patch set.
+
 ## River torch guard hardware check and production interlock (2026-10-30)
 
 User approved RAM-only boot; verified product river and SHA256

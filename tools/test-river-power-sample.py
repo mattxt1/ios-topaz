@@ -1,0 +1,23 @@
+from pathlib import Path
+import subprocess, sys, tempfile
+if len(sys.argv) != 2: raise SystemExit('usage: test-river-power-sample.py PATCHED_SWEET_KEYS_C')
+s=Path(sys.argv[1]).read_text();a=s.index('static int\nriver_power_sample_sysctl');b=s.index('\nSYSCTL_PROC(_debug, OID_AUTO, river_power_sample',a);fn=s[a:b]
+pre=r'''#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
+typedef uintptr_t vm_offset_t;
+struct sysctl_req { const char *newptr; };
+#define SYSCTL_HANDLER_ARGS (void *oidp, void *arg1, int arg2, struct sysctl_req *req)
+static int ri_power_ready,ri_power_busy,calls,failat;
+static vm_offset_t ri_power_led=1,ri_power_charger=2,ri_power_qg=3,ri_power_usb=4;
+static bool ri_spmi_read(vm_offset_t p,unsigned reg,unsigned n,uint32_t*v){(void)p;(void)n;calls++;if(calls==failat)return false;*v=reg;return true;}
+static int sysctl_handle_string(void *o,char*s,int l,struct sysctl_req*r){(void)o;(void)l;(void)r;assert(strstr(s,"voltage_raw=0xc0"));return 0;}
+'''
+main=r'''int main(void){struct sysctl_req r={0};assert(river_power_sample_sysctl(0,0,0,&r)==ENXIO);ri_power_ready=1;ri_power_busy=1;assert(river_power_sample_sysctl(0,0,0,&r)==EBUSY);ri_power_busy=0;failat=4;assert(river_power_sample_sysctl(0,0,0,&r)==EIO&&ri_power_busy==0);calls=0;failat=0;assert(river_power_sample_sysctl(0,0,0,&r)==0&&calls==11&&ri_power_busy==0);puts("PASS: disabled, concurrency gate, read failure and live snapshot");}'''
+with tempfile.TemporaryDirectory(prefix='river-power-test-') as d:
+ src=Path(d)/'test.c'; exe=Path(d)/'test'; src.write_text(pre+fn+main)
+ subprocess.run(['clang','-fsanitize=address,undefined',str(src),'-o',str(exe)],check=True)
+ subprocess.run([str(exe)],check=True)

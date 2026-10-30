@@ -1,0 +1,54 @@
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -3155,7 +3155,8 @@
+ }
+ /* Opt-in snapshot of PMI632 flash and charger registers. No PMIC writes. */
+ static char ri_flash_note[512] = "not requested";
+-static int ri_flash_done;
++static int ri_flash_done, ri_power_busy, ri_power_ready;
++static vm_offset_t ri_power_led, ri_power_charger, ri_power_qg, ri_power_usb;
+ static void
+ river_flash_survey(void)
+ {
+@@ -3191,6 +3192,8 @@
+  if (!usb || !ri_spmi_read(usb, 0x10, 1, &usbstatus)) {
+   snprintf(note, sizeof(note), "USB charger observer missing or read failed"); goto done;
+  }
++ ri_power_led = led; ri_power_charger = charger; ri_power_qg = qg; ri_power_usb = usb;
++ __atomic_store_n(&ri_power_ready, 1, __ATOMIC_RELEASE);
+  snprintf(note, sizeof(note), "LED type=%#x subtype=%#x status=%#x/%#x mod=%#x en=%#x timer=%#x current=%#x ires=%#x strobe=%#x derate=%#x; charger type=%#x subtype=%#x status2=%#x status3=%#x status5=%#x control=%#x threshold=%#x usb_irq=%#x; qg type=%#x subtype=%#x status=%#x irq=%#x soc=%#x voltage_raw=%#x", lt, ls, status, status2, mod, en, timer, current, ires, strobe, derate, ct, cs, s2, s3, s5, cfg, threshold, usbstatus, qtype, qsub, qstatus, qirq, qsoc, qvoltage);
+  done:
+  strlcpy(ri_flash_note, note, sizeof(ri_flash_note));
+@@ -3206,6 +3209,32 @@
+ SYSCTL_PROC(_debug, OID_AUTO, river_flash_survey, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
+             NULL, 0, river_flash_survey_sysctl, "A", "River flash PMIC survey");
+ 
++/* On-demand, read-only observer sample. The atomic gate prevents concurrent
++ * readers from racing on the same SPMI observer command registers. */
++static int
++river_power_sample_sysctl SYSCTL_HANDLER_ARGS
++{
++ if (!__atomic_load_n(&ri_power_ready, __ATOMIC_ACQUIRE)) return ENXIO;
++ int expected = 0;
++ if (!__atomic_compare_exchange_n(&ri_power_busy, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return EBUSY;
++ uint32_t mod, en, s2, s3, cfg, threshold, usb, qstatus, qirq, soc, voltage;
++ int error = EIO;
++ if (ri_spmi_read(ri_power_led, 0x46, 1, &mod) && ri_spmi_read(ri_power_led, 0x4c, 1, &en) &&
++     ri_spmi_read(ri_power_charger, 7, 1, &s2) && ri_spmi_read(ri_power_charger, 8, 1, &s3) &&
++     ri_spmi_read(ri_power_charger, 0x60, 1, &cfg) && ri_spmi_read(ri_power_charger, 0x68, 1, &threshold) &&
++     ri_spmi_read(ri_power_usb, 0x10, 1, &usb) && ri_spmi_read(ri_power_qg, 8, 1, &qstatus) &&
++     ri_spmi_read(ri_power_qg, 0x10, 1, &qirq) && ri_spmi_read(ri_power_qg, 0xbf, 1, &soc) &&
++     ri_spmi_read(ri_power_qg, 0xc0, 2, &voltage)) {
++  char note[256];
++  snprintf(note, sizeof(note), "led_mod=%#x led_en=%#x charger=%#x/%#x cfg=%#x threshold=%#x usb_irq=%#x qg=%#x/%#x soc=%#x voltage_raw=%#x", mod, en, s2, s3, cfg, threshold, usb, qstatus, qirq, soc, voltage);
++  error = sysctl_handle_string(oidp, note, 0, req);
++ }
++ __atomic_store_n(&ri_power_busy, 0, __ATOMIC_RELEASE);
++ return error;
++}
++SYSCTL_PROC(_debug, OID_AUTO, river_power_sample, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
++            NULL, 0, river_power_sample_sysctl, "A", "River live power sample");
++
+ static vm_offset_t
+ ri_spmi_chnl(vm_offset_t core, unsigned ppid)
+ {
