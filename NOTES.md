@@ -11,7 +11,9 @@ charger state together with online power path; readings must be validated on
 River before concluding charging state. Local arm64 compile, signed client,
 and ASan/UBSan unavailable/busy/error/success model tests passed. No device
 boot or hardware read of this candidate yet. Production torch remains
-interlocked; do not change charging settings or USB connection.
+interlocked; do not change charging settings or USB connection. Combined CI
+41084628698 at commit eb8940e is queued; earlier runs 41084246970 and
+41084377105 were superseded by later source changes.
 
 ## River gauge read-integrity candidate (2026-10-30)
 
