@@ -1,5 +1,16 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River media offline survey (2026-10-30)
+
+Source-based hardware and integration map: RIVER-MEDIA-HANDOFF.md. River
+Android sources describe PMI632 torch0, a CS47L35 audio codec, and three
+camera sensor candidates; none has been verified on this iOS boot. Torch is
+the first proposed milestone; current limits and the complete power/fault
+sequence require driver audit. No device access, restart, register writes or
+implementation changes were performed. The user directed the haptics chat to
+use the phone first; it confirmed it will hand off when done. Preserve the
+working UI and coordinate all device testing.
+
 ## River haptics integration investigation (2026-10-30)
 
 User reports light haptics on every screen and volume press. Patch 0243
