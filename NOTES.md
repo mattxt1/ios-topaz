@@ -14,9 +14,10 @@ contents; it does not modify the scene window. The image identity, tint, and
 layout/lifecycle effects are unverified. Built/staged on device as
 /usr/local/lib/libcgprobe.switcher-replica.dylib; readback SHA256
 9e4079e51924fde122bfca27a1125e73553d782ea7e8a84894e5a5f75c09f6ef.
-Asked user to coordinate restart; response pending. If tested, verify image is
-correct, switcher scroll, Search/folders, apps after exit, sleep/wake; rollback
-atomically if regression. Keep prior candidate locally in work/.
+User approved restart; atomically installed and readback verified hash above.
+SpringBoard526 restarted as PID557, backboardd58 unchanged. Asked user to check
+correct wallpaper, scrolling and open app; response pending. Verify Search,
+folders and sleep/wake too. Prior candidate kept locally in work/ for rollback.
 
 ## River scene-background switcher test negative (2026-10-30)
 
