@@ -1,0 +1,48 @@
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -3157,6 +3157,7 @@
+ static char ri_flash_note[512] = "not requested";
+ static int ri_flash_done, ri_power_busy, ri_power_ready;
+ static vm_offset_t ri_power_led, ri_power_charger, ri_power_qg, ri_power_usb;
++static vm_offset_t ri_charge_chgr, ri_charge_dcdc;
+ static void
+ river_flash_survey(void)
+ {
+@@ -3193,6 +3194,7 @@
+   snprintf(note, sizeof(note), "USB charger observer missing or read failed"); goto done;
+  }
+  ri_power_led = led; ri_power_charger = charger; ri_power_qg = qg; ri_power_usb = usb;
++ ri_charge_chgr = ri_spmi_obs(core, 0x210); ri_charge_dcdc = ri_spmi_obs(core, 0x211);
+  __atomic_store_n(&ri_power_ready, 1, __ATOMIC_RELEASE);
+  snprintf(note, sizeof(note), "LED type=%#x subtype=%#x status=%#x/%#x mod=%#x en=%#x timer=%#x current=%#x ires=%#x strobe=%#x derate=%#x; charger type=%#x subtype=%#x status2=%#x status3=%#x status5=%#x control=%#x threshold=%#x usb_irq=%#x; qg type=%#x subtype=%#x status=%#x irq=%#x soc=%#x voltage_raw=%#x", lt, ls, status, status2, mod, en, timer, current, ires, strobe, derate, ct, cs, s2, s3, s5, cfg, threshold, usbstatus, qtype, qsub, qstatus, qirq, qsoc, qvoltage);
+  done:
+@@ -3238,6 +3240,29 @@
+ SYSCTL_PROC(_debug, OID_AUTO, river_power_sample, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
+             NULL, 0, river_power_sample_sysctl, "A", "River live power sample");
+ 
++/* Read-only charging-state observation; a USB connection alone is not charge. */
++static int
++river_charge_sample_sysctl SYSCTL_HANDLER_ARGS
++{
++ if (!__atomic_load_n(&ri_power_ready, __ATOMIC_ACQUIRE) || !ri_charge_chgr || !ri_charge_dcdc) return ENXIO;
++ int expected = 0;
++ if (!__atomic_compare_exchange_n(&ri_power_busy, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return EBUSY;
++ uint32_t type, subtype, state, err, limits, temp, command, path;
++ int error = EIO;
++ if (ri_spmi_read(ri_charge_chgr, 4, 1, &type) && ri_spmi_read(ri_charge_chgr, 5, 1, &subtype) &&
++     ri_spmi_read(ri_charge_chgr, 6, 1, &state) && ri_spmi_read(ri_charge_chgr, 7, 1, &err) &&
++     ri_spmi_read(ri_charge_chgr, 0xb, 1, &limits) && ri_spmi_read(ri_charge_chgr, 0xd, 1, &temp) &&
++     ri_spmi_read(ri_charge_chgr, 0x42, 1, &command) && ri_spmi_read(ri_charge_dcdc, 0xb, 1, &path)) {
++  char note[256];
++  snprintf(note, sizeof(note), "type=%#x subtype=%#x state=%#x errors=%#x modes=%#x temp=%#x command=%#x power_path=%#x", type, subtype, state, err, limits, temp, command, path);
++  error = sysctl_handle_string(oidp, note, 0, req);
++ }
++ __atomic_store_n(&ri_power_busy, 0, __ATOMIC_RELEASE);
++ return error;
++}
++SYSCTL_PROC(_debug, OID_AUTO, river_charge_sample, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
++            NULL, 0, river_charge_sample_sysctl, "A", "River charger state sample");
++
+ static vm_offset_t
+ ri_spmi_chnl(vm_offset_t core, unsigned ppid)
+ {

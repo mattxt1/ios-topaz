@@ -1,5 +1,18 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River charger-state survey candidate (2026-10-30)
+
+User prefers to keep USB connected. USB-present does not establish charging.
+Patch 0255 adds a read-only `debug.river_charge_sample` for PMI632 charger
+SID2/10 state, error, charging-mode, temperature and enable registers and
+DCDC SID2/11 power-path status, with the existing observer serialization gate.
+`river-flash-survey --charge` reads it. The Android SMB5 driver interprets
+charger state together with online power path; readings must be validated on
+River before concluding charging state. Local arm64 compile, signed client,
+and ASan/UBSan unavailable/busy/error/success model tests passed. No device
+boot or hardware read of this candidate yet. Production torch remains
+interlocked; do not change charging settings or USB connection.
+
 ## River gauge read-integrity candidate (2026-10-30)
 
 While the user connects a charger, device tests are paused. Android's SPMI
