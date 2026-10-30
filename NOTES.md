@@ -24,13 +24,17 @@ plausible explanation, not independent proof of the running code path. The
 currently verified backlight image includes the earlier haptics changes by
 ancestry, and the user previously reported physical taps on that boot. No
 evidence yet that iOS feedback generators or Core Haptics reach this driver.
-Apple's Core Haptics checks hardware capability before playback. A signed,
-read-only capability probe was built at
+Apple's Core Haptics checks hardware capability before playback. A signed
+capability probe was built at
 /Users/matttyson/Documents/Codex/2026-10-30/river-haptics-integration/work/haptic-capability
-(source alongside); it has not been deployed or run. Shared-device test
-coordination requested from user; no device testing, display restart, reboot,
-or haptics implementation change has occurred in this investigation. Next:
-with user coordination, verify capability and controlled sysctl pulses and
+(source alongside). With user approval, verified fastboot product river and
+backlight image SHA256 ae1c78ee129e9747a25454d0edf5c5ff6c0eba90d25d0655c1dc31fa580754bc,
+then RAM-booted it successfully to restore inactive USB Ethernet; no partition
+flashed. On device the probe reported supportsHaptics=0, supportsAudio=1.
+Boot haptics diagnostics were already absent from dmesg. The installed
+vibrate tool exists, but no controlled pulse has been sent; asked user to hold
+the phone and confirm readiness for 50ms, response pending. No display restart
+or haptics implementation change. Next: coordinate controlled pulses and
 observe iOS feedback paths before selecting an integration. Preserve the
 working display and never flash partitions.
 
