@@ -1,5 +1,13 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River RAM boot after stalled display restart (2026-10-30)
+
+User placed River in fastboot; verified fastboot product river and recovery image
+SHA256 ae1c78ee129e9747a25454d0edf5c5ff6c0eba90d25d0655c1dc31fa580754bc.
+fastboot boot succeeded, no partitions flashed. Previous unblurred tested library
+was atomically restored and verified before reboot. Asked user to report when
+lock/Home Screen appears; response pending. Do not claim full recovery yet.
+
 ## River display restart stuck; fastboot recovery requested (2026-10-30)
 
 User reported SpringBoard-only restart did not recover screen and approved
