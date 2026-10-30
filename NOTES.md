@@ -1,5 +1,18 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River scene-background switcher test negative (2026-10-30)
+
+User reports switcher still black with active scene-background test hash
+c7cb3093fce0650180ef519f8826e917d7d67271555390e56a110ba259c7e171.
+This rules out clearing SBRootSceneWindow background alone as sufficient; it
+does not exclude the scene host contents. User asked whether apps render
+normally and to coordinate restoration of previous search-sibling candidate;
+response pending. Candidate still active. Current-session style dump contains
+full-screen UIImageViews in wallpaper trees with 1125x2436 32-bit CGImages;
+image identity and pixels not yet verified. Potential separate switcher-only
+wallpaper image fallback is a hypothesis, not an established fix. Preserve
+normal app rendering and do not hide or modify app scene hosts.
+
 ## River settled switcher scene-window hypothesis staged (2026-10-30)
 
 User opened settled switcher; existing one-shot dump captured
