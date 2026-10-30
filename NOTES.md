@@ -1,5 +1,21 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River live power sampler hardware check (2026-10-30)
+
+User approved RAM boot; fastboot product river and image SHA256
+2c0dc12b59757e9b86872e088a11e077516acd925df0bf7a35f2b0b9eae0f101 verified;
+send and boot OKAY (0.797s), no partitions flashed. On-device live sampler
+reported LED module/enable 0, charger status 0/0, cfg 0xff, threshold 0,
+USB IRQ 0x10. Three reads returned QG status/IRQ 0xc1/0x2, 0xc1/0x2,
+0xc3/0x2; SOC raw 0x2, 0x2, 0; ADC raw 0x4390, 0, 0x4345. Android QG
+defines IRQ bit 1 as low voltage; ADC 0x4390 converts to 3,366,441 uV under
+the Android conversion, but the varying values, including zero, mean readings
+and freshness are not validated. Do not claim actual SOC or a precise voltage.
+User asked to connect a charger; response pending. Approved no-light interlock
+check returned -8, the production path that exits before PMIC writes.
+Live sample is available on this boot; no physical torch output attempted.
+Investigate QG/SPMI read fidelity and charging state before any torch change.
+
 ## River live power sampler candidate (2026-10-30)
 
 Patch 0252 adds `debug.river_power_sample` on opt-in survey boots to read
