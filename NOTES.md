@@ -12,8 +12,10 @@ Patch 0257 adds a serialized read-only comparison of 64 immediate and 64
 values, transaction errors and DONE on the first status check. Timing results
 do not establish correctness or freshness. Local arm64 compile, signed client
 and ASan/UBSan unavailable, busy, comparison and failure-accounting tests pass.
-CI 41091477286 is queued for commit d16f7f4; not yet booted. USB stays
-connected per user request; no PMIC
+CI 41091477286 failed before acquiring a macOS ARM runner; GitHub annotated
+hosted runner capacity constraints, with no compiler result. Retrying as
+41093918442 using the standard macOS 15 Intel runner (River remains arm64);
+repository is public. Not yet booted. USB stays connected per user request; no PMIC
 control writes, charging configuration changes or torch output.
 
 ## River charger-state hardware survey (2026-10-30)
