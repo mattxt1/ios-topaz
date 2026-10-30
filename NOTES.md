@@ -1,5 +1,24 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River settled switcher scene-window hypothesis staged (2026-10-30)
+
+User opened settled switcher; existing one-shot dump captured
+current workspace work/switcher-settled.log. SBRootSceneWindow is visible
+between the wallpaper/Home windows and switcher, full-screen, background
+UICachedDeviceWhiteColor, hosting scene views. Its actual color/contents and
+whether it causes black are unproven. Existing switcher clear traversal does
+not target this window. Prepared scratch cgprobe-switcher-scene.c to save and
+clear only that window's background during switcher layout and restore it on
+SBFluidSwitcherViewController viewDidDisappear:. Scene content is not hidden;
+lifecycle correctness and live app behavior are untested.
+
+Built and staged /usr/local/lib/libcgprobe.switcher-scene.dylib, readback SHA256
+c7cb3093fce0650180ef519f8826e917d7d67271555390e56a110ba259c7e171.
+User asked to coordinate restart; response pending. Current active library
+remains search-sibling candidate a65f4b72200959fbbf6d63740c239bd1750eeeead0a4ff6314df5b7ce6073d3d.
+If tested, atomically install, verify, and check wallpaper, open apps after exit,
+switcher scrolling, Search, folders and sleep/wake; rollback promptly if broken.
+
 ## River Search and folder candidate visually passes (2026-10-30)
 
 User confirmed Search rounded and page dots and closed folder icons look good
