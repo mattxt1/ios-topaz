@@ -2,14 +2,18 @@ from pathlib import Path
 import subprocess, sys, tempfile
 if len(sys.argv) != 2:
  raise SystemExit('usage: test-river-torch.py PATCHED_SWEET_KEYS_C')
-s=Path(sys.argv[1]).read_text(); a=s.index('static void\nriver_torch_pulse(void)\n{');b=s.index('\nstatic int\nriver_torch_test_sysctl',a);fn=s[a:b]
+s=Path(sys.argv[1]).read_text(); a=s.index('static void\nriver_torch_pulse(void)\n{');b=s.index('\nSYSCTL_PROC(_debug, OID_AUTO, river_torch_test',a);fn=s[a:b]
 preamble=r'''#include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <errno.h>
+struct sysctl_req { void *newptr; };
+#define SYSCTL_HANDLER_ARGS (void *oidp, void *arg1, int arg2, struct sysctl_req *req)
+static int sysctl_handle_int(void *o,int *v,int x,struct sysctl_req *r){(void)o;(void)x;if(r->newptr)*v=*(int*)r->newptr;return 0;}
 typedef uintptr_t vm_offset_t;
-static int ri_torch_status, cfg=255, threshold=0, writes, waitms, fault, badread, failwrite, no_vreg, persistent_failure, usb_attached, seq[16];
-static bool PE_parse_boot_argn(const char *a,int*b,unsigned c){(void)a;(void)c;*b=1;return true;}
+static int ri_torch_status, ri_torch_request, ri_torch_attempted, bootarg=1, cfg=255, threshold=0, writes, waitms, fault, badread, failwrite, no_vreg, persistent_failure, usb_attached, seq[16];
+static bool PE_parse_boot_argn(const char *a,int*b,unsigned c){(void)a;(void)c;*b=bootarg;return bootarg!=0;}
 static vm_offset_t ri_map(vm_offset_t x){(void)x;return 1;}
 static uint32_t ri_rd(vm_offset_t x,unsigned y){(void)x;(void)y;return 0x20010000;}
 static vm_offset_t ri_spmi_obs(vm_offset_t x,unsigned p){(void)x;return p;}
@@ -32,7 +36,12 @@ int main(void){
  writes=0;failwrite=0;no_vreg=1;waitms=0;river_torch_pulse();assert(ri_torch_status==-4&&writes==3&&waitms==300);
  writes=0;no_vreg=0;persistent_failure=1;river_torch_pulse();assert(ri_torch_status==-6&&writes==7);
  writes=0;persistent_failure=0;badread=1;river_torch_pulse();assert(ri_torch_status==-2&&writes==0);
- puts("PASS: real snapshot refuses writes; guarded pulse, fault, write failure and cleanup");
+ struct sysctl_req req; int cmd=1; req.newptr=&cmd; bootarg=0;
+ assert(river_torch_test_sysctl(0,0,0,&req)==ENXIO && ri_torch_request==0);
+ bootarg=1; cmd=2; assert(river_torch_test_sysctl(0,0,0,&req)==EINVAL);
+ cmd=1; assert(river_torch_test_sysctl(0,0,0,&req)==0 && ri_torch_request==1 && ri_torch_status==2);
+ assert(river_torch_test_sysctl(0,0,0,&req)==EBUSY);
+ puts("PASS: refusal, pulse, fault, timeout, cleanup and one-shot request");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='river-torch-test-') as d:
