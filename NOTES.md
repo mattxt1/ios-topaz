@@ -13,8 +13,8 @@ risk and must not be repeated. No visual test occurred.
 Immediately restored prior switcher candidate with rput's atomic rename from
 verified local readback. New readback matches
 32efe708a0283fa242de3e9b842437b9e516d1b03b0ea9e6ace36e7e6227d7db;
-SpringBoard506 is running, backboardd58 unchanged. User asked to confirm visible
-recovery; response pending. The pink-fixed rollback remains separately preserved.
+SpringBoard506 is running, backboardd58 unchanged. User confirmed Home Screen returned. Asked to coordinate retry using atomic
+replacement; response pending. The pink-fixed rollback remains separately preserved.
 The plate/tint candidate remains only as a staged file and must not be considered
 validated. Coordinate any future display restart and use atomic replacement.
 
