@@ -48,6 +48,9 @@ reported QG 0xc1/0x2, SOC 0x2 and voltage 0x4305, 0x430a, 0x430a (about
 3.34 V under Android's conversion), with LED module/enable 0. Values appear
 lower than earlier samples but fidelity and freshness remain unverified; no
 claim is made that USB is charging or discharging. Continue on USB as requested.
+Later read reported charger control 0 once and five immediate reads returned
+0xff; LED enable stayed 0. The difference is observed, not diagnosed. It
+reinforces the need to validate observer transactions and register behavior.
 
 ## River live power sampler candidate (2026-10-30)
 
