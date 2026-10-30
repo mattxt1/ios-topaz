@@ -6,8 +6,10 @@ User approved retry and coordinated restart. Atomically installed staged
 plate/tint candidate using rput; readback SHA256
 081bd4c888598890a387658e1cc6753b55d9a3a750109bebcb74fd9ad903a6df.
 SpringBoard506 restarted as PID545; backboardd58 unchanged. No launch failure
-observed on initial check. User asked to assess Search, folder flicker, live apps,
-switcher tint/background, scrolling and sleep/wake; response pending. Previous
+observed on initial check. User confirms closed folder icons working, sleep/wake works, open apps and
+switcher work. Search remains square and switcher wallpaper remains black.
+These observations validate folder behavior for this session, not Search or
+wallpaper. Subsequent SSH timed out; check link before changing device state. Previous
 candidate rollback preserved in current workspace work/current.readback and
 pink-fixed rollback remains on phone. This does not establish why previous
 in-place deployment failed, nor visual correctness.
