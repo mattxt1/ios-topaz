@@ -1,0 +1,66 @@
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -42,6 +42,7 @@
+ static uint32_t ri_pon_off;
+ static vm_offset_t ri_spmi_obs(vm_offset_t core, unsigned ppid);
+ static bool ri_spmi_read(vm_offset_t obs, unsigned addr, unsigned count, uint32_t *v);
++static void river_flash_survey(void);
+ static bool ri_started, ri_pon_ok, ri_touch_ok;
+ static vm_offset_t ri_qup2;
+ static bool ri_haptics_ok;
+@@ -3012,6 +3013,7 @@
+ ri_thread(void *arg, wait_result_t result)
+ {
+  (void)arg; (void)result; ri_wait(3000); ri_probe();
++ river_flash_survey();
+  uint32_t wcnss = 0;
+  if (PE_parse_boot_argn("riverwcnssprobe", &wcnss, sizeof(wcnss)) && wcnss) {
+   thread_t wt;
+@@ -3148,6 +3150,47 @@
+  }
+  return 0;
+ }
++/* Opt-in snapshot of PMI632 flash and charger registers. No PMIC writes. */
++static char ri_flash_note[512] = "not requested";
++static int ri_flash_done;
++static void
++river_flash_survey(void)
++{
++ int enabled = 0;
++ if (!PE_parse_boot_argn("riverflashsurvey", &enabled, sizeof(enabled)) || enabled != 1) return;
++ char note[512];
++ vm_offset_t core = ri_map(0x0200f000);
++ if (!core) { snprintf(note, sizeof(note), "SPMI core map failed"); goto done; }
++ uint32_t version = ri_rd(core, 0);
++ if (version < 0x20010000 || version >= 0x50000000) {
++  snprintf(note, sizeof(note), "unsupported SPMI version=%#x", version); goto done;
++ }
++ vm_offset_t led = ri_spmi_obs(core, 0x3d3), charger = ri_spmi_obs(core, 0x2a6);
++ if (!led || !charger) { snprintf(note, sizeof(note), "observer missing led=%d charger=%d", !!led, !!charger); goto done; }
++ uint32_t lt, ls, status, mod, en, ct, cs, s2, s3, s5, cfg;
++ if (!ri_spmi_read(led, 4, 1, &lt) || !ri_spmi_read(led, 5, 1, &ls) ||
++     !ri_spmi_read(led, 8, 1, &status) || !ri_spmi_read(led, 0x46, 1, &mod) ||
++     !ri_spmi_read(led, 0x4c, 1, &en) || !ri_spmi_read(charger, 4, 1, &ct) ||
++     !ri_spmi_read(charger, 5, 1, &cs) || !ri_spmi_read(charger, 7, 1, &s2) ||
++     !ri_spmi_read(charger, 8, 1, &s3) || !ri_spmi_read(charger, 0xb, 1, &s5) ||
++     !ri_spmi_read(charger, 0x60, 1, &cfg)) {
++  snprintf(note, sizeof(note), "observer read failed"); goto done;
++ }
++ snprintf(note, sizeof(note), "LED type=%#x subtype=%#x status=%#x mod=%#x en=%#x; charger type=%#x subtype=%#x status2=%#x status3=%#x status5=%#x control=%#x", lt, ls, status, mod, en, ct, cs, s2, s3, s5, cfg);
++ done:
++ strlcpy(ri_flash_note, note, sizeof(ri_flash_note));
++ __atomic_store_n(&ri_flash_done, 1, __ATOMIC_RELEASE);
++ printf("RIVER FLASH SURVEY: %s\n", ri_flash_note);
++}
++static int
++river_flash_survey_sysctl SYSCTL_HANDLER_ARGS
++{
++ const char *s = __atomic_load_n(&ri_flash_done, __ATOMIC_ACQUIRE) ? ri_flash_note : "not completed";
++ return sysctl_handle_string(oidp, (void *)s, 0, req);
++}
++SYSCTL_PROC(_debug, OID_AUTO, river_flash_survey, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
++            NULL, 0, river_flash_survey_sysctl, "A", "River flash PMIC survey");
++
+ static vm_offset_t
+ ri_spmi_chnl(vm_offset_t core, unsigned ppid)
+ {

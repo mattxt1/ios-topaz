@@ -1,5 +1,20 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River media probes and PMIC survey candidate (2026-10-30)
+
+With the user assigning this chat exclusive device access, a temporary signed
+AVFoundation probe reported AVAudioSession availableInputs count 0 and
+inputAvailable=0 without activating a session. Video discovery entered the
+framework but did not return; probe stopped after waiting, so no device count
+is established. Probe source and binary are in this chat's work/; no persistent
+phone files changed. Patch 0246 adds an opt-in `riverflashsurvey=1` read-only
+SPMI snapshot exposed as debug.river_flash_survey: LED SID3/d3 and charger
+SID2/a6 identification, enable, fault and readiness values. No PMIC register
+writes; observer transaction command MMIO is used for reads. Local arm64
+single-file compile passed; patch applied to saved post-0244 source and matched
+compiled input. CI, RAM boot and hardware result remain pending. Preserve UI,
+coordinate reboot with user, and do not flash.
+
 ## River torch charger dependency audit (2026-10-30)
 
 Pinned Android SMB5 source shows FLASH_ACTIVE changes charger state and can
