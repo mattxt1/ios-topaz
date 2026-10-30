@@ -1,5 +1,23 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River plate/tint candidate rollback after launch failure (2026-10-29)
+
+User reported Home Screen after delayed boot. Announced SpringBoard restart,
+installed staged candidate via fops cp (in-place overwrite; avoid this method
+for mapped binaries), readback matched 081bd4c888598890a387658e1cc6753b55d9a3a750109bebcb74fd9ad903a6df,
+and terminated SpringBoard262. SpringBoard repeatedly crashed during launch in
++[SpringBoardUI load], asserting that this process should not load that framework.
+Cause is unproven; in-place overwrite of potentially mapped dylib is a procedural
+risk and must not be repeated. No visual test occurred.
+
+Immediately restored prior switcher candidate with rput's atomic rename from
+verified local readback. New readback matches
+32efe708a0283fa242de3e9b842437b9e516d1b03b0ea9e6ace36e7e6227d7db;
+SpringBoard506 is running, backboardd58 unchanged. User asked to confirm visible
+recovery; response pending. The pink-fixed rollback remains separately preserved.
+The plate/tint candidate remains only as a staged file and must not be considered
+validated. Coordinate any future display restart and use atomic replacement.
+
 ## River boot screen stall; SpringBoard restarted unchanged (2026-10-29)
 
 User reports prolonged Apple logo after RAM boot. SSH remains responsive;
