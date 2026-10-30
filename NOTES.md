@@ -14,10 +14,11 @@ lifecycle correctness and live app behavior are untested.
 
 Built and staged /usr/local/lib/libcgprobe.switcher-scene.dylib, readback SHA256
 c7cb3093fce0650180ef519f8826e917d7d67271555390e56a110ba259c7e171.
-User asked to coordinate restart; response pending. Current active library
-remains search-sibling candidate a65f4b72200959fbbf6d63740c239bd1750eeeead0a4ff6314df5b7ce6073d3d.
-If tested, atomically install, verify, and check wallpaper, open apps after exit,
-switcher scrolling, Search, folders and sleep/wake; rollback promptly if broken.
+User approved restart. Installed atomically and verified hash above; SpringBoard
+406 restarted as PID470, backboardd58 unchanged. Asked user to check switcher
+wallpaper and open apps; response pending. Prior search-sibling candidate remains
+locally at work/libcgprobe-search-sibling.dylib as rollback. Check scrolling,
+Search, folders and sleep/wake too; rollback promptly if broken.
 
 ## River Search and folder candidate visually passes (2026-10-30)
 
