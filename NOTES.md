@@ -1,5 +1,15 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River RAM reboot after USB link loss (2026-10-30)
+
+User entered fastboot and authorized recovery. Verified product river and image
+SHA256 ae1c78ee129e9747a25454d0edf5c5ff6c0eba90d25d0655c1dc31fa580754bc;
+fastboot boot succeeded, no partitions flashed. USB ping and SSH returned;
+SpringBoard26 and backboardd58 observed during startup. Requested user confirm
+Home Screen before Search diagnostic; response pending. Earlier plate/tint
+candidate was active on disk before boot, but attempted post-boot readback had
+not completed during startup, so current hash not yet verified. No UI restart.
+
 ## River USB link lost after visual test (2026-10-30)
 
 User reports phone connected and responsive after successful folder, sleep/wake,
