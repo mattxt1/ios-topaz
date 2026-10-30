@@ -15,7 +15,10 @@ and ASan/UBSan unavailable, busy, comparison and failure-accounting tests pass.
 CI 41091477286 failed before acquiring a macOS ARM runner; GitHub annotated
 hosted runner capacity constraints, with no compiler result. Retrying as
 41093918442 using the standard macOS 15 Intel runner (River remains arm64);
-repository is public. Not yet booted. USB stays connected per user request; no PMIC
+repository is public, and the retry acquired a runner. Patches 0246-0257
+apply sequentially to the saved post-0244 source and reproduce the compiled
+timing source; timing and production-interlock host models pass. Not yet
+booted. USB stays connected per user request; no PMIC
 control writes, charging configuration changes or torch output.
 
 ## River charger-state hardware survey (2026-10-30)
