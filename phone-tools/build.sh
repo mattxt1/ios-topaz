@@ -31,4 +31,6 @@ cc -o "$out/btaudio-toggle" btaudio-toggle.c
 sign btaudio-toggle
 cc -framework IOKit -o "$out/netprobe" netprobe.c
 sign netprobe
+cc -framework Foundation -framework AVFoundation -o "$out/river-media-capability" river-media-capability.m
+sign river-media-capability
 ls -l "$out"
