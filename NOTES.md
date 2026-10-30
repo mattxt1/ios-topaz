@@ -10,8 +10,8 @@ experimental torch access. The phone-tools reader accepts --live. Local arm64
 compile and ASan/UBSan model tests passed (unavailable, busy, read error and
 successful sample), as did the interlocked torch tests. Not yet CI-built or
 booted. Sampling may reveal change over time but cannot alone establish ADC
-freshness or SOC correctness. CI 41021314224 is building 0251; wait for it
-before building the complete patch set.
+freshness or SOC correctness. CI 41021314224 passed for 0251; full sampler
+CI 41021964754 is building commit 81949e6.
 
 ## River torch guard hardware check and production interlock (2026-10-30)
 
