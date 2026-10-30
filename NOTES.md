@@ -4,7 +4,10 @@
 
 This continuation read the latest handoff and confirmed macOS en6 is present but
 status inactive; SSH to 192.168.7.2 timed out. Asked user to reconnect USB, with
-no reboot or display restart. No device files or processes changed in this turn;
+no reboot or display restart. User reported plugged in, but USB profiler still
+showed no River device, en6 remained inactive and SSH timed out; asked user to
+check phone power and cable/port without restarting. No device files or processes
+changed in this turn;
 last reported device state remains the previous entry, not newly verified.
 
 Prepared and signed scratch-only `work/cgprobe-tint-only.c` and
