@@ -1,5 +1,15 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River torch charger dependency audit (2026-10-30)
+
+Pinned Android SMB5 source shows FLASH_ACTIVE changes charger state and can
+force USB VBUS to 5 V; FLASH_TRIGGER reads regulator readiness and error state
+only after flash initialization. Android initialization also configures the
+flash charger. Equivalence of this state on iOS is unverified, and a bare LED
+register write would not establish the full dependency. See
+RIVER-MEDIA-HANDOFF.md for source links. Offline audit only, no device access.
+Haptics chat released the phone after its tests; coordinate before reuse.
+
 ## River media read-only inventory (2026-10-30)
 
 After haptics chat handed off, SSH process list and `ioreg -l` were read.
