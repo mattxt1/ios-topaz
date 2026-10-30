@@ -1,5 +1,23 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River switcher wallpaper replica test staged (2026-10-30)
+
+User confirmed apps render normally after scene-background test; user agreed
+restoration, prior search-sibling candidate atomically restored and readback
+verified a65f4b72200959fbbf6d63740c239bd1750eeeead0a4ff6314df5b7ce6073d3d.
+SpringBoard470 restarted as PID526, backboardd58 unchanged.
+
+Prepared scratch work/cgprobe-switcher-replica.c based on the working candidate.
+It finds the first UIImage inside a PBUISnapshotReplicaView in the wallpaper
+secure window, and inserts an aspect-fill UIImageView behind the switcher view
+contents; it does not modify the scene window. The image identity, tint, and
+layout/lifecycle effects are unverified. Built/staged on device as
+/usr/local/lib/libcgprobe.switcher-replica.dylib; readback SHA256
+9e4079e51924fde122bfca27a1125e73553d782ea7e8a84894e5a5f75c09f6ef.
+Asked user to coordinate restart; response pending. If tested, verify image is
+correct, switcher scroll, Search/folders, apps after exit, sleep/wake; rollback
+atomically if regression. Keep prior candidate locally in work/.
+
 ## River scene-background switcher test negative (2026-10-30)
 
 User reports switcher still black with active scene-background test hash
