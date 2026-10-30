@@ -43,12 +43,16 @@ capability probe was built at
 backlight image SHA256 ae1c78ee129e9747a25454d0edf5c5ff6c0eba90d25d0655c1dc31fa580754bc,
 then RAM-booted it successfully to restore inactive USB Ethernet; no partition
 flashed. On device the probe reported supportsHaptics=0, supportsAudio=1.
-Boot haptics diagnostics were already absent from dmesg. The installed
-vibrate tool exists, but no controlled pulse has been sent; asked user to hold
-the phone and confirm readiness for 50ms, response pending. No display restart
-or haptics implementation change. Next: coordinate controlled pulses and
-observe iOS feedback paths before selecting an integration. Preserve the
-working display and never flash partitions.
+Boot haptics diagnostics were already absent from dmesg, and ioreg -l had no
+case-insensitive haptic/vibrat matches. User confirmed feeling and prompt
+cessation of separate controlled /usr/local/bin/vibrate 50 and 25 requests.
+AudioServicesPlaySystemSound(kSystemSoundID_Vibrate) probe: user felt nothing
+when the process exited immediately, but that may prevent asynchronous delivery;
+repeat with process alive three seconds was reported unsure. Thus system sound
+vibration remains inconclusive. Probes are in this chat's work/ and /tmp on the
+device. No display restart or haptics implementation change. Next: identify and
+test an actual iOS feedback integration path, preserving working touch/button
+behavior until a replacement is verified. Never flash partitions.
 
 ## River RAM boot after stalled display restart (2026-10-30)
 
