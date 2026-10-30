@@ -1,5 +1,17 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River gauge read-integrity candidate (2026-10-30)
+
+While the user connects a charger, device tests are paused. Android's SPMI
+arbiter v2 source uses the same EXT_READL command encoding and DONE/error bits
+as River's observer helper, but this does not establish timing or read fidelity.
+Patch 0253 extends the live sampler to report the two-byte voltage read,
+individual bytes, a second two-byte read and observer status around them.
+Mismatches may reflect changing hardware data as well as read-path issues;
+matches alone do not establish freshness. Local arm64 compile and ASan/UBSan
+sampler tests passed. Not yet CI-built or run on the phone. Preserve production
+torch interlock and do not energize the LED based on these data alone.
+
 ## River live power sampler hardware check (2026-10-30)
 
 User approved RAM boot; fastboot product river and image SHA256

@@ -1,0 +1,25 @@
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -3217,16 +3217,19 @@
+  if (!__atomic_load_n(&ri_power_ready, __ATOMIC_ACQUIRE)) return ENXIO;
+  int expected = 0;
+  if (!__atomic_compare_exchange_n(&ri_power_busy, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return EBUSY;
+- uint32_t mod, en, s2, s3, cfg, threshold, usb, qstatus, qirq, soc, voltage;
++ uint32_t mod, en, s2, s3, cfg, threshold, usb, qstatus, qirq, soc, voltage, voltage2, vlo, vhi;
++ uint32_t obs_before = ri_rd(ri_power_qg, 8), obs_after;
+  int error = EIO;
+  if (ri_spmi_read(ri_power_led, 0x46, 1, &mod) && ri_spmi_read(ri_power_led, 0x4c, 1, &en) &&
+      ri_spmi_read(ri_power_charger, 7, 1, &s2) && ri_spmi_read(ri_power_charger, 8, 1, &s3) &&
+      ri_spmi_read(ri_power_charger, 0x60, 1, &cfg) && ri_spmi_read(ri_power_charger, 0x68, 1, &threshold) &&
+      ri_spmi_read(ri_power_usb, 0x10, 1, &usb) && ri_spmi_read(ri_power_qg, 8, 1, &qstatus) &&
+      ri_spmi_read(ri_power_qg, 0x10, 1, &qirq) && ri_spmi_read(ri_power_qg, 0xbf, 1, &soc) &&
+-     ri_spmi_read(ri_power_qg, 0xc0, 2, &voltage)) {
++     ri_spmi_read(ri_power_qg, 0xc0, 2, &voltage) && ri_spmi_read(ri_power_qg, 0xc0, 1, &vlo) &&
++     ri_spmi_read(ri_power_qg, 0xc1, 1, &vhi) && ri_spmi_read(ri_power_qg, 0xc0, 2, &voltage2)) {
++  obs_after = ri_rd(ri_power_qg, 8);
+   char note[256];
+-  snprintf(note, sizeof(note), "led_mod=%#x led_en=%#x charger=%#x/%#x cfg=%#x threshold=%#x usb_irq=%#x qg=%#x/%#x soc=%#x voltage_raw=%#x", mod, en, s2, s3, cfg, threshold, usb, qstatus, qirq, soc, voltage);
++  snprintf(note, sizeof(note), "led_mod=%#x led_en=%#x charger=%#x/%#x cfg=%#x threshold=%#x usb_irq=%#x qg=%#x/%#x soc=%#x voltage_raw=%#x bytes=%#x/%#x repeat=%#x obs_status=%#x/%#x", mod, en, s2, s3, cfg, threshold, usb, qstatus, qirq, soc, voltage, vlo, vhi, voltage2, obs_before, obs_after);
+   error = sysctl_handle_string(oidp, note, 0, req);
+  }
+  __atomic_store_n(&ri_power_busy, 0, __ATOMIC_RELEASE);
