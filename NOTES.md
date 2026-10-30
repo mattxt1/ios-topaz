@@ -1,5 +1,17 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River switcher blur test pink; reverted (2026-10-30)
+
+User reports switcher wallpaper turned pink with CPU blur candidate SHA256
+69098382323fdfcbbb61ee7aef52f5b4b6159006ddbeaa49e0510dc9e4201766 and
+explicitly requested revert. Immediately atomically restored prior unblurred
+candidate, readback verified SHA256
+9e4079e51924fde122bfca27a1125e73553d782ea7e8a84894e5a5f75c09f6ef;
+SpringBoard666 replaced by PID694, backboardd58 unchanged. User asked to confirm
+visual recovery; response pending. Pink in this test is observed, not diagnosed;
+do not claim source, reason or live-app impact. Blur remains unresolved, and the
+CPU blur candidate remains scratch only, not committed. Do not redeploy it.
+
 ## River switcher blur candidate staged (2026-10-30)
 
 User confirmed changing wallpaper preserves all prior fixes, but the switcher
