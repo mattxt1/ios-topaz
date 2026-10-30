@@ -1,5 +1,19 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River display restart stuck; fastboot recovery requested (2026-10-30)
+
+User reported SpringBoard-only restart did not recover screen and approved
+broader restart and rollback. Atomically restored earlier tested unblurred
+candidate; readback SHA256
+9e4079e51924fde122bfca27a1125e73553d782ea7e8a84894e5a5f75c09f6ef.
+Sent SIGKILL to PosterBoard747, backboardd58 and SpringBoard843. SpringBoard872
+started, but backboardd58 remains shown as (backboardd) with zero CPU and no new
+backboardd after more than 25 seconds; display has not been confirmed recovered.
+SSH remains reachable. Requested user put phone in fastboot for RAM-only boot;
+response pending. Verify product river and image SHA256
+ ae1c78ee129e9747a25454d0edf5c5ff6c0eba90d25d0655c1dc31fa580754bc
+before fastboot boot; never flash. Do not claim candidate caused initial freeze.
+
 ## River respring after wallpaper customization freeze (2026-10-30)
 
 With cached-source performance candidate SHA256
