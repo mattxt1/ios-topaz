@@ -1,5 +1,20 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River Search and folder candidate visually passes (2026-10-30)
+
+User confirmed Search rounded and page dots and closed folder icons look good
+while swiping with candidate SHA256
+a65f4b72200959fbbf6d63740c239bd1750eeeead0a4ff6314df5b7ce6073d3d.
+Prior candidate user confirmed normal live apps, switcher, and sleep/wake. New
+candidate adds sibling page-control material suppression to that base; recheck
+apps and sleep/wake for final regression. Asked user to leave switcher open and
+settled for hierarchy capture; response pending. Wallpaper remains black.
+
+Ported visually tested behavior into phone-tools/cgprobe.c without one-shot
+style diagnostics; local cross-compile succeeds with the pre-existing pointer
+warning. The cleaned build is not identical to active binary and has not been
+deployed or visually validated; do not conflate it with the tested candidate.
+
 ## River Search sibling-material candidate staged (2026-10-30)
 
 User confirmed Home Screen after RAM boot. One-shot existing /tmp/style_dump

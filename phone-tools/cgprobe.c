@@ -375,24 +375,105 @@ static void probe_focus_isolation_layout(id self, SEL cmd)
 	}
 }
 
+/* Rasterize only these small fallback plates once per size. Rounded alpha is
+ * baked into pixels: no material child, backdrop filter, or corner-mask pass. */
+static char plate_key;
+static CGImageRef create_plate_image(CGSize size, CGFloat radius, CGFloat alpha)
+{
+	const CGFloat scale = 3.0;
+	size_t w = (size_t)(size.width * scale + 0.5), h = (size_t)(size.height * scale + 0.5);
+	if (!w || !h || w > 2048 || h > 2048) return NULL;
+	CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+	CGContextRef ctx = CGBitmapContextCreate(NULL, w, h, 8, w * 4, cs,
+	    kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+	CGColorSpaceRelease(cs);
+	if (!ctx) return NULL;
+	CGPathRef path = CGPathCreateWithRoundedRect(CGRectMake(0, 0, w, h), radius * scale, radius * scale, NULL);
+	CGContextAddPath(ctx, path);
+	CGContextSetRGBFillColor(ctx, 1, 1, 1, alpha);
+	CGContextFillPath(ctx);
+	CGPathRelease(path);
+	CGImageRef image = CGBitmapContextCreateImage(ctx);
+	CGContextRelease(ctx);
+	return image;
+}
+
+static void style_plate(id host, CGFloat radius, CGFloat alpha)
+{
+	CGRect bounds = ((CGRect (*)(id, SEL))objc_msgSend)(host, sel_registerName("bounds"));
+	if (bounds.size.width <= 0 || bounds.size.height <= 0) return;
+	id plate = objc_getAssociatedObject(host, &plate_key);
+	CGRect frame = plate ? ((CGRect (*)(id, SEL))objc_msgSend)(plate, sel_registerName("frame")) : CGRectZero;
+	if (plate && CGRectEqualToRect(frame, bounds)) return;
+	CGImageRef image = create_plate_image(bounds.size, radius, alpha);
+	if (!image) return;
+	if (!plate) {
+		plate = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("UIView"), sel_registerName("alloc"));
+		plate = ((id (*)(id, SEL, CGRect))objc_msgSend)(plate, sel_registerName("initWithFrame:"), bounds);
+		((void (*)(id, SEL, BOOL))objc_msgSend)(plate, sel_registerName("setUserInteractionEnabled:"), NO);
+		((void (*)(id, SEL, BOOL))objc_msgSend)(plate, sel_registerName("setOpaque:"), NO);
+		((void (*)(id, SEL, id, long))objc_msgSend)(host, sel_registerName("insertSubview:atIndex:"), plate, 0);
+		objc_setAssociatedObject(host, &plate_key, plate, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+		((void (*)(id, SEL))objc_msgSend)(plate, sel_registerName("release"));
+	} else {
+		((void (*)(id, SEL, CGRect))objc_msgSend)(plate, sel_registerName("setFrame:"), bounds);
+	}
+	id layer = ((id (*)(id, SEL))objc_msgSend)(plate, sel_registerName("layer"));
+	((void (*)(id, SEL, id))objc_msgSend)(layer, sel_registerName("setContents:"), (id)image);
+	((void (*)(id, SEL, CGFloat))objc_msgSend)(layer, sel_registerName("setContentsScale:"), 3.0);
+	CGImageRelease(image);
+}
+
+static void hide_material_children(id host)
+{
+	id subs = ((id (*)(id, SEL))objc_msgSend)(host, sel_registerName("subviews"));
+	unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count"));
+	for (unsigned long i = 0; i < n; i++) {
+		id child = ((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i);
+		const char *name = object_getClassName(child);
+		if (strstr(name, "Material") || strstr(name, "Backdrop") || strstr(name, "Background")) {
+			if (!((BOOL (*)(id, SEL))objc_msgSend)(child, sel_registerName("isHidden")))
+				((void (*)(id, SEL, BOOL))objc_msgSend)(child, sel_registerName("setHidden:"), YES);
+		}
+	}
+}
+
+/* The page control beneath the Search pill has its own square material. */
+static void hide_search_page_material(id pill)
+{
+    id parent = ((id (*)(id, SEL))objc_msgSend)(pill, sel_registerName("superview"));
+    if (!parent || strcmp(object_getClassName(parent), "SBFolderScrollAccessoryView")) return;
+    id siblings = ((id (*)(id, SEL))objc_msgSend)(parent, sel_registerName("subviews"));
+    unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(siblings, sel_registerName("count"));
+    for (unsigned long i = 0; i < n; i++) {
+        id pc = ((id (*)(id, SEL, unsigned long))objc_msgSend)(siblings, sel_registerName("objectAtIndex:"), i);
+        if (strcmp(object_getClassName(pc), "SBIconListPageControl")) continue;
+        id subs = ((id (*)(id, SEL))objc_msgSend)(pc, sel_registerName("subviews"));
+        unsigned long count = ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count"));
+        for (unsigned long j = 0; j < count; j++) {
+            id content = ((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), j);
+            if (!strcmp(object_getClassName(content), "_UIPageControlContentView")) hide_material_children(content);
+        }
+    }
+}
+
 static void (*original_search_pill_layout)(id, SEL);
 static void probe_search_pill_layout(id self, SEL cmd)
 {
 	original_search_pill_layout(self, cmd);
 	if (strcmp(object_getClassName(self), "SBHSearchPillView") != 0) return;
 	id layer = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("layer"));
-	if (layer) {
-		((void (*)(id, SEL, id))objc_msgSend)(layer, sel_registerName("setFilters:"), nil);
-		CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-		CGFloat comps[4] = {1.0f, 1.0f, 1.0f, 0.25f};
-		CGColorRef col = CGColorCreate(cs, comps);
-		((void (*)(id, SEL, CGColorRef))objc_msgSend)(layer, sel_registerName("setBackgroundColor:"), col);
-		((void (*)(id, SEL, CGFloat))objc_msgSend)(layer, sel_registerName("setCornerRadius:"), 14.0f);
-		((void (*)(id, SEL, BOOL))objc_msgSend)(layer, sel_registerName("setMasksToBounds:"), YES);
-		CGColorRelease(col);
-		CGColorSpaceRelease(cs);
-		cglog("cgprobe: search_pill layout styled layer %p\n", layer);
-	}
+	if (((CGColorRef (*)(id, SEL))objc_msgSend)(layer, sel_registerName("backgroundColor")))
+		((void (*)(id, SEL, CGColorRef))objc_msgSend)(layer, sel_registerName("setBackgroundColor:"), NULL);
+	((void (*)(id, SEL, BOOL))objc_msgSend)(self, sel_registerName("setOpaque:"), NO);
+	((void (*)(id, SEL, BOOL))objc_msgSend)(layer, sel_registerName("setOpaque:"), NO);
+	Ivar bgiv = class_getInstanceVariable(object_getClass(self), "_backgroundView");
+	id bg = bgiv ? object_getIvar(self, bgiv) : nil;
+	if (bg) ((void (*)(id, SEL, BOOL))objc_msgSend)(bg, sel_registerName("setHidden:"), YES);
+	hide_material_children(self);
+	hide_search_page_material(self);
+	CGRect b = ((CGRect (*)(id, SEL))objc_msgSend)(self, sel_registerName("bounds"));
+	style_plate(self, b.size.height / 2, 0.25);
 }
 
 static void (*original_folder_bg_layout)(id, SEL);
@@ -502,38 +583,15 @@ static void probe_folder_icon_img_layout(id self, SEL cmd)
 {
 	if (original_folder_icon_img_layout) original_folder_icon_img_layout(self, cmd);
 	if (strcmp(object_getClassName(self), "SBFolderIconImageView") != 0) return;
-
-	id layer = ((id (*)(id, SEL))objc_msgSend)(self, sel_registerName("layer"));
-	if (layer) {
-		((void (*)(id, SEL, BOOL))objc_msgSend)(layer, sel_registerName("setShouldRasterize:"), NO);
+	/* Preserve the native preview grid; replace only the material/solid plate. */
+	const char *names[] = {"_backgroundView", "_solidColorBackgroundView"};
+	for (unsigned i = 0; i < 2; i++) {
+		Ivar iv = class_getInstanceVariable(object_getClass(self), names[i]);
+		id bg = iv ? object_getIvar(self, iv) : nil;
+		if (bg && !((BOOL (*)(id, SEL))objc_msgSend)(bg, sel_registerName("isHidden")))
+			((void (*)(id, SEL, BOOL))objc_msgSend)(bg, sel_registerName("setHidden:"), YES);
 	}
-
-	Ivar scb_iv = class_getInstanceVariable(object_getClass(self), "_solidColorBackgroundView");
-	id scb = scb_iv ? object_getIvar(self, scb_iv) : nil;
-	if (scb) {
-		((void (*)(id, SEL, CGFloat))objc_msgSend)(scb, sel_registerName("setAlpha:"), 0.0f);
-		((void (*)(id, SEL, BOOL))objc_msgSend)(scb, sel_registerName("setHidden:"), YES);
-	}
-
-	Ivar bg_iv = class_getInstanceVariable(object_getClass(self), "_backgroundView");
-	id bg = bg_iv ? object_getIvar(self, bg_iv) : nil;
-	if (bg) {
-		((void (*)(id, SEL, CGFloat))objc_msgSend)(bg, sel_registerName("setAlpha:"), 1.0f);
-		((void (*)(id, SEL, BOOL))objc_msgSend)(bg, sel_registerName("setHidden:"), NO);
-		id bgl = ((id (*)(id, SEL))objc_msgSend)(bg, sel_registerName("layer"));
-		if (bgl) {
-			((void (*)(id, SEL, id))objc_msgSend)(bgl, sel_registerName("setFilters:"), nil);
-			((void (*)(id, SEL, BOOL))objc_msgSend)(bgl, sel_registerName("setShouldRasterize:"), NO);
-			CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-			CGFloat comps[4] = {1.0f, 1.0f, 1.0f, 0.35f};
-			CGColorRef col = CGColorCreate(cs, comps);
-			((void (*)(id, SEL, CGColorRef))objc_msgSend)(bgl, sel_registerName("setBackgroundColor:"), col);
-			((void (*)(id, SEL, CGFloat))objc_msgSend)(bgl, sel_registerName("setCornerRadius:"), 14.0f);
-			((void (*)(id, SEL, BOOL))objc_msgSend)(bgl, sel_registerName("setMasksToBounds:"), YES);
-			CGColorRelease(col);
-			CGColorSpaceRelease(cs);
-		}
-	}
+	style_plate(self, 14, 0.35);
 }
 
 static void (*original_search_backdrop_layout)(id, SEL);
@@ -654,7 +712,8 @@ static void probe_window_set_alpha(id self, SEL cmd, CGFloat alpha)
 	original_window_set_alpha(self, cmd, alpha);
 }
 
-static void clear_blackout_in_view(id view);
+static void clear_blackout_in_view_mode(id view, BOOL switcher);
+static void clear_blackout_in_view(id view) { clear_blackout_in_view_mode(view, NO); }
 static void fix_all_blackouts(void);
 
 static void (*original_feather_blur_set_hidden)(id, SEL, BOOL);
@@ -973,7 +1032,7 @@ static void probe_switcher_layout(id self, SEL cmd)
 			((void (*)(id, SEL, BOOL))objc_msgSend)(vl, sel_registerName("setOpaque:"), NO);
 		}
 
-		clear_blackout_in_view(v);
+		clear_blackout_in_view_mode(v, YES);
 	}
 
 	Class win_cls = objc_getClass("UIWindow");
@@ -1110,10 +1169,13 @@ static void dump_layer_tree(id layer, int depth)
 	}
 }
 
-static void clear_blackout_in_view(id view)
+static void clear_blackout_in_view_mode(id view, BOOL switcher)
 {
 	if (!view) return;
 	const char *cname = object_getClassName(view);
+	if (switcher && strcmp(cname, "SBWallpaperEffectView") == 0 &&
+	    ((CGFloat (*)(id, SEL))objc_msgSend)(view, sel_registerName("alpha")) != 0.0f)
+		((void (*)(id, SEL, CGFloat))objc_msgSend)(view, sel_registerName("setAlpha:"), 0.0f);
 	/* App content and snapshots are not wallpaper backdrops. Do not mutate them. */
 	if (strstr(cname, "ApplicationScene") || strstr(cname, "SwitcherSnapshot")) return;
 	Class uic = objc_getClass("UIColor");
@@ -1165,7 +1227,7 @@ static void clear_blackout_in_view(id view)
 	unsigned long sc = subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count")) : 0;
 	for (unsigned long i = 0; i < sc; i++) {
 		id sv = ((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i);
-		clear_blackout_in_view(sv);
+		clear_blackout_in_view_mode(sv, switcher);
 	}
 }
 
