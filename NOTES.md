@@ -1,5 +1,17 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River flash protection survey extension (2026-10-30)
+
+Patch 0247 extends the opt-in snapshot with PMI632 QG SID2/48 identity,
+status and real-time interrupt bits, LED protection/current/timer/strobe
+registers, and charger SOC-disable threshold. The displayed River battery
+percentage is synthetic; it cannot establish actual battery condition. The
+QG readiness/low-battery bits and LED protection state are still unmeasured.
+Patch applied exactly to the 0246 source; local arm64 compile and host
+opt-in, missing-channel, read-failure and complete-snapshot checks passed.
+No PMIC writes. Full CI and another coordinated RAM test remain pending; no
+claim that QG status alone measures charge or proves safe torch operation.
+
 ## River flash PMIC survey hardware result (2026-10-30)
 
 User placed device in fastboot and approved RAM-only survey boot. Verified
