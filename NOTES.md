@@ -9,8 +9,13 @@ charge samplers and experimental torch checks, leaving existing drivers alone.
 It does not explain the observed changes in the low-order bytes. Local arm64
 compile and sanitizer tests pass, including artificial nonzero unused bytes,
 unsupported widths, sampler failures and the interlocked torch model. It has
-not been CI-built or run on the phone. The preceding CI 41084628698 passed;
-CI 41085760391 is queued for commit 4b3957c including this patch. All patches
+not been run on the phone. The preceding CI 41084628698 passed; CI 41085760391
+passed for commit 4b3957c including this patch. Kernel SHA256
+b7d99a26cd368f3498ac5505481345ec742b7a4363d1a3fa974395e1b2d3b0b9.
+RAM-only image:
+/Users/matttyson/Documents/Codex/2026-10-30/river-camera-microphone-flashlight/work/river-charge-survey-boot.img
+SHA256 7b9d782f7a315d3bae5febd60a4ed2dc0fbdca0351fd43c91ce41ee64de6ae73;
+golden shim, DTB, blobs and riverbl=1 preserved. Not booted. All patches
 0246-0256 apply sequentially to the saved post-0244 sweet_keys.c and reproduce
 the local compile input exactly; the torch, power and charger sanitizer models
 pass on that result. Keep USB connected as requested.
