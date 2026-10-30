@@ -8,10 +8,14 @@ It uses an atomic gate to serialize its own observer transactions; it performs
 no PMIC register writes. The 0251 production interlock prevents simultaneous
 experimental torch access. The phone-tools reader accepts --live. Local arm64
 compile and ASan/UBSan model tests passed (unavailable, busy, read error and
-successful sample), as did the interlocked torch tests. Not yet CI-built or
-booted. Sampling may reveal change over time but cannot alone establish ADC
-freshness or SOC correctness. CI 41021314224 passed for 0251; full sampler
-CI 41021964754 is building commit 81949e6.
+successful sample), as did the interlocked torch tests. Sampling may reveal
+change over time but cannot alone establish ADC freshness or SOC correctness.
+CI 41021314224 passed for 0251; full sampler CI 41021964754 passed at 81949e6.
+Kernel SHA256 65eae80a02456e8c772b1a010cbd1c0c3a990437e8636b76bf6e5b18c7e1fb80.
+Checked RAM-only image:
+/Users/matttyson/Documents/Codex/2026-10-30/river-camera-microphone-flashlight/work/river-power-live-boot.img
+SHA256 2c0dc12b59757e9b86872e088a11e077516acd925df0bf7a35f2b0b9eae0f101.
+Golden shim, DTB and firmware preserved, riverbl=1 retained; no phone boot yet.
 
 ## River torch guard hardware check and production interlock (2026-10-30)
 
