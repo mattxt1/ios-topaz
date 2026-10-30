@@ -1,5 +1,17 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River USB reconnect follow-up (2026-10-29)
+
+User confirmed iOS responsive and reconnected USB at phone end. IORegistry
+shows a newly enumerated River XNU device, but en6 remains inactive with no
+assigned address and SSH/ping time out. Saved network service is enabled and
+configured 192.168.7.1/24; reapplying it succeeded but did not restore link.
+No phone process or file changed. Asked user to try another USB port or data
+cable while leaving iOS running. The RAM-only backlight boot image hash was
+reverified as ae1c78ee129e9747a25454d0edf5c5ff6c0eba90d25d0655c1dc31fa580754bc;
+no reboot or fastboot action was performed. Verify product as well if recovery
+later becomes necessary, and coordinate with the user first.
+
 ## River continuation: USB link down; tint-only candidate prepared (2026-10-29)
 
 This continuation read the latest handoff and confirmed macOS en6 is present but
