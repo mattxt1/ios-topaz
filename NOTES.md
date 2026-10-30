@@ -1,5 +1,17 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River atomic plate/tint retry active; visual test pending (2026-10-29)
+
+User approved retry and coordinated restart. Atomically installed staged
+plate/tint candidate using rput; readback SHA256
+081bd4c888598890a387658e1cc6753b55d9a3a750109bebcb74fd9ad903a6df.
+SpringBoard506 restarted as PID545; backboardd58 unchanged. No launch failure
+observed on initial check. User asked to assess Search, folder flicker, live apps,
+switcher tint/background, scrolling and sleep/wake; response pending. Previous
+candidate rollback preserved in current workspace work/current.readback and
+pink-fixed rollback remains on phone. This does not establish why previous
+in-place deployment failed, nor visual correctness.
+
 ## River plate/tint candidate rollback after launch failure (2026-10-29)
 
 User reported Home Screen after delayed boot. Announced SpringBoard restart,
