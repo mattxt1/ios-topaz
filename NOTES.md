@@ -5,8 +5,11 @@
 User placed River in fastboot; verified fastboot product river and recovery image
 SHA256 ae1c78ee129e9747a25454d0edf5c5ff6c0eba90d25d0655c1dc31fa580754bc.
 fastboot boot succeeded, no partitions flashed. Previous unblurred tested library
-was atomically restored and verified before reboot. Asked user to report when
-lock/Home Screen appears; response pending. Do not claim full recovery yet.
+was atomically restored and verified before reboot. User confirms booted; SSH shows SpringBoard26 and backboardd58 running.
+Post-boot cgprobe readback again matches tested unblurred replica SHA256
+9e4079e51924fde122bfca27a1125e73553d782ea7e8a84894e5a5f75c09f6ef.
+Cached performance candidate has been rolled back; its freeze relationship
+remains unknown and the blur request remains unresolved.
 
 ## River display restart stuck; fastboot recovery requested (2026-10-30)
 
