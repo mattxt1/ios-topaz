@@ -14,7 +14,9 @@ change as well as scrolling before acceptance. No claim of a performance gain.
 
 Staged /usr/local/lib/libcgprobe.switcher-cached.dylib; readback SHA256
 498ac572785c4ea410c1eab8883fc32f98cb8ce00995d8751ba4c769082f49eb.
-Asked user to coordinate restart; response pending. Active verified rollback is
+User approved restart; atomically installed and verified hash above. SpringBoard
+694 restarted as PID745, backboardd58 unchanged. Asked user to compare scrolling
+and verify wallpaper and open apps; response pending. Verified rollback is
 unblurred replica 9e4079e51924fde122bfca27a1125e73553d782ea7e8a84894e5a5f75c09f6ef.
 Blur test remains failed and uncommitted. Check apps, Search/folder, sleep/wake.
 
