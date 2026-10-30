@@ -1,5 +1,15 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River boot screen stall; SpringBoard restarted unchanged (2026-10-29)
+
+User reports prolonged Apple logo after RAM boot. SSH remains responsive;
+SpringBoard26 and backboardd58 remained present, with no log growth in a short
+sample. pstack captured both processes; no root cause established. Announced
+and restarted SpringBoard only with the existing switcher candidate still active:
+PID26 replaced by PID262, backboardd58 unchanged. Asked user whether lock/Home
+appeared; response pending. The plates-tint candidate remains staged only. Do not
+claim recovery or UI fixes without visual confirmation.
+
 ## River recovered; rounded plates and tint test staged (2026-10-29)
 
 At user request, verified fastboot product river and image SHA256
