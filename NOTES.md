@@ -1,5 +1,20 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River observer timing candidate (2026-10-30)
+
+On the USB-connected survey boot, 40 read-only charger samples reported state
+0x47 and command 0 in all 40, power path 0x95 in 39 and 0 once. Charger type
+was 2 in 38 and 0 in 2; subtype 0x80 in 37 and 0 in 3. These observations
+support but do not prove disabled charging; intermittent zeros also affect
+normally stable identity fields. Raw samples in this chat's work/charge-repeat.txt.
+Patch 0257 adds a serialized read-only comparison of 64 immediate and 64
+10-microsecond-delayed reads of charger type, counting zeros, twos, other
+values, transaction errors and DONE on the first status check. Timing results
+do not establish correctness or freshness. Local arm64 compile, signed client
+and ASan/UBSan unavailable, busy, comparison and failure-accounting tests pass.
+Not yet CI-built or booted. USB stays connected per user request; no PMIC
+control writes, charging configuration changes or torch output.
+
 ## River charger-state hardware survey (2026-10-30)
 
 User approved RAM boot with USB left connected. Verified fastboot product river

@@ -1,0 +1,55 @@
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -3274,6 +3274,52 @@
+ }
+ SYSCTL_PROC(_debug, OID_AUTO, river_charge_sample, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
+             NULL, 0, river_charge_sample_sysctl, "A", "River charger state sample");
++
++/* Diagnostic only: compare immediate and delayed observer transactions for the
++ * charger peripheral type register. Delay is not assumed to guarantee validity. */
++static bool
++ri_charge_timing_read(vm_offset_t obs, unsigned wait_us, uint32_t *first, uint32_t *value)
++{
++ ri_wr(obs, 0, (1u << 27) | (4u << 4)); /* EXT_READL, register 04, one byte */
++ if (wait_us) delay(wait_us);
++ *first = ri_rd(obs, 8);
++ for (unsigned i=0; i<1000; i++) {
++  uint32_t st = i ? ri_rd(obs, 8) : *first;
++  if (st & 1) {
++   if (st & 14) return false;
++   *value = ri_rd(obs, 0x18) & 0xffu;
++   return true;
++  }
++  delay(1);
++ }
++ return false;
++}
++static int
++river_charge_timing_sysctl SYSCTL_HANDLER_ARGS
++{
++ if (!__atomic_load_n(&ri_power_ready, __ATOMIC_ACQUIRE) || !ri_charge_chgr) return ENXIO;
++ int expected = 0;
++ if (!__atomic_compare_exchange_n(&ri_power_busy, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return EBUSY;
++ unsigned zero[2] = {0,0}, two[2] = {0,0}, other[2] = {0,0}, errors[2] = {0,0}, done_first[2] = {0,0};
++ for (unsigned i=0; i<64; i++) {
++  for (unsigned phase=0; phase<2; phase++) {
++   uint32_t st=0, value=0;
++   bool ok=ri_charge_timing_read(ri_charge_chgr, phase ? 10 : 0, &st, &value);
++   if (st & 1) done_first[phase]++;
++   if (!ok) errors[phase]++;
++   else if (value == 0) zero[phase]++;
++   else if (value == 2) two[phase]++;
++   else other[phase]++;
++  }
++ }
++ char note[256];
++ snprintf(note, sizeof(note), "trials=64 immediate_zero=%u immediate_two=%u immediate_other=%u immediate_error=%u immediate_done_first=%u delayed_zero=%u delayed_two=%u delayed_other=%u delayed_error=%u delayed_done_first=%u", zero[0], two[0], other[0], errors[0], done_first[0], zero[1], two[1], other[1], errors[1], done_first[1]);
++ int error = sysctl_handle_string(oidp, note, 0, req);
++ __atomic_store_n(&ri_power_busy, 0, __ATOMIC_RELEASE);
++ return error;
++}
++SYSCTL_PROC(_debug, OID_AUTO, river_charge_timing, CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_LOCKED,
++            NULL, 0, river_charge_timing_sysctl, "A", "River SPMI observer timing survey");
+ 
+ static vm_offset_t
+ ri_spmi_chnl(vm_offset_t core, unsigned ppid)
