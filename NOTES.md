@@ -16,6 +16,10 @@ claim that QG status alone measures charge or proves safe torch operation.
 On the survey boot, video discovery again stalled. A pstack capture is in
 this chat's work/camera-discovery-stack.txt; local shared-cache symbol lookup
 stalled, so the stack is not yet interpreted. The temporary probe was stopped.
+An AVAudioSession probe set the PlayAndRecord category successfully without
+activating a session or recording; availableInputs count and inputAvailable
+remained 0. This confirms no advertised input in that session, not physical
+microphone absence.
 
 ## River flash PMIC survey hardware result (2026-10-30)
 
