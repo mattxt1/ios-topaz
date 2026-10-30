@@ -1,5 +1,21 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River switcher blur candidate staged (2026-10-30)
+
+User confirmed changing wallpaper preserves all prior fixes, but the switcher
+wallpaper replica lacks blur. Prepared scratch work/cgprobe-switcher-blur.c:
+CPU downsample and separable box blur at bounded small resolution, cached by
+source UIImage; recomputes when source image changes and falls back to original
+image if processing fails. This is scoped to switcher replica, not live apps.
+Built/staged /usr/local/lib/libcgprobe.switcher-blur.dylib, readback SHA256
+69098382323fdfcbbb61ee7aef52f5b4b6159006ddbeaa49e0510dc9e4201766.
+Unverified visually, timing, wallpaper change and lifecycle; asked user to
+coordinate restart. Current active unblurred replica candidate is verified
+9e4079e51924fde122bfca27a1125e73553d782ea7e8a84894e5a5f75c09f6ef and
+local work/libcgprobe-switcher-replica.dylib is rollback. Test blur appearance,
+scrolling, wallpaper change, live apps, Search/folder and sleep/wake; atomically
+restore previous candidate if a regression occurs.
+
 ## River switcher wallpaper replica visually passes (2026-10-30)
 
 User confirms correct wallpaper remains visible in switcher when settled and
