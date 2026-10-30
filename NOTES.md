@@ -1,5 +1,23 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River charger-state hardware survey (2026-10-30)
+
+User approved RAM boot with USB left connected. Verified fastboot product river
+and image SHA256 7b9d782f7a315d3bae5febd60a4ed2dc0fbdca0351fd43c91ce41ee64de6ae73;
+send and boot OKAY (0.794s), no partition flashed. Six charge reads showed
+state 0x47, command 0, power path 0x95; type was 0 once, then 2 on five reads,
+subtype 0x80. Android SMB5 definitions decode state low bits 7 as disabled,
+enable command bit 0 clear, and power path bits 0 and 4 as valid USB input.
+This suggests battery charging may be disabled, but intermittent inconsistent
+reads leave the result unverified. User chose to keep USB; no charger writes.
+QG IRQ 0x2 persists. Two-byte ADC reads and immediate repeats matched in the
+sample; one individual high-byte read returned 0 instead of 0x42, and other
+single-byte registers also had occasional 0. These inconsistencies mean the
+observer path/data fidelity is not established. The torch production interlock
+remains on; no light or PMIC control writes were attempted. Device remains on
+this survey boot; USB connected. Next: investigate observer completion and
+validate charge state before any charger or torch control changes.
+
 ## River observer byte-width correction (2026-10-30)
 
 The existing ri_spmi_read returns the entire 32-bit data register even for
