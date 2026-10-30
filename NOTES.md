@@ -1,5 +1,17 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River torch USB gate and power diagnostics (2026-10-30)
+
+Patches 0249/0250 extend the opt-in snapshot with QG raw last ADC voltage,
+monotonic SOC and charger USB-present status, and make the experimental pulse
+refuse when USB is present because the Android VBUS 5V coordination is not
+implemented. ADC/SOC values can be stale; they are observations, not proof of
+safe operation. Local arm64 compile and host snapshot and torch failure-path
+tests pass, including the USB-present no-write case. No device boot or PMIC
+write of these patches. The charger control 0xff and threshold 0 also remain
+hard blockers. Do not force a pulse. Earlier 0248 CI 41019294076 is building;
+build the complete patch set separately before any device trial.
+
 ## River camera discovery wait (2026-10-30)
 
 Repeated video discovery on the extended survey boot and captured pstack.

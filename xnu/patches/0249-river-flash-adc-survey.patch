@@ -1,0 +1,28 @@
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -3172,6 +3172,7 @@
+  if (!led || !charger || !qg) { snprintf(note, sizeof(note), "observer missing led=%d charger=%d qg=%d", !!led, !!charger, !!qg); goto done; }
+  uint32_t lt, ls, status, status2, mod, en, ct, cs, s2, s3, s5, cfg, threshold;
+  uint32_t qtype, qsub, qstatus, qirq, timer, current, ires, strobe, derate;
++ uint32_t qsoc, qvoltage, usbstatus;
+  if (!ri_spmi_read(led, 4, 1, &lt) || !ri_spmi_read(led, 5, 1, &ls) ||
+      !ri_spmi_read(led, 8, 1, &status) || !ri_spmi_read(led, 9, 1, &status2) ||
+      !ri_spmi_read(led, 0x40, 1, &timer) || !ri_spmi_read(led, 0x43, 1, &current) ||
+@@ -3182,10 +3183,15 @@
+      !ri_spmi_read(charger, 8, 1, &s3) || !ri_spmi_read(charger, 0xb, 1, &s5) ||
+      !ri_spmi_read(charger, 0x60, 1, &cfg) || !ri_spmi_read(charger, 0x68, 1, &threshold) ||
+      !ri_spmi_read(qg, 4, 1, &qtype) || !ri_spmi_read(qg, 5, 1, &qsub) ||
+-     !ri_spmi_read(qg, 8, 1, &qstatus) || !ri_spmi_read(qg, 0x10, 1, &qirq)) {
++     !ri_spmi_read(qg, 8, 1, &qstatus) || !ri_spmi_read(qg, 0x10, 1, &qirq) ||
++     !ri_spmi_read(qg, 0xbf, 1, &qsoc) || !ri_spmi_read(qg, 0xc0, 2, &qvoltage)) {
+   snprintf(note, sizeof(note), "observer read failed"); goto done;
+  }
+- snprintf(note, sizeof(note), "LED type=%#x subtype=%#x status=%#x/%#x mod=%#x en=%#x timer=%#x current=%#x ires=%#x strobe=%#x derate=%#x; charger type=%#x subtype=%#x status2=%#x status3=%#x status5=%#x control=%#x threshold=%#x; qg type=%#x subtype=%#x status=%#x irq=%#x", lt, ls, status, status2, mod, en, timer, current, ires, strobe, derate, ct, cs, s2, s3, s5, cfg, threshold, qtype, qsub, qstatus, qirq);
++ vm_offset_t usb = ri_spmi_obs(core, 0x213);
++ if (!usb || !ri_spmi_read(usb, 0x10, 1, &usbstatus)) {
++  snprintf(note, sizeof(note), "USB charger observer missing or read failed"); goto done;
++ }
++ snprintf(note, sizeof(note), "LED type=%#x subtype=%#x status=%#x/%#x mod=%#x en=%#x timer=%#x current=%#x ires=%#x strobe=%#x derate=%#x; charger type=%#x subtype=%#x status2=%#x status3=%#x status5=%#x control=%#x threshold=%#x usb_irq=%#x; qg type=%#x subtype=%#x status=%#x irq=%#x soc=%#x voltage_raw=%#x", lt, ls, status, status2, mod, en, timer, current, ires, strobe, derate, ct, cs, s2, s3, s5, cfg, threshold, usbstatus, qtype, qsub, qstatus, qirq, qsoc, qvoltage);
+  done:
+  strlcpy(ri_flash_note, note, sizeof(ri_flash_note));
+  __atomic_store_n(&ri_flash_done, 1, __ATOMIC_RELEASE);
