@@ -1,5 +1,21 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River switcher wallpaper replica visually passes (2026-10-30)
+
+User confirms correct wallpaper remains visible in switcher when settled and
+scrolling, and open apps display normally, with active binary SHA256
+9e4079e51924fde122bfca27a1125e73553d782ea7e8a84894e5a5f75c09f6ef.
+Asked user to retest Search, folders and sleep/wake with this candidate; response
+pending. This is a wallpaper replica, not a proven fix to underlying compositor
+blackout; it uses the first wallpaper snapshot, so changing wallpaper and later
+lifecycle behavior remain unverified. No partitions flashed. Prior search/folder
+candidate remains local and pink-fixed fallback remains on device.
+
+Committed exact tested candidate source into phone-tools/cgprobe.c, including
+existing opt-in style diagnostics. Independently rebuilt source successfully
+with pre-existing pointer warning; rebuilt binary has a different hash and was
+not deployed. Active tested binary stays in place. Do not claim new build tested.
+
 ## River switcher wallpaper replica test staged (2026-10-30)
 
 User confirmed apps render normally after scene-background test; user agreed

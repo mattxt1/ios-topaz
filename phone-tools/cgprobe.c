@@ -291,11 +291,9 @@ static void probe_dock_layout(id self, SEL cmd)
 {
 	original_dock_layout(self, cmd);
 	if (strcmp(object_getClassName(self), "SBDockView") != 0) return;
-	CGRect df = ((CGRect (*)(id, SEL))objc_msgSend)(self, sel_registerName("frame"));
 	Ivar bg_iv = class_getInstanceVariable(object_getClass(self), "_backgroundView");
 	id bg = bg_iv ? object_getIvar(self, bg_iv) : nil;
 	if (bg) {
-		CGRect bgf = ((CGRect (*)(id, SEL))objc_msgSend)(bg, sel_registerName("frame"));
 		id bgl = ((id (*)(id, SEL))objc_msgSend)(bg, sel_registerName("layer"));
 		if (bgl) {
 			((void (*)(id, SEL, id))objc_msgSend)(bgl, sel_registerName("setFilters:"), nil);
@@ -321,9 +319,7 @@ static void probe_dock_layout(id self, SEL cmd)
 			CGColorSpaceRelease(cs);
 			((void (*)(id, SEL, CGFloat))objc_msgSend)(bg, sel_registerName("setAlpha:"), 1.0f);
 			((void (*)(id, SEL, BOOL))objc_msgSend)(bg, sel_registerName("setHidden:"), NO);
-			cglog("cgprobe: dock_layout styled bg %p (f=%.1f,%.1f %.1fx%.1f, dock=%.1f,%.1f %.1fx%.1f) layer %p\n",
-			    bg, bgf.origin.x, bgf.origin.y, bgf.size.width, bgf.size.height,
-			    df.origin.x, df.origin.y, df.size.width, df.size.height, bgl);
+
 		}
 	}
 }
@@ -917,6 +913,50 @@ static void dump_view_tree(id view, int depth)
 	}
 }
 
+/* One-shot targeted image/material diagnostics, never part of layout. */
+static void style_diagnostic_tree(id view, int depth)
+{
+	if (!view || depth > 32) return;
+	const char *name = object_getClassName(view);
+	BOOL target = strstr(name, "FolderIconImage") || strstr(name, "SearchPill") ||
+	    strstr(name, "ImageView") || strstr(name, "Trash") || strstr(name, "Delete");
+	if (target) {
+		id layer = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("layer"));
+		CGColorRef bg = ((CGColorRef (*)(id, SEL))objc_msgSend)(layer, sel_registerName("backgroundColor"));
+		id contents = ((id (*)(id, SEL))objc_msgSend)(layer, sel_registerName("contents"));
+		CGRect b = ((CGRect (*)(id, SEL))objc_msgSend)(view, sel_registerName("bounds"));
+		cglog("STYLE %s %p %.0fx%.0f hidden=%d alpha=%.2f opaque=%d bgAlpha=%.3f contents=%p\n", name, view,
+		    b.size.width, b.size.height, ((BOOL (*)(id, SEL))objc_msgSend)(view, sel_registerName("isHidden")),
+		    ((CGFloat (*)(id, SEL))objc_msgSend)(view, sel_registerName("alpha")),
+		    ((BOOL (*)(id, SEL))objc_msgSend)(layer, sel_registerName("isOpaque")), bg ? CGColorGetAlpha(bg) : -1.0, contents);
+		SEL imageSel = sel_registerName("image");
+		if (((BOOL (*)(id, SEL, SEL))objc_msgSend)(view, sel_registerName("respondsToSelector:"), imageSel)) {
+			id img = ((id (*)(id, SEL))objc_msgSend)(view, imageSel);
+			CGImageRef cg = img ? ((CGImageRef (*)(id, SEL))objc_msgSend)(img, sel_registerName("CGImage")) : NULL;
+			if (cg) cglog("STYLE image %s view=%p cg=%p %zux%zu bpp=%zu bpc=%zu alpha=%u mask=%d\n", object_getClassName(img), view, cg,
+			    CGImageGetWidth(cg), CGImageGetHeight(cg), CGImageGetBitsPerPixel(cg), CGImageGetBitsPerComponent(cg), CGImageGetAlphaInfo(cg), CGImageIsMask(cg));
+		}
+		if (strstr(name, "FolderIconImage") || strstr(name, "SearchPill")) {
+			dump_class_info(object_getClass(view));
+			dump_view_tree(view, 1);
+		}
+	}
+	id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
+	unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count"));
+	for (unsigned long i = 0; i < n; i++)
+		style_diagnostic_tree(((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i), depth + 1);
+}
+
+static void style_diagnostic(void)
+{
+	id wins = ((id (*)(id, SEL, BOOL, BOOL))objc_msgSend)((id)objc_getClass("UIWindow"),
+	    sel_registerName("allWindowsIncludingInternalWindows:onlyVisibleWindows:"), YES, YES);
+	unsigned long n = ((unsigned long (*)(id, SEL))objc_msgSend)(wins, sel_registerName("count"));
+	cglog("STYLE begin\n");
+	for (unsigned long i = 0; i < n; i++) style_diagnostic_tree(((id (*)(id, SEL, unsigned long))objc_msgSend)(wins, sel_registerName("objectAtIndex:"), i), 0);
+	cglog("STYLE end\n");
+}
+
 static void dump_all_windows_and_views(void)
 {
 	Class win_cls = objc_getClass("UIWindow");
@@ -1016,6 +1056,55 @@ static void probe_library_layout(id self, SEL cmd)
 	}
 }
 
+/* A switcher-only replica of the existing wallpaper image, behind the cards. */
+static char switcher_wallpaper_key;
+static id find_wallpaper_image(id view, unsigned depth, BOOL replica)
+{
+    if (!view || depth > 16) return nil;
+    const char *name = object_getClassName(view);
+    if (strstr(name, "PBUISnapshotReplicaView")) replica = YES;
+    if (replica && !strcmp(name, "UIImageView")) {
+        id image = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("image"));
+        if (image) return image;
+    }
+    id subs = ((id (*)(id, SEL))objc_msgSend)(view, sel_registerName("subviews"));
+    unsigned long n = subs ? ((unsigned long (*)(id, SEL))objc_msgSend)(subs, sel_registerName("count")) : 0;
+    for (unsigned long i = 0; i < n; i++) {
+        id child = ((id (*)(id, SEL, unsigned long))objc_msgSend)(subs, sel_registerName("objectAtIndex:"), i);
+        id image = find_wallpaper_image(child, depth + 1, replica);
+        if (image) return image;
+    }
+    return nil;
+}
+static void update_switcher_wallpaper(id root)
+{
+    id wins = ((id (*)(id, SEL, BOOL, BOOL))objc_msgSend)((id)objc_getClass("UIWindow"),
+        sel_registerName("allWindowsIncludingInternalWindows:onlyVisibleWindows:"), YES, NO);
+    unsigned long n = wins ? ((unsigned long (*)(id, SEL))objc_msgSend)(wins, sel_registerName("count")) : 0;
+    id image = nil;
+    for (unsigned long i = 0; i < n && !image; i++) {
+        id win = ((id (*)(id, SEL, unsigned long))objc_msgSend)(wins, sel_registerName("objectAtIndex:"), i);
+        if (!strcmp(object_getClassName(win), "_SBWallpaperSecureWindow")) image = find_wallpaper_image(win, 0, NO);
+    }
+    if (!image) return;
+    CGRect b = ((CGRect (*)(id, SEL))objc_msgSend)(root, sel_registerName("bounds"));
+    if (b.size.width <= 0 || b.size.height <= 0) return;
+    id replica = objc_getAssociatedObject(root, &switcher_wallpaper_key);
+    if (!replica) {
+        replica = ((id (*)(id, SEL))objc_msgSend)((id)objc_getClass("UIImageView"), sel_registerName("alloc"));
+        replica = ((id (*)(id, SEL, CGRect))objc_msgSend)(replica, sel_registerName("initWithFrame:"), b);
+        ((void (*)(id, SEL, long))objc_msgSend)(replica, sel_registerName("setContentMode:"), 2L);
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(replica, sel_registerName("setClipsToBounds:"), YES);
+        ((void (*)(id, SEL, BOOL))objc_msgSend)(replica, sel_registerName("setUserInteractionEnabled:"), NO);
+        ((void (*)(id, SEL, id, long))objc_msgSend)(root, sel_registerName("insertSubview:atIndex:"), replica, 0);
+        objc_setAssociatedObject(root, &switcher_wallpaper_key, replica, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        ((void (*)(id, SEL))objc_msgSend)(replica, sel_registerName("release"));
+    }
+    ((void (*)(id, SEL, CGRect))objc_msgSend)(replica, sel_registerName("setFrame:"), b);
+    if (((id (*)(id, SEL))objc_msgSend)(replica, sel_registerName("image")) != image)
+        ((void (*)(id, SEL, id))objc_msgSend)(replica, sel_registerName("setImage:"), image);
+}
+
 static void (*original_switcher_layout)(id, SEL);
 static void probe_switcher_layout(id self, SEL cmd)
 {
@@ -1032,6 +1121,7 @@ static void probe_switcher_layout(id self, SEL cmd)
 			((void (*)(id, SEL, BOOL))objc_msgSend)(vl, sel_registerName("setOpaque:"), NO);
 		}
 
+		update_switcher_wallpaper(v);
 		clear_blackout_in_view_mode(v, YES);
 	}
 
@@ -1608,6 +1698,10 @@ probe_loaded(void)
 	dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
 		while (1) {
 			sleep(2);
+			if (access("/tmp/style_dump", F_OK) == 0) {
+				unlink("/tmp/style_dump");
+				dispatch_async(dispatch_get_main_queue(), ^{ style_diagnostic(); });
+			}
 			if (access("/tmp/dump_now", F_OK) == 0) {
 				unlink("/tmp/dump_now");
 				dispatch_async(dispatch_get_main_queue(), ^{
