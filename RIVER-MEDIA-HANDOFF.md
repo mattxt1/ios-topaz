@@ -24,3 +24,9 @@ They describe a River configuration, not verified hardware on this phone.
 
 Do not flash partitions. Coordinate every device test and display restart with
 the user and other chat. Preserve the working UI and sleep/wake behavior.
+
+Patch 0248 is an experimental one-shot candidate, not an iOS flashlight driver.
+It refuses writes with the observed charger control 0xff and SOC threshold 0.
+Its timer, QG SOC freshness, VBUS handling and fault behavior need hardware and
+source validation; do not bypass the guard to force a pulse. The phone currently
+runs the read-only survey, not patch 0248.

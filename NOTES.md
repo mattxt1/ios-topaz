@@ -1,5 +1,22 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River guarded torch test candidate (2026-10-30)
+
+Patch 0248 adds an experimental, opt-in, once-per-boot `debug.river_torch_test`
+request executed by the input worker. It checks controller identity, off
+state, preconfigured timer/current/derating, QG readiness, low-battery bits,
+voltage and monotonic SOC, and charger control/threshold before any write.
+On a matching configuration it requests a 100ms pulse, polls fault status and
+retries LED/module shutdown. Hardware timer behavior in torch mode is unproven;
+neither the preconditions nor the code establish complete hardware safety.
+Observed charger control 0xff and threshold 0 make this candidate refuse all
+writes. It must not be relaxed merely to obtain a light: investigate charger
+initialization, real fuel-gauge SOC freshness and VBUS handling first. Local
+arm64 compile and ASan/UBSan fake-register tests passed (refusal, successful
+model, faults, readiness timeout, write failure and failed shutdown). No CI,
+device boot or physical torch test of 0248 yet. Source test:
+tools/test-river-torch.py against patched bsd/dev/sweet_keys.c.
+
 ## River fuel gauge and flash protection snapshot (2026-10-30)
 
 User approved a second RAM-only boot; fastboot product river and image SHA256

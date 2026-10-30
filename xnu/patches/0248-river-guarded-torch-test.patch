@@ -1,0 +1,108 @@
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -43,6 +43,8 @@
+ static vm_offset_t ri_spmi_obs(vm_offset_t core, unsigned ppid);
+ static bool ri_spmi_read(vm_offset_t obs, unsigned addr, unsigned count, uint32_t *v);
+ static void river_flash_survey(void);
++static void river_torch_pulse(void);
++static int ri_torch_request, ri_torch_status, ri_torch_attempted;
+ static bool ri_started, ri_pon_ok, ri_touch_ok;
+ static vm_offset_t ri_qup2;
+ static bool ri_haptics_ok;
+@@ -3035,6 +3037,7 @@
+   printf("RIVER INPUT: GPIO65 edge latch on, INTR_CFG %#x\n", ri_rd(ri_touch, 0x1008));
+  }
+  for (;;) {
++  if (__atomic_exchange_n(&ri_torch_request, 0, __ATOMIC_ACQUIRE)) river_torch_pulse();
+   int request = __atomic_exchange_n(&ri_vib_request, -1, __ATOMIC_ACQUIRE);
+   if (request >= 0) river_vibrate((unsigned)request);
+   if (ri_vib_deadline && mach_absolute_time() >= ri_vib_deadline) river_vibrate(0);
+@@ -3235,6 +3238,88 @@
+  return false;
+ }
+ 
++
++/* One opt-in, 100 ms torch pulse per boot. Fail closed unless board identity,
++ * live battery/charger status and preconfigured hardware protections all
++ * match. Only module and LED enable bits are changed; all paths try off. */
++static void
++river_torch_pulse(void)
++{
++ int result = -1, enabled = 0;
++ vm_offset_t core = 0, led = 0, ch = 0, charger = 0, qg = 0;
++ uint32_t lt, ls, st1, st2, mod, en, timer, current, ires, strobe, derate;
++ uint32_t cfg, threshold, s2, s3, qstatus, qirq, voltage, soc;
++ if (!PE_parse_boot_argn("riverfs", &enabled, sizeof(enabled)) || enabled != 1) goto done;
++ core = ri_map(0x0200f000);
++ if (!core || ri_rd(core, 0) < 0x20010000 || ri_rd(core, 0) >= 0x50000000) goto done;
++ led = ri_spmi_obs(core, 0x3d3); ch = ri_spmi_chnl(core, 0x3d3);
++ charger = ri_spmi_obs(core, 0x2a6); qg = ri_spmi_obs(core, 0x248);
++ if (!led || !ch || !charger || !qg) goto done;
++ result = -2;
++ if (!ri_spmi_read(led,4,1,&lt) || !ri_spmi_read(led,5,1,&ls) ||
++     !ri_spmi_read(led,8,1,&st1) || !ri_spmi_read(led,9,1,&st2) ||
++     !ri_spmi_read(led,0x46,1,&mod) || !ri_spmi_read(led,0x4c,1,&en) ||
++     !ri_spmi_read(led,0x40,1,&timer) || !ri_spmi_read(led,0x43,1,&current) ||
++     !ri_spmi_read(led,0x47,1,&ires) || !ri_spmi_read(led,0x49,1,&strobe) ||
++     !ri_spmi_read(led,0x76,1,&derate) || !ri_spmi_read(charger,0x60,1,&cfg) ||
++     !ri_spmi_read(charger,0x68,1,&threshold) || !ri_spmi_read(qg,8,1,&qstatus) ||
++     !ri_spmi_read(qg,0x10,1,&qirq) || !ri_spmi_read(qg,0xbf,1,&soc) ||
++     !ri_spmi_read(qg,0xc0,2,&voltage)) goto done;
++ result = -3; /* unknown or unsafe initial configuration; no writes */
++ if (lt != 0x18 || ls != 5 || st1 != 0 || (st2 & 0x10) || mod != 0 || en != 0 ||
++     timer != 0x93 || current != 0 || (ires & 3) != 0 || (strobe & 4) != 0 ||
++     (derate & 7) != 7 || cfg == 0xff || !(cfg & 0x80) || threshold < 25 ||
++     threshold == 0xff || (qstatus & 0x81) != 0x81 || (qirq & 7) != 0 ||
++     soc == 0xff || soc < threshold || voltage < 17982 || voltage > 23120) goto done;
++ result = -4;
++ if (!ri_reset_wr(ch, led, 0x46, 0x80)) goto cleanup;
++ for (unsigned i=0;i<30;i++) {
++  if (!ri_spmi_read(charger,7,1,&s2) || !ri_spmi_read(charger,8,1,&s3)) goto cleanup;
++  if ((s3 & 7) == 7) goto cleanup;
++  if (s2 & 0x10) { result = 0; break; }
++  ri_wait(10);
++ }
++ if (result != 0) goto cleanup;
++ result = -5;
++ if (!ri_reset_wr(ch, led, 0x4c, 1)) goto cleanup;
++ result = 1;
++ for (unsigned i=0;i<10;i++) {
++  ri_wait(10);
++  if (!ri_spmi_read(led,8,1,&st1) || !ri_spmi_read(led,9,1,&st2) ||
++      !ri_spmi_read(charger,8,1,&s3) || st1 != 0 || (st2 & 0x10) || (s3 & 7) == 7) {
++   result = -7; break;
++  }
++ }
++cleanup:
++ /* Attempt both writes even if either fails; timer behavior in torch mode is unverified. */
++ for (unsigned i=0;i<3;i++) {
++  bool led_off = ri_reset_wr(ch, led, 0x4c, 0);
++  bool mod_off = ri_reset_wr(ch, led, 0x46, 0);
++  if (led_off && mod_off) goto done;
++ }
++ result = -6;
++done:
++ __atomic_store_n(&ri_torch_status, result, __ATOMIC_RELEASE);
++ printf("RIVER TORCH: bounded test result %d\n", result);
++}
++static int
++river_torch_test_sysctl SYSCTL_HANDLER_ARGS
++{
++ int value = __atomic_load_n(&ri_torch_status, __ATOMIC_ACQUIRE), err;
++ err = sysctl_handle_int(oidp, &value, 0, req);
++ if (err || !req->newptr) return err;
++ if (value != 1) return EINVAL;
++ int enabled = 0;
++ if (!PE_parse_boot_argn("riverfs", &enabled, sizeof(enabled)) || enabled != 1) return ENXIO;
++ int expected = 0;
++ if (!__atomic_compare_exchange_n(&ri_torch_attempted, &expected, 1, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) return EBUSY;
++ __atomic_store_n(&ri_torch_status, 2, __ATOMIC_RELEASE); /* queued */
++ __atomic_store_n(&ri_torch_request, 1, __ATOMIC_RELEASE);
++ return 0;
++}
++SYSCTL_PROC(_debug, OID_AUTO, river_torch_test, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED,
++            NULL, 0, river_torch_test_sysctl, "I", "One bounded River torch test");
++
+ void
+ river_haptics_init(void)
+ {
