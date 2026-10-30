@@ -9,8 +9,13 @@ percentage is synthetic; it cannot establish actual battery condition. The
 QG readiness/low-battery bits and LED protection state are still unmeasured.
 Patch applied exactly to the 0246 source; local arm64 compile and host
 opt-in, missing-channel, read-failure and complete-snapshot checks passed.
-No PMIC writes. Full CI and another coordinated RAM test remain pending; no
+No PMIC writes. River CI 41017972132 is building commit 8fa0cc4. Another
+coordinated RAM test remains pending; no
 claim that QG status alone measures charge or proves safe torch operation.
+
+On the survey boot, video discovery again stalled. A pstack capture is in
+this chat's work/camera-discovery-stack.txt; local shared-cache symbol lookup
+stalled, so the stack is not yet interpreted. The temporary probe was stopped.
 
 ## River flash PMIC survey hardware result (2026-10-30)
 
