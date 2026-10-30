@@ -1,5 +1,23 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River switcher performance candidate staged (2026-10-30)
+
+User confirmed unblurred wallpaper and apps restored after blur rollback, but
+reported switcher performance a little slow. Active replica traverses wallpaper
+window hierarchy on each switcher layout and repeatedly sets its frame. Prepared
+scratch work/cgprobe-switcher-cached.c to retain the wallpaper source UIImageView
+while it remains in the wallpaper secure window, read its current image each
+layout, and set replica frame only when changed. Source traversal is repeated if
+view detaches. This reduces some per-layout work but has not been measured and
+may miss a replacement wallpaper view that remains attached; verify wallpaper
+change as well as scrolling before acceptance. No claim of a performance gain.
+
+Staged /usr/local/lib/libcgprobe.switcher-cached.dylib; readback SHA256
+498ac572785c4ea410c1eab8883fc32f98cb8ce00995d8751ba4c769082f49eb.
+Asked user to coordinate restart; response pending. Active verified rollback is
+unblurred replica 9e4079e51924fde122bfca27a1125e73553d782ea7e8a84894e5a5f75c09f6ef.
+Blur test remains failed and uncommitted. Check apps, Search/folder, sleep/wake.
+
 ## River switcher blur test pink; reverted (2026-10-30)
 
 User reports switcher wallpaper turned pink with CPU blur candidate SHA256
