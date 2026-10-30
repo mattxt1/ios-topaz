@@ -1,5 +1,23 @@
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
+## River recovered; rounded plates and tint test staged (2026-10-29)
+
+At user request, verified fastboot product river and image SHA256
+ ae1c78ee129e9747a25454d0edf5c5ff6c0eba90d25d0655c1dc31fa580754bc,
+then fastboot boot succeeded; no partitions flashed. SSH is working; SpringBoard
+PID26, backboardd PID58 observed. Readback confirms active cgprobe matches
+32efe708a0283fa242de3e9b842437b9e516d1b03b0ea9e6ace36e7e6227d7db and
+pink-fixed rollback matches eb0fe34da2d91dc64f6282d7d93192de1dd4396467c8271f65495d6d1a30a3f7.
+
+Applied withheld rounded-plates patch to scratch tint-only source, compiled and
+signed, and staged at /usr/local/lib/libcgprobe.plates-tint.dylib; readback
+SHA256 081bd4c888598890a387658e1cc6753b55d9a3a750109bebcb74fd9ad903a6df.
+Scratch source and binary are in current Codex workspace work/. Candidate is
+not active or visually tested. Asked user to coordinate SpringBoard restart;
+response pending. Wallpaper background remains unresolved. Confirm normal app,
+folder, Search, tint, scrolling and sleep/wake after testing; do not claim fixes
+until observed. Current switcher candidate readback is work/current.readback.
+
 ## River USB reconnect follow-up (2026-10-29)
 
 User confirmed iOS responsive and reconnected USB at phone end. IORegistry
