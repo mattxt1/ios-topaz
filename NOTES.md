@@ -28,6 +28,10 @@ events and a Mach service; the binary path exists, but whether this is the
 specific awaited service is unverified. Temporary probe stopped; no daemon
 restart or system file changes. Stack and resolved symbols are in this chat's
 work/; preserve the UI while investigating service launch and capture stack.
+An executable-level xpc_connection_create_mach_service interposition produced
+no hook output during the wait; interception itself was not validated, so this
+does not identify or rule out a service. A short mediaserverd/applecamerad log
+sample provided no actionable camera error. Temporary test process stopped.
 
 ## River guarded torch test candidate (2026-10-30)
 
