@@ -14,7 +14,9 @@ signed, and staged at /usr/local/lib/libcgprobe.plates-tint.dylib; readback
 SHA256 081bd4c888598890a387658e1cc6753b55d9a3a750109bebcb74fd9ad903a6df.
 Scratch source and binary are in current Codex workspace work/. Candidate is
 not active or visually tested. Asked user to coordinate SpringBoard restart;
-response pending. Wallpaper background remains unresolved. Confirm normal app,
+user reports Apple logo persists longer than usual after boot. SpringBoard PID26
+and backboardd PID58 are running and SSH responds; waiting for user to confirm
+lock or Home Screen before any display restart. Wallpaper remains unresolved. Confirm normal app,
 folder, Search, tint, scrolling and sleep/wake after testing; do not claim fixes
 until observed. Current switcher candidate readback is work/current.readback.
 
