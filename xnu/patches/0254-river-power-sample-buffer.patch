@@ -1,0 +1,11 @@
+--- a/bsd/dev/sweet_keys.c
++++ b/bsd/dev/sweet_keys.c
+@@ -3228,7 +3228,7 @@
+      ri_spmi_read(ri_power_qg, 0xc0, 2, &voltage) && ri_spmi_read(ri_power_qg, 0xc0, 1, &vlo) &&
+      ri_spmi_read(ri_power_qg, 0xc1, 1, &vhi) && ri_spmi_read(ri_power_qg, 0xc0, 2, &voltage2)) {
+   obs_after = ri_rd(ri_power_qg, 8);
+-  char note[256];
++  char note[512];
+   snprintf(note, sizeof(note), "led_mod=%#x led_en=%#x charger=%#x/%#x cfg=%#x threshold=%#x usb_irq=%#x qg=%#x/%#x soc=%#x voltage_raw=%#x bytes=%#x/%#x repeat=%#x obs_status=%#x/%#x", mod, en, s2, s3, cfg, threshold, usb, qstatus, qirq, soc, voltage, vlo, vhi, voltage2, obs_before, obs_after);
+   error = sysctl_handle_string(oidp, note, 0, req);
+  }

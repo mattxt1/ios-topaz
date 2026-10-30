@@ -11,6 +11,9 @@ Mismatches may reflect changing hardware data as well as read-path issues;
 matches alone do not establish freshness. Local arm64 compile and ASan/UBSan
 sampler tests passed. Not yet CI-built or run on the phone. Preserve production
 torch interlock and do not energize the LED based on these data alone.
+Patch 0254 increases the sample buffer to 512 bytes; full-width register values
+can exceed 256 bytes. Local arm64 compile and sampler model passed; combined CI
+remains pending.
 
 ## River live power sampler hardware check (2026-10-30)
 
@@ -27,6 +30,11 @@ User asked to connect a charger; response pending. Approved no-light interlock
 check returned -8, the production path that exits before PMIC writes.
 Live sample is available on this boot; no physical torch output attempted.
 Investigate QG/SPMI read fidelity and charging state before any torch change.
+User explicitly chose to keep the USB connection. Subsequent live samples
+reported QG 0xc1/0x2, SOC 0x2 and voltage 0x4305, 0x430a, 0x430a (about
+3.34 V under Android's conversion), with LED module/enable 0. Values appear
+lower than earlier samples but fidelity and freshness remain unverified; no
+claim is made that USB is charging or discharging. Continue on USB as requested.
 
 ## River live power sampler candidate (2026-10-30)
 
